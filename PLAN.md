@@ -157,3 +157,9 @@ Next, roughly in order:
 3. Map format + authoring tool (A or B).
 4. Host-to-client map transfer.
 5. Polish: thumbnails, menu tab, validator, Thunderstore release.
+
+## Backlog: editor visitor stats (2026-10-24)
+
+- Owner wants to see editor visits, later. Plan: GoatCounter (free, no cookies, no consent banner). Owner signs up
+  with the sbg-maps org email and picks a code; then add the count.js tag, skip counting on localhost and in tests,
+  and add a one-line footer note that anonymous visits are counted.
