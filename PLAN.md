@@ -120,6 +120,14 @@ Goal: import ripped levels (e.g. SM64 Bob-omb Battlefield, WoW Stormwind) and sp
 - Ripped/copyrighted levels never go to the public catalog; host transfer covers private play.
 - **Editor hosting:** GitHub Pages from `editor/` (workflow `.github/workflows/pages.yml`), fully client-side.
 
+## Backlog: objects ripped levels leave out (2026-10-24)
+
+- Level rips contain only static geometry. Spawned objects are missing.
+  - SM64 BoB: `bhvSeesawPlatform` (the tilting bridge, model in decomp `levels/bob/seesaw_platform`), chain chomp gate, grate door, checkerboard elevator, cannon.
+- **Props (next):** the editor imports extra models into a level and places, rotates and scales them, with surfaces as usual. They are exported as extra nodes in level.glb or separate files; the mod builds them like the level.
+- **Moving objects (later):** object types animated by the mod with networked physics (tilting see-saw, elevators, rotating platforms). Needs Mirror sync so every player sees the same state.
+- The source for SM64 objects is the local decomp `~/sm64-solarflare` via the fast64 Blender addon, exported to .glb.
+
 ## Phases
 
 0. Setup: BepInEx in game, plugin skeleton, dump a vanilla hole scene's hierarchy (AssetRipper/UnityPy) to get the exact required component list.

@@ -11,3 +11,4 @@ devreloader/obj/
 editor/node_modules/
 editor/dist/
 imports/
+release/
