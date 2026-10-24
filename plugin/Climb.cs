@@ -25,12 +25,24 @@ namespace SbgMaps
         {
             colliders.RemoveWhere(x => x == null);
             colliders.Add(c);
+            c.gameObject.AddComponent<ClimbableSurface>();
+        }
+
+        /// <summary>Known climbable, or marked so by an earlier copy of the mod (the level outlives a hot reload, this set does not).</summary>
+        private static bool IsClimbable(Collider c)
+        {
+            if (colliders.Contains(c))
+                return true;
+            if (c.GetComponent(nameof(ClimbableSurface)) == null)
+                return false;
+            colliders.Add(c);
+            return true;
         }
 
         private static void Prefix(PlayerMovement __instance, out float __state)
         {
             __state = float.NaN;
-            if (colliders.Count == 0 || setThreshold == null)
+            if (setThreshold == null)
                 return;
             var settings = GameManager.PlayerMovementSettings;
             if (settings == null || settings.UngroundableGroundPitchThreshold >= MaxSlope || !OverClimbable(__instance.transform.position))
@@ -53,7 +65,12 @@ namespace SbgMaps
             for (int i = 0; i < count; i++)
                 if (hits[i].distance < best)
                     (best, nearest) = (hits[i].distance, hits[i].collider);
-            return nearest != null && colliders.Contains(nearest);
+            return nearest != null && IsClimbable(nearest);
         }
+    }
+
+    /// <summary>Marks a climbable collider by type name, which still matches after the mod is reloaded.</summary>
+    internal class ClimbableSurface : MonoBehaviour
+    {
     }
 }
