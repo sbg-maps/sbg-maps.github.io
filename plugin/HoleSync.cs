@@ -106,7 +106,11 @@ namespace SbgMaps
         [HarmonyPatch(typeof(NetworkManager), "RegisterClientMessages")]
         private static class RegisterClientPatch
         {
-            private static void Postfix() => NetworkClient.ReplaceHandler<SelectHoleMessage>(OnSelectHole, requireAuthentication: false);
+            private static void Postfix()
+            {
+                NetworkClient.ReplaceHandler<SelectHoleMessage>(OnSelectHole, requireAuthentication: false);
+                Seesaw.RegisterClientHandler();
+            }
         }
     }
 }

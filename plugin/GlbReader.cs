@@ -30,13 +30,28 @@ namespace SbgMaps
             public byte[] Image;        // PNG/JPEG bytes of the base colour texture, or null
             public bool DoubleSided;
             public bool AlphaBlend;
+            public bool AlphaMask;
             public string Surface;      // from extras.surface
+            public bool Invisible;      // extras.invisible: collision only, never drawn
+            public bool RenderOnly;     // extras.renderOnly: drawn only, no collision
+        }
+
+        /// <summary>A node marked with extras.object: kept separate so the game can move it.</summary>
+        public class SceneObject
+        {
+            public string Name;
+            public JObject Extras;
+            public float[] Position;    // map coordinates
+            public float[] Rotation;    // quaternion xyzw, Unity convention
+            public float[] Scale;
+            public readonly List<Primitive> Primitives = new List<Primitive>(); // object-local, map axes
         }
 
         public class Model
         {
             public readonly List<Primitive> Primitives = new List<Primitive>();
             public readonly List<Material> Materials = new List<Material>();
+            public readonly List<SceneObject> Objects = new List<SceneObject>();
         }
 
         public static Model Read(byte[] glb)
@@ -99,7 +114,10 @@ namespace SbgMaps
                     Name = (string)m["name"] ?? "material",
                     DoubleSided = (bool?)m["doubleSided"] ?? false,
                     AlphaBlend = (string)m["alphaMode"] == "BLEND",
+                    AlphaMask = (string)m["alphaMode"] == "MASK",
                     Surface = (string)m["extras"]?["surface"],
+                    Invisible = (bool?)m["extras"]?["invisible"] ?? false,
+                    RenderOnly = (bool?)m["extras"]?["renderOnly"] ?? false,
                 };
                 var pbr = m["pbrMetallicRoughness"];
                 if (pbr?["baseColorFactor"] is JArray f && f.Count == 4)
@@ -119,20 +137,71 @@ namespace SbgMaps
                 return mat;
             }
 
-            private void VisitNode(int index, double[] parent)
+            private void VisitNode(int index, double[] parent, SceneObject owner = null)
             {
                 var node = Arr("nodes")[index];
                 var world = Multiply(parent, LocalMatrix(node));
+                if (owner == null && node["extras"]?["object"] != null)
+                {
+                    owner = MakeObject(node, world);
+                    model.Objects.Add(owner);
+                    world = Identity(); // the object's own geometry is kept in its local space
+                }
                 var meshIndex = (int?)node["mesh"];
                 if (meshIndex.HasValue)
                     foreach (JObject p in (JArray)Arr("meshes")[meshIndex.Value]["primitives"])
-                        ReadPrimitive(p, world);
+                        ReadPrimitive(p, world, owner?.Primitives ?? model.Primitives);
                 if (node["children"] is JArray children)
                     foreach (var c in children)
-                        VisitNode((int)c, world);
+                        VisitNode((int)c, world, owner);
             }
 
-            private void ReadPrimitive(JObject p, double[] world)
+            /// <summary>Converts a glTF world matrix to map/Unity position, rotation and scale (z is flipped on both sides).</summary>
+            private static SceneObject MakeObject(JToken node, double[] w)
+            {
+                // U = C * W * C with C = diag(1, 1, -1): negate the elements that mix z with x/y.
+                double[] u = (double[])w.Clone();
+                foreach (int i in new[] { 2, 6, 8, 9, 14 })
+                    u[i] = -u[i];
+                double sx = Math.Sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+                double sy = Math.Sqrt(u[4] * u[4] + u[5] * u[5] + u[6] * u[6]);
+                double sz = Math.Sqrt(u[8] * u[8] + u[9] * u[9] + u[10] * u[10]);
+                // Rotation matrix rows/cols (column-major input).
+                double m00 = u[0] / sx, m10 = u[1] / sx, m20 = u[2] / sx;
+                double m01 = u[4] / sy, m11 = u[5] / sy, m21 = u[6] / sy;
+                double m02 = u[8] / sz, m12 = u[9] / sz, m22 = u[10] / sz;
+                double qw, qx, qy, qz, tr = m00 + m11 + m22;
+                if (tr > 0)
+                {
+                    double s = Math.Sqrt(tr + 1.0) * 2;
+                    qw = 0.25 * s; qx = (m21 - m12) / s; qy = (m02 - m20) / s; qz = (m10 - m01) / s;
+                }
+                else if (m00 > m11 && m00 > m22)
+                {
+                    double s = Math.Sqrt(1.0 + m00 - m11 - m22) * 2;
+                    qw = (m21 - m12) / s; qx = 0.25 * s; qy = (m01 + m10) / s; qz = (m02 + m20) / s;
+                }
+                else if (m11 > m22)
+                {
+                    double s = Math.Sqrt(1.0 + m11 - m00 - m22) * 2;
+                    qw = (m02 - m20) / s; qx = (m01 + m10) / s; qy = 0.25 * s; qz = (m12 + m21) / s;
+                }
+                else
+                {
+                    double s = Math.Sqrt(1.0 + m22 - m00 - m11) * 2;
+                    qw = (m10 - m01) / s; qx = (m02 + m20) / s; qy = (m12 + m21) / s; qz = 0.25 * s;
+                }
+                return new SceneObject
+                {
+                    Name = (string)node["name"] ?? "object",
+                    Extras = (JObject)node["extras"],
+                    Position = new[] { (float)u[12], (float)u[13], (float)u[14] },
+                    Rotation = new[] { (float)qx, (float)qy, (float)qz, (float)qw },
+                    Scale = new[] { (float)sx, (float)sy, (float)sz },
+                };
+            }
+
+            private void ReadPrimitive(JObject p, double[] world, List<Primitive> into)
             {
                 int mode = (int?)p["mode"] ?? 4;
                 if (mode != 4)
@@ -193,7 +262,7 @@ namespace SbgMaps
                     prim.Indices[t + 1] = mirrored ? idx[t + 1] : idx[t + 2];
                     prim.Indices[t + 2] = mirrored ? idx[t + 2] : idx[t + 1];
                 }
-                model.Primitives.Add(prim);
+                into.Add(prim);
             }
 
             // ---------- accessors ----------

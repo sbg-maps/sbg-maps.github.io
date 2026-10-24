@@ -130,11 +130,16 @@ namespace SbgMaps
             var tees = Object.FindObjectsByType<GolfTeeingPlatform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             for (int i = 0; i < tees.Length; i++)
             {
-                // Platforms side by side, across the direction of play, each sitting on the ground below it.
+                // Platforms side by side, across the direction of play. With a saved start height they all sit at it
+                // (the editor lets mappers raise or lower the start); otherwise each sits on the ground below it.
                 var p = teePos + facing * Vector3.right * ((i % 2 == 0 ? -1f : 1f) * 6f);
-                float y = GroundY(p.x - origin.x, p.z - origin.y, teePos.y + 3f);
-                if (Mathf.Abs(y - teePos.y) > 4f)
-                    y = teePos.y; // nothing sensible below (edge of a cliff); keep the tee height
+                float y = teePos.y;
+                if (!def.tee.y.HasValue)
+                {
+                    y = GroundY(p.x - origin.x, p.z - origin.y, teePos.y + 3f);
+                    if (Mathf.Abs(y - teePos.y) > 4f)
+                        y = teePos.y; // nothing sensible below (edge of a cliff); keep the tee height
+                }
                 tees[i].transform.SetPositionAndRotation(new Vector3(p.x, y, p.z), facing);
             }
 

@@ -41,7 +41,7 @@ New maps, or a different number of holes, need a game restart because the course
 | `paintmap` | grid | Surface types (see below). Optional; without it everything is rough. |
 | `water` | number | World height of the water. Ground below it is water (out of bounds). Default 5. |
 | `greenRadius` | number | Model maps: ground within this many metres of the cup plays and looks like green. Default 10. |
-| `tee` | {x, z, yaw?} | Where the teeing platforms go. `yaw` is degrees clockwise from +z; by default the tee faces the cup. |
+| `tee` | {x, y?, z, yaw?} | Where the teeing platforms go. With `y`, all platforms sit at that height. `yaw` is degrees clockwise from +z; by default the tee faces the cup. |
 | `cup` | {x, z} | The cup. The ground within 3 m of it is always painted green. |
 | `itemBoxes` | [{x, z}] | Item box positions. Up to 16 for now. |
 | `checkpoints` | [{x, z}] | Respawn checkpoints. Up to 1 for now. |
@@ -96,6 +96,27 @@ Unknown values count as rough.
 | `none` | decoration: no collision |
 
 - Missing or unknown surfaces count as rough.
+- Other material extras:
+  - `invisible: true` makes a collision-only mesh, never drawn. Levels converted from game sources ship their real collision mesh this way.
+  - `renderOnly: true` makes a visual-only mesh with no collision. The game still cuts the cup into it and tints it green near the flag.
+
+### Objects
+
+A node with `extras.object` is an object. It is built separately, with its own transform, so the game can move it.
+
+| `object` | behaviour |
+|---|---|
+| `static` | a prop: built like the level |
+| `seesaw` | tilts toward players standing on it (around its local x axis; its length runs along local z). Host-simulated, synced. |
+| `roller` | rolls copies of its model along `extras.path`, knocking players over. Positions come from the network clock, so they match on every machine. |
+
+Roller extras, all in the node's local units (scaled by the node's transform):
+- `path`: [[x, y, z], ...] points on the ground.
+- `radius`: ball radius.
+- `speed`: units per second.
+- `interval`: seconds between balls.
+
+`tools/sm64_to_glb.py` converts a Super Mario 64 decomp level into this layout: render-only visuals, an invisible collision mesh with surfaces guessed from SM64's own surface types, and objects (see-saws, rollers on the level's trajectories, gates, trees, cannon lids).
 - The game cuts a ~2 m square hole in the model under the cup.
 - Ground surfaces within `greenRadius` of the cup become green: snow surfaces become `snow-green`, desert ones `dry-green`.
 

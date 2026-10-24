@@ -115,10 +115,14 @@ function normalizeMaterials(root) {
         roughness: 1,
         metalness: 0,
         side: THREE.DoubleSide,
+        // Baked shading from games like SM64 lives in vertex colours.
+        vertexColors: !!o.geometry.attributes.color,
         transparent: m.transparent && m.opacity < 1,
         opacity: m.opacity ?? 1,
-        alphaTest: map && m.transparent ? 0.5 : 0,
+        alphaTest: m.alphaTest || (map && m.transparent ? 0.5 : 0),
       });
+      // glTF extras (surface, invisible collision, render-only) arrive as userData; keep them.
+      out.userData = { ...m.userData };
       if (out.map) {
         out.map.colorSpace = THREE.SRGBColorSpace;
         out.map.wrapS = out.map.wrapT = THREE.RepeatWrapping;

@@ -95,6 +95,18 @@ namespace SbgMaps
             Add<Checkpoint>("Checkpoint");
             Add<MainOutOfBoundsHazard>("MainOOB");
             Add<TerrainAddition>("TerrainAddition");
+            // Player size, for the editor's scale reference golfer.
+            var me = GameManager.LocalPlayerMovement;
+            if (me != null)
+            {
+                foreach (var c in me.GetComponentsInChildren<Collider>())
+                    sb.AppendLine($"  Player collider '{c.name}' {c.GetType().Name} trigger={c.isTrigger} bounds={c.bounds.size}" +
+                        (c is CapsuleCollider cap ? $" capsule height={cap.height * c.transform.lossyScale.y:F2} radius={cap.radius * c.transform.lossyScale.x:F2}" : ""));
+                var renderBounds = new Bounds(me.transform.position, Vector3.zero);
+                foreach (var r in me.GetComponentsInChildren<SkinnedMeshRenderer>())
+                    renderBounds.Encapsulate(r.bounds);
+                sb.AppendLine($"  Player visual size {renderBounds.size}");
+            }
             Plugin.Log.LogInfo(sb.ToString());
             Say("Gameplay objects written to the BepInEx log");
         }

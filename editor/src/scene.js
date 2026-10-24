@@ -44,12 +44,30 @@ export const fromMap = (p, y = p.y ?? 0) => new THREE.Vector3(p.x, y, -p.z);
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 
-/** First hit of a pointer event against the given objects (recursive), or null. */
+/** The material a raycast hit landed on (meshes can have several, split into groups). */
+export function hitMaterial(hit) {
+  const mats = Array.isArray(hit.object.material) ? hit.object.material : [hit.object.material];
+  const group = hit.object.geometry.groups?.find((g) => hit.faceIndex * 3 >= g.start && hit.faceIndex * 3 < g.start + g.count);
+  return mats[group?.materialIndex ?? 0];
+}
+
+/** First hit of a pointer event against the given objects (recursive) that is actually visible, or null. */
 export function pick(event, objects) {
   const rect = renderer.domElement.getBoundingClientRect();
   pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
   raycaster.setFromCamera(pointer, camera);
-  return raycaster.intersectObjects(objects, true)[0] ?? null;
+  return raycaster.intersectObjects(objects, true).find((h) => isShown(h.object) && hitMaterial(h)?.visible !== false) ?? null;
+}
+
+/** Hit at the centre of the view (for placing new things where the user is looking). */
+export function pickCenter(objects) {
+  raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+  return raycaster.intersectObjects(objects, true).find((h) => isShown(h.object) && hitMaterial(h)?.visible !== false) ?? null;
+}
+
+function isShown(object) {
+  for (let o = object; o; o = o.parent) if (!o.visible) return false;
+  return true;
 }
 
 /** Point the camera at a box from a pleasant 3/4 angle. */

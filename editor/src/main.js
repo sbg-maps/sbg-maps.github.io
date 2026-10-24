@@ -1,9 +1,11 @@
 import * as THREE from "three";
 import { loadFolder, loadZip } from "./mapfile.js";
 import { importModel } from "./importer.js";
-import { renderer, pick, frameBox } from "./scene.js";
+import { renderer, pick, pickCenter, hitMaterial, frameBox, scene, camera, controls } from "./scene.js";
+import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { HeightmapView } from "./viewer.js";
-import { Project, MODEL_SURFACES, MARKERS } from "./project.js";
+import { Project, MODEL_SURFACES, MARKERS, BASE_Y } from "./project.js";
+import { GOLFER_HEIGHT } from "./golfer.js";
 
 const status = document.getElementById("status");
 const holeSelect = document.getElementById("hole-select");
@@ -13,13 +15,20 @@ const toolbar = document.getElementById("toolbar");
 const dropOverlay = document.getElementById("drop");
 
 /** Golf-sized default: the longest side of an imported level becomes roughly this many metres. */
-const DEFAULT_LEVEL_SIZE = 450;
+const DEFAULT_LEVEL_SIZE = 300;
 
 let view = null; // HeightmapView for format 1 maps
 let project = null; // Project for model maps
 let tab = "model";
 let tool = "look";
 let selectedMaterial = null;
+let selectedObject = null;
+
+// Move/rotate/scale gizmo for objects and props.
+const gizmo = new TransformControls(camera, renderer.domElement);
+gizmo.addEventListener("dragging-changed", (e) => (controls.enabled = !e.value));
+gizmo.addEventListener("objectChange", () => project?.rebuildMarkers());
+scene.add(gizmo.getHelper());
 
 function setStatus(text, isError = false) {
   status.textContent = text;
@@ -37,6 +46,8 @@ for (const label of document.querySelectorAll("label.btn")) {
 }
 
 function clear() {
+  gizmo.detach();
+  selectedObject = null;
   view?.dispose();
   project?.dispose();
   view = project = null;
@@ -76,10 +87,8 @@ async function openModel(files) {
   empty.hidden = true;
   project = new Project(root);
   const size = project.box.getSize(new THREE.Vector3());
-  project.scale = Math.max(0.01, Math.round((DEFAULT_LEVEL_SIZE / Math.max(size.x, size.z)) * 2) / 2);
+  project.scale = niceScale(DEFAULT_LEVEL_SIZE / Math.max(size.x, size.z));
   project.applyTransform();
-  project.holes[0].water = Math.floor(project.box.min.y - 5);
-  project.rebuildMarkers();
   startEditing();
   setStatus(missing.length ? `Imported, but these files were missing: ${missing.join(", ")}` : `Imported ${root.name}`, missing.length > 0);
 }
@@ -165,7 +174,8 @@ const TOOLS = [
   { id: "cup", name: "Flag", tip: "Click to place the Flag: the hole (cup) players are aiming for." },
   { id: "itemBoxes", name: "Item box", tip: "Click to add item boxes." },
   { id: "checkpoints", name: "Checkpoint", tip: "Click to add a checkpoint." },
-  { id: "erase", name: "Erase", tip: "Click a marker to remove it." },
+  { id: "golfer", name: "Golfer", tip: "Click to drop a golfer (player-sized) anywhere, to judge the scale. Not saved into the map." },
+  { id: "erase", name: "Erase", tip: "Click a marker or golfer to remove it." },
 ];
 
 function startEditing() {
@@ -197,9 +207,9 @@ renderer.domElement.addEventListener("pointerup", (e) => {
   const hit = pick(e, [project.root]);
   if (!hit) return;
   if (tool === "look") {
-    const materials = Array.isArray(hit.object.material) ? hit.object.material : [hit.object.material];
-    const group = hit.object.geometry.groups.find((g) => hit.faceIndex * 3 >= g.start && hit.faceIndex * 3 < g.start + g.count);
-    selectMaterial(materials[group?.materialIndex ?? 0]);
+    const owner = project.objects.find((o) => isInside(o, hit.object));
+    if (tab === "objects" && owner) selectObject(owner);
+    else selectMaterial(hitMaterial(hit));
   } else if (tool === "erase") {
     if (!project.erase(hit.point)) setStatus("No marker there");
     renderPanel();
@@ -208,6 +218,19 @@ renderer.domElement.addEventListener("pointerup", (e) => {
     renderPanel();
   }
 });
+
+function isInside(ancestor, object) {
+  for (let o = object; o; o = o.parent) if (o === ancestor) return true;
+  return false;
+}
+
+function selectObject(object) {
+  selectedObject = object;
+  if (object) gizmo.attach(object);
+  else gizmo.detach();
+  tab = "objects";
+  renderPanel();
+}
 
 function selectMaterial(material) {
   if (selectedMaterial) selectedMaterial.emissive.setHex(0x000000);
@@ -222,32 +245,38 @@ function renderPanel() {
   if (!project) return;
   const tabs = [
     ["model", "Model"],
+    ["objects", "Objects"],
     ["holes", "Holes"],
     ["export", "Export"],
   ];
+  if (tab !== "objects") gizmo.detach();
+  else if (selectedObject) gizmo.attach(selectedObject);
   info.innerHTML = `
     <nav class="tabs">${tabs.map(([id, name]) => `<button class="tab ${id === tab ? "active" : ""}" data-tab="${id}">${name}</button>`).join("")}</nav>
-    <section>${{ model: modelPanel, holes: holesPanel, export: exportPanel }[tab]()}</section>`;
+    <section>${{ model: modelPanel, objects: objectsPanel, holes: holesPanel, export: exportPanel }[tab]()}</section>`;
   info.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => ((tab = b.dataset.tab), renderPanel())));
-  ({ model: wireModel, holes: wireHoles, export: wireExport })[tab]();
+  ({ model: wireModel, objects: wireObjects, holes: wireHoles, export: wireExport })[tab]();
 }
 
 function modelPanel() {
   const [sx, sz] = project.size;
   return `
     <h3>Size</h3>
-    <div class="field"><label for="scale">Scale</label><input id="scale" type="number" min="0.01" step="0.5" value="${project.scale}" /></div>
+    <div class="field"><label for="scale">Scale</label><input id="scale" type="number" min="0.0001" step="any" value="${+project.scale.toPrecision(3)}" /></div>
     <div class="stats">${stat("Course area", `${sx} x ${sz} m`)}</div>
+    <p class="hint">The golfer at the Start is the size of a player (${GOLFER_HEIGHT} m). Use the Golfer tool to drop more.</p>
     <div class="row"><button class="btn btn-secondary small" id="rotate">Rotate 90&deg;</button>
     <label class="check"><input type="checkbox" id="overlay" ${project.surfaceOverlay ? "checked" : ""} /> Show surfaces</label></div>
     <h3>Surfaces</h3>
-    <p class="hint">Pick what each material is. Tip: click the model with Look to find a material.</p>
+    <p class="hint">Pick what each material plays as. Tip: click the level with Look to find a material.${
+      project.hasCollisionMesh ? " This level has a separate collision mesh: tick Show surfaces to see it." : ""
+    }</p>
     <div class="materials">${project.materials
-      .map(({ material }, i) => `<div class="material ${material === selectedMaterial ? "selected" : ""}" data-i="${i}">
+      .map(({ material }, i) => (material.userData.renderOnly ? "" : `<div class="material ${material === selectedMaterial ? "selected" : ""}" data-i="${i}">
           <span class="thumb" style="${materialThumb(material)}"></span>
           <span class="mat-name" title="${esc(material.name)}">${esc(material.name || `Material ${i + 1}`)}</span>
           <select data-i="${i}" class="surface">${surfaceOptions(material.userData.surface)}</select>
-        </div>`)
+        </div>`))
       .join("")}</div>`;
 }
 
@@ -262,7 +291,7 @@ function surfaceOptions(selected) {
 
 function wireModel() {
   info.querySelector("#scale").addEventListener("change", (e) => {
-    project.scale = Math.max(0.01, Number(e.target.value) || 1);
+    project.scale = Math.max(0.0001, Number(e.target.value) || 1);
     project.applyTransform();
     frameBox(project.box);
     renderPanel();
@@ -284,6 +313,70 @@ function wireModel() {
   );
 }
 
+const BEHAVIOURS = [
+  ["static", "Static"],
+  ["seesaw", "Tilting see-saw"],
+  ["roller", "Roller (rolls balls along a path)"],
+];
+
+function objectsPanel() {
+  const objects = project.objects;
+  const sel = selectedObject;
+  return `
+    <label class="btn btn-primary small" tabindex="0">Add prop<input id="add-prop" type="file" multiple hidden /></label>
+    <p class="hint">Props are extra models (a bridge, a lid, trees...). They appear where you are looking. Click an object in the view or the list to move it.</p>
+    ${sel ? `
+      <div class="row">
+        ${["translate", "rotate", "scale"].map((m) => `<button class="btn btn-secondary small gizmo-mode ${gizmo.mode === m ? "active-mode" : ""}" data-mode="${m}">${{ translate: "Move", rotate: "Rotate", scale: "Size" }[m]}</button>`).join("")}
+      </div>` : ""}
+    <div class="objects">${objects
+      .map((o, i) => `<div class="object ${o === sel ? "selected" : ""}" data-i="${i}">
+        <input type="checkbox" class="obj-visible" data-i="${i}" ${o.visible ? "checked" : ""} title="Include in the map" />
+        <span class="mat-name" title="${esc(o.name)}">${esc(o.name || `Object ${i + 1}`)}</span>
+        <select class="obj-behaviour" data-i="${i}">${BEHAVIOURS.filter(([id]) => id !== "roller" || o.userData.path)
+          .map(([id, name]) => `<option value="${id}" ${id === o.userData.object ? "selected" : ""}>${name}</option>`)
+          .join("")}</select>
+        <button class="icon-btn obj-delete" data-i="${i}" title="Delete">&times;</button>
+      </div>`)
+      .join("") || `<p class="hint">No objects yet.</p>`}</div>`;
+}
+
+function wireObjects() {
+  const objects = project.objects;
+  info.querySelector("#add-prop").addEventListener("change", (e) =>
+    e.target.files.length &&
+    run("Adding prop", async () => {
+      const { root, missing } = await importModel(e.target.files);
+      const hit = pickCenter([project.root]);
+      const prop = project.addProp(root, hit ? hit.point : project.box.getCenter(new THREE.Vector3()));
+      selectObject(prop);
+      setStatus(missing.length ? `Added, but these files were missing: ${missing.join(", ")}` : `Added ${prop.name}`, missing.length > 0);
+    }),
+  );
+  info.querySelectorAll(".gizmo-mode").forEach((b) => b.addEventListener("click", () => (gizmo.setMode(b.dataset.mode), renderPanel())));
+  info.querySelectorAll(".object").forEach((row) =>
+    row.addEventListener("click", (e) => {
+      if (!["SELECT", "INPUT", "BUTTON"].includes(e.target.tagName)) selectObject(objects[Number(row.dataset.i)]);
+    }),
+  );
+  info.querySelectorAll(".obj-visible").forEach((c) =>
+    c.addEventListener("change", () => {
+      objects[Number(c.dataset.i)].visible = c.checked;
+      project.rebuildMarkers();
+    }),
+  );
+  info.querySelectorAll(".obj-behaviour").forEach((sel) => sel.addEventListener("change", () => (objects[Number(sel.dataset.i)].userData.object = sel.value)));
+  info.querySelectorAll(".obj-delete").forEach((b) =>
+    b.addEventListener("click", () => {
+      const o = objects[Number(b.dataset.i)];
+      if (o === selectedObject) selectObject(null);
+      project.removeObject(o);
+      project.rebuildMarkers();
+      renderPanel();
+    }),
+  );
+}
+
 function holesPanel() {
   const h = project.hole;
   const length = h.tee && h.cup ? `${Math.round(Math.hypot(h.cup.x - h.tee.x, h.cup.z - h.tee.z))} m` : "place Start and Flag";
@@ -297,7 +390,13 @@ function holesPanel() {
     <div class="field"><label for="difficulty">Difficulty</label><select id="difficulty">${["none", "beginner", "intermediate", "expert"]
       .map((d) => `<option ${d === h.difficulty ? "selected" : ""}>${d}</option>`)
       .join("")}</select></div>
+    ${h.tee ? `
+    <div class="field"><label for="tee-y">Start height (m)</label><input id="tee-y" type="number" step="0.25" value="${round2(h.tee.y)}" /></div>
+    <div class="field"><label for="tee-yaw">Start direction</label>
+      <div class="row tight"><label class="check"><input type="checkbox" id="tee-face" ${h.tee.yaw == null ? "checked" : ""} /> Face the flag</label>
+      <input id="tee-yaw" type="number" min="0" max="359" step="15" value="${Math.round(h.tee.yaw ?? 0)}" ${h.tee.yaw == null ? "disabled" : ""} /> &deg;</div></div>` : ""}
     <div class="field"><label for="water">Water level (m)</label><input id="water" type="number" step="1" value="${h.water}" /></div>
+    <p class="hint">The level's lowest point is at ${BASE_Y} m.</p>
     <div class="field"><label for="green">Green radius around the flag (m)</label><input id="green" type="number" min="3" max="40" step="1" value="${h.greenRadius}" /></div>
     <div class="stats">
       ${stat("Start to flag", length)}
@@ -322,6 +421,16 @@ function wireHoles() {
   bind("#par", (v) => (h.par = Math.max(1, Number(v) || 4)));
   bind("#difficulty", (v) => (h.difficulty = v));
   bind("#water", (v) => (h.water = Number(v) || 0));
+  if (h.tee) {
+    bind("#tee-y", (v) => (h.tee.y = Number(v) || 0));
+    bind("#tee-yaw", (v) => (h.tee.yaw = ((Number(v) % 360) + 360) % 360));
+    info.querySelector("#tee-face").addEventListener("change", (e) => {
+      if (e.target.checked) delete h.tee.yaw;
+      else h.tee.yaw = h.cup ? Math.round((Math.atan2(h.cup.x - h.tee.x, h.cup.z - h.tee.z) * 180) / Math.PI + 360) % 360 : 0;
+      project.rebuildMarkers();
+      renderPanel();
+    });
+  }
   bind("#green", (v) => (h.greenRadius = Math.max(3, Number(v) || 10)));
   info.querySelector("#add-hole").addEventListener("click", () => {
     project.addHole();
@@ -369,6 +478,13 @@ function materialThumb(material) {
   return url ? `background-image:url('${url}')` : `background:#${material.color.getHexString()}`;
 }
 
+const round2 = (v) => Math.round(v * 100) / 100;
+
+/** Rounds a scale factor to two significant digits (game levels can be 0.03 or 5.5). */
+function niceScale(v) {
+  const p = Math.pow(10, Math.floor(Math.log10(v)) - 1);
+  return Math.max(1e-4, Math.round(v / p) * p);
+}
 const stat = (label, value) => `<div class="stat"><span>${label}</span><span>${value}</span></div>`;
 
 function esc(text) {

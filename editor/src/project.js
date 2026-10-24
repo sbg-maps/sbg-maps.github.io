@@ -5,6 +5,7 @@ import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { scene, fromMap, toMap, disposeObject } from "./scene.js";
 import { materialsOf } from "./importer.js";
+import { makeGolfer } from "./golfer.js";
 
 /** Surfaces a model material can have, grouped for the picker. `id` is what goes into the map file. */
 export const MODEL_SURFACES = [
@@ -40,6 +41,9 @@ export const MARKERS = {
 
 /** Space around the model inside the map area, so tees and bounds are never at the very edge. */
 const PAD = 20;
+/** The level's lowest point always sits at this height, whatever its scale, with the water a little below. */
+export const BASE_Y = 20;
+export const DEFAULT_WATER = 15;
 export const MAX_SIZE = 900;
 
 export class Project {
@@ -50,10 +54,12 @@ export class Project {
     this.root = root;
     this.scale = 1;
     this.rotation = 0; // quarter turns around y
+    this.appliedRotation = 0;
     this.markersGroup = new THREE.Group();
     this.surfaceOverlay = false;
     this.holes = [];
     this.materials = [];
+    this.golfers = []; // editor-only scale references, in map coordinates
     this.collectMaterials();
     scene.add(this.pivot, this.markersGroup);
     this.applyTransform();
@@ -72,13 +78,21 @@ export class Project {
       if (!o.isMesh) return;
       for (const m of materialsOf(o)) {
         if (!seen.has(m)) {
-          m.userData.surface ??= "rough";
+          m.userData.surface ??= m.userData.renderOnly ? "none" : "rough";
           m.userData.thumb ??= thumbnail(m);
-          seen.set(m, { material: m, original: { color: m.color.clone(), map: m.map } });
+          seen.set(m, { material: m, original: { color: m.color.clone(), map: m.map, vertexColors: m.vertexColors } });
         }
       }
     });
     this.materials = [...seen.values()];
+    // Levels converted from game sources carry a separate invisible collision mesh.
+    this.hasCollisionMesh = this.materials.some(({ material }) => material.userData.invisible);
+    this.refreshOverlay();
+  }
+
+  /** Materials whose surface the mapper chooses (render-only visuals are left out). */
+  get surfaceMaterials() {
+    return this.materials.filter(({ material }) => !material.userData.renderOnly);
   }
 
   setSurface(material, surface) {
@@ -94,18 +108,62 @@ export class Project {
 
   refreshOverlay() {
     for (const { material, original } of this.materials) {
-      const surface = MODEL_SURFACES.find((s) => s.id === material.userData.surface);
+      const { invisible, renderOnly } = material.userData;
+      const surface = MODEL_SURFACES.find((s) => s.id === material.userData.surface) ?? MODEL_SURFACES[0];
       if (this.surfaceOverlay) {
         material.map = null;
+        material.vertexColors = false;
         material.color.set(surface.color);
       } else {
         material.map = original.map;
+        material.vertexColors = original.vertexColors;
         material.color.copy(original.color);
       }
+      // Normal view shows what players see; the surface view shows what they play on.
+      material.visible = this.surfaceOverlay ? !renderOnly : !invisible;
       material.opacity = material.userData.surface === "none" && this.surfaceOverlay ? 0.35 : 1;
-      material.transparent = material.opacity < 1;
+      material.transparent = material.opacity < 1 || material.userData.alphaBlend === true;
       material.needsUpdate = true;
     }
+  }
+
+  /** Objects inside the level (see-saws, rollers, props): nodes marked with userData.object. */
+  get objects() {
+    const out = [];
+    const walk = (o) => {
+      for (const c of o.children) {
+        if (c.userData.object) out.push(c);
+        else walk(c);
+      }
+    };
+    walk(this.root);
+    return out;
+  }
+
+  /** Adds an imported model as a static prop near a world point, sized to roughly `size` metres. */
+  addProp(model, worldPoint, size = 10) {
+    const prop = new THREE.Group();
+    prop.name = model.name || "prop";
+    prop.userData.object = "static";
+    prop.add(model);
+    const box = new THREE.Box3().setFromObject(model);
+    const dims = box.getSize(new THREE.Vector3());
+    // Centre on the footprint, bottom on the ground.
+    model.position.sub(new THREE.Vector3((box.min.x + box.max.x) / 2, box.min.y, (box.min.z + box.max.z) / 2));
+    this.root.add(prop);
+    this.pivot.updateMatrixWorld(true);
+    const worldScale = this.pivot.getWorldScale(new THREE.Vector3()).x;
+    prop.scale.setScalar(size / Math.max(dims.x, dims.y, dims.z, 0.001) / worldScale);
+    prop.position.copy(this.root.worldToLocal(worldPoint.clone()));
+    prop.updateMatrixWorld(true);
+    this.collectMaterials();
+    return prop;
+  }
+
+  removeObject(object) {
+    object.removeFromParent();
+    disposeObject(object);
+    this.collectMaterials();
   }
 
   /** Scale and rotate the model, then place it so its footprint starts at (PAD, PAD) in map coordinates. */
@@ -118,7 +176,7 @@ export class Project {
     this.pivot.rotation.set(0, (this.rotation * Math.PI) / 2, 0);
     this.pivot.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(this.root);
-    this.pivot.position.set(PAD - box.min.x, 0, -PAD - box.max.z);
+    this.pivot.position.set(PAD - box.min.x, BASE_Y - box.min.y, -PAD - box.max.z);
     this.pivot.updateMatrixWorld(true);
     this.box = new THREE.Box3().setFromObject(this.root);
 
@@ -127,6 +185,10 @@ export class Project {
         if (local[i][j]) set(toMap(this.pivot.localToWorld(local[i][j].clone())));
       }),
     );
+    // A custom start direction turns with the level (a quarter turn is -90 degrees of map yaw).
+    const turned = this.rotation - this.appliedRotation;
+    this.appliedRotation = this.rotation;
+    for (const h of this.holes) if (h.tee && h.tee.yaw != null) h.tee.yaw = (((h.tee.yaw - turned * 90) % 360) + 360) % 360;
     this.rebuildMarkers();
   }
 
@@ -142,7 +204,7 @@ export class Project {
       name: `Hole ${n}`,
       par: 4,
       difficulty: "none",
-      water: Math.floor(this.box.min.y - 5),
+      water: DEFAULT_WATER,
       greenRadius: 10,
       tee: null,
       cup: null,
@@ -177,7 +239,8 @@ export class Project {
   place(kind, worldPoint) {
     const p = toMap(worldPoint);
     const h = this.hole;
-    if (kind === "tee") h.tee = p;
+    if (kind === "golfer") this.golfers.push(p);
+    else if (kind === "tee") h.tee = p;
     else if (kind === "cup") h.cup = p;
     else h[kind].push(p);
     this.rebuildMarkers();
@@ -196,6 +259,7 @@ export class Project {
     consider(h.cup, () => (h.cup = null));
     h.itemBoxes.forEach((b, i) => consider(b, () => h.itemBoxes.splice(i, 1)));
     h.checkpoints.forEach((c, i) => consider(c, () => h.checkpoints.splice(i, 1)));
+    this.golfers.forEach((g, i) => consider(g, () => this.golfers.splice(i, 1)));
     best?.remove();
     this.rebuildMarkers();
     return !!best;
@@ -211,7 +275,22 @@ export class Project {
         m.position.copy(fromMap(p)).y += lift;
         this.markersGroup.add(m);
       };
-      if (h.tee) add(new THREE.CylinderGeometry(3, 3, 0.6, 24), MARKERS.tee.color, h.tee, 0.3);
+      if (h.tee) {
+        add(new THREE.CylinderGeometry(3, 3, 0.6, 24), MARKERS.tee.color, h.tee, 0.3);
+        if (active) {
+          // A golfer at the start shows how big the level is to players.
+          const golfer = makeGolfer();
+          const yaw0 = h.tee.yaw ?? (h.cup ? (Math.atan2(h.cup.x - h.tee.x, h.cup.z - h.tee.z) * 180) / Math.PI : 0);
+          golfer.position.copy(fromMap(h.tee)).y += 0.6;
+          golfer.rotation.y = Math.PI - (yaw0 * Math.PI) / 180;
+          this.markersGroup.add(golfer);
+        }
+        // Arrow showing which way players face at the start.
+        const yaw = h.tee.yaw ?? (h.cup ? (Math.atan2(h.cup.x - h.tee.x, h.cup.z - h.tee.z) * 180) / Math.PI : 0);
+        const dir = new THREE.Vector3(Math.sin((yaw * Math.PI) / 180), 0, -Math.cos((yaw * Math.PI) / 180));
+        const arrow = new THREE.ArrowHelper(dir, fromMap(h.tee).setY(h.tee.y + 1.2), 8, 0xffffff, 3, 2);
+        this.markersGroup.add(arrow);
+      }
       if (h.cup) {
         add(new THREE.CylinderGeometry(0.15, 0.15, 6, 8), 0xeeeeee, h.cup, 3);
         add(new THREE.ConeGeometry(1, 2, 3), MARKERS.cup.color, h.cup, 5.5);
@@ -236,6 +315,19 @@ export class Project {
         this.markersGroup.add(line);
       }
     });
+    for (const p of this.golfers) {
+      const golfer = makeGolfer(0xf5a623);
+      golfer.position.copy(fromMap(p));
+      this.markersGroup.add(golfer);
+    }
+    // Paths that rollers follow.
+    for (const obj of this.objects) {
+      const path = obj.userData.object === "roller" ? obj.userData.path : null;
+      if (!path?.length || !obj.visible) continue;
+      obj.updateMatrixWorld(true);
+      const pts = path.map((p) => new THREE.Vector3(...p).applyMatrix4(obj.matrixWorld));
+      this.markersGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0xff8a00 })));
+    }
     // Water plane for the active hole.
     const h = this.hole;
     if (h) {
@@ -261,6 +353,8 @@ export class Project {
       if (!h.tee) out.push(`${label}: place the Start (where players tee off).`);
       if (!h.cup) out.push(`${label}: place the Flag (the hole players aim for).`);
       if (h.itemBoxes.length > 16) out.push(`${label}: at most 16 item boxes for now.`);
+      const under = [h.tee && "the Start", h.cup && "the Flag"].filter((what, k) => what && [h.tee, h.cup][k].y < h.water);
+      if (under.length) out.push(`${label}: ${under.join(" and ")} ${under.length > 1 ? "are" : "is"} under the water level (${h.water} m).`);
       if (h.checkpoints.length > 1) out.push(`${label}: at most 1 checkpoint for now.`);
     });
     return out;
@@ -296,26 +390,52 @@ export class Project {
     return zipSync({ "map.json": strToU8(JSON.stringify(manifest, null, 2)), "level.glb": new Uint8Array(glb) }, { level: 6 });
   }
 
-  /** The level with scale/rotation/placement baked into the vertices, surfaces in material extras. */
+  /**
+   * The level with scale/rotation/placement baked into the vertices and surfaces in material extras.
+   * Objects stay separate nodes with their own transform (so the game can move them) and their userData as extras.
+   */
   async exportGlb() {
     const out = new THREE.Scene();
     const wasOverlay = this.surfaceOverlay;
     this.setSurfaceOverlay(false);
-    // Only the surface goes into the file (userData becomes glTF extras); keep editor-only data out.
-    const savedUserData = this.materials.map(({ material }) => [material, material.userData]);
-    for (const [m, data] of savedUserData) m.userData = { surface: data.surface };
+    // Only game-relevant fields go into the file (userData becomes glTF extras); keep editor-only data out.
+    const KEEP = ["surface", "invisible", "renderOnly", "sm64Surface", "alphaBlend"];
+    const savedUserData = this.materials.map(({ material }) => [material, material.userData, material.visible]);
+    for (const [m, data] of savedUserData) {
+      m.userData = Object.fromEntries(KEEP.filter((k) => data[k] !== undefined).map((k) => [k, data[k]]));
+      m.visible = true;
+    }
     this.pivot.updateMatrixWorld(true);
+    const objects = new Set(this.objects.filter((o) => o.visible));
+    const nodeFor = new Map();
+    for (const obj of objects) {
+      const node = new THREE.Group();
+      node.name = obj.name;
+      obj.matrixWorld.decompose(node.position, node.quaternion, node.scale);
+      node.userData = JSON.parse(JSON.stringify(obj.userData));
+      out.add(node);
+      nodeFor.set(obj, node);
+    }
+    const inverse = new THREE.Matrix4();
     this.root.traverse((o) => {
-      if (!o.isMesh) return;
-      const geometry = o.geometry.clone().applyMatrix4(o.matrixWorld);
-      const mesh = new THREE.Mesh(geometry, o.material);
+      if (!o.isMesh || !o.visible) return;
+      // The object may be the mesh itself (single-part glTF nodes load that way) or one of its parents.
+      let owner = o;
+      while (owner && !objects.has(owner) && owner !== this.root) owner = owner.parent;
+      if (owner && !objects.has(owner) && this.objects.some((x) => !x.visible && isAncestor(x, o))) return; // hidden object
+      const node = objects.has(owner) ? nodeFor.get(owner) : null;
+      const matrix = node ? inverse.copy(owner.matrixWorld).invert().multiply(o.matrixWorld) : o.matrixWorld;
+      const mesh = new THREE.Mesh(o.geometry.clone().applyMatrix4(matrix), o.material);
       mesh.name = o.name;
-      out.add(mesh);
+      (node ?? out).add(mesh);
     });
     try {
       return await new GLTFExporter().parseAsync(out, { binary: true });
     } finally {
-      for (const [m, data] of savedUserData) m.userData = data;
+      for (const [m, data, visible] of savedUserData) {
+        m.userData = data;
+        m.visible = visible;
+      }
       this.setSurfaceOverlay(wasOverlay);
       out.traverse((o) => o.isMesh && o.geometry.dispose());
     }
@@ -355,6 +475,11 @@ export class Project {
     project.rebuildMarkers();
     return project;
   }
+}
+
+function isAncestor(ancestor, object) {
+  for (let o = object.parent; o; o = o.parent) if (o === ancestor) return true;
+  return false;
 }
 
 /** Small data-URL preview of a material's texture (or null), kept so the panel never depends on blob URLs. */

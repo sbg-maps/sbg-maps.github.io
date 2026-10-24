@@ -24,21 +24,80 @@ namespace SbgMaps
             var root = new GameObject("SbgMaps level");
             root.transform.SetParent(parent, false);
             root.transform.position = origin;
+            var ctx = new Context { Model = model, GroundLayer = groundLayer };
             var localCup = cup - origin;
+            BuildParts(ctx, root.transform, model.Primitives, "level", new CupZone(localCup, greenRadius));
 
-            var materials = new Dictionary<int, Material>();
-            var greenMaterials = new Dictionary<int, Material>();
-            var cutSquare = Square(localCup.x, localCup.z, CupCutHalf);
-            var greenCircle = Circle(localCup.x, localCup.z, greenRadius, GreenZoneSides);
+            int seesaws = 0, rollers = 0;
+            foreach (var obj in model.Objects)
+            {
+                var go = new GameObject(obj.Name);
+                go.transform.SetParent(root.transform, false);
+                go.transform.localPosition = new Vector3(obj.Position[0], obj.Position[1], obj.Position[2]);
+                go.transform.localRotation = new Quaternion(obj.Rotation[0], obj.Rotation[1], obj.Rotation[2], obj.Rotation[3]);
+                go.transform.localScale = new Vector3(obj.Scale[0], obj.Scale[1], obj.Scale[2]);
+                string behaviour = (string)obj.Extras?["object"] ?? "static";
+                switch (behaviour)
+                {
+                    case "seesaw":
+                        BuildParts(ctx, go.transform, obj.Primitives, obj.Name, null);
+                        Seesaw.Attach(go, seesaws++);
+                        break;
+                    case "roller":
+                        // The parts are the ball's look; the roller clones it for every ball it rolls.
+                        var template = new GameObject("ball template");
+                        template.transform.SetParent(go.transform, false);
+                        BuildParts(ctx, template.transform, obj.Primitives, obj.Name, null, forceSurface: "none");
+                        Roller.Attach(go, template, obj.Extras, rollers++, groundLayer);
+                        break;
+                    default:
+                        BuildParts(ctx, go.transform, obj.Primitives, obj.Name, null);
+                        break;
+                }
+            }
+            if (seesaws + rollers > 0)
+                Plugin.Log.LogInfo($"LevelBuilder: {model.Objects.Count} objects ({seesaws} see-saws, {rollers} rollers)");
+            Physics.SyncTransforms();
+            return root;
+        }
 
+        private class Context
+        {
+            public GlbReader.Model Model;
+            public int GroundLayer;
+            public readonly Dictionary<int, Material> Materials = new Dictionary<int, Material>();
+            public readonly Dictionary<int, Material> GreenMaterials = new Dictionary<int, Material>();
+        }
+
+        /// <summary>Where the cup is cut out and the green drawn, in the parts' local space.</summary>
+        private class CupZone
+        {
+            public readonly Vector3 Cup;
+            public readonly List<Edge> Cut;
+            public readonly List<Edge> Green;
+
+            public CupZone(Vector3 cup, float greenRadius)
+            {
+                Cup = cup;
+                Cut = Square(cup.x, cup.z, CupCutHalf);
+                Green = Circle(cup.x, cup.z, greenRadius, GreenZoneSides);
+            }
+        }
+
+        private static void BuildParts(Context ctx, Transform parent, List<GlbReader.Primitive> prims, string label, CupZone zone, string forceSurface = null)
+        {
+            var model = ctx.Model;
             int index = 0;
-            foreach (var prim in model.Primitives)
+            foreach (var prim in prims)
             {
                 var mat = prim.Material >= 0 && prim.Material < model.Materials.Count ? model.Materials[prim.Material] : null;
-                string surface = mat?.Surface ?? "rough";
+                bool renderOnly = mat?.RenderOnly ?? false;
+                bool invisible = mat?.Invisible ?? false;
+                string surface = forceSurface ?? (renderOnly ? "none" : mat?.Surface ?? "rough");
                 if (!Surfaces.ContainsKey(surface))
                     surface = "rough";
-                string greenSurface = GreenFor(surface);
+                // Collision gets a green surface near the cup; render-only ground gets the green look instead.
+                string greenSurface = renderOnly ? null : GreenFor(surface);
 
                 var main = new MeshData();
                 var green = new MeshData();
@@ -46,28 +105,35 @@ namespace SbgMaps
                 {
                     var tri = new List<Vertex> { Vertex.From(prim, prim.Indices[t]), Vertex.From(prim, prim.Indices[t + 1]), Vertex.From(prim, prim.Indices[t + 2]) };
                     var pieces = new List<List<Vertex>> { tri };
-
-                    if (surface != "none" && NearHeight(tri, localCup.y, CupCutHeight))
-                        pieces = SubtractAll(pieces, cutSquare, out _);
-
-                    if (greenSurface != null && NearHeight(tri, localCup.y, GreenZoneHeight))
+                    if (zone != null)
                     {
-                        pieces = SubtractAll(pieces, greenCircle, out var inside);
-                        foreach (var p in inside)
-                            green.AddPolygon(p);
+                        if ((surface != "none" || renderOnly) && NearHeight(tri, zone.Cup.y, CupCutHeight))
+                            pieces = SubtractAll(pieces, zone.Cut, out _);
+                        bool greenLook = renderOnly && FacesUp(tri);
+                        if ((greenSurface != null || greenLook) && NearHeight(tri, zone.Cup.y, GreenZoneHeight))
+                        {
+                            pieces = SubtractAll(pieces, zone.Green, out var inside);
+                            foreach (var p in inside)
+                                green.AddPolygon(p);
+                        }
                     }
                     foreach (var p in pieces)
                         main.AddPolygon(p);
                 }
 
-                string name = $"{index++:D3} {mat?.Name ?? "unnamed"} [{surface}]";
+                string name = $"{label} {index++:D3} {mat?.Name ?? "unnamed"} [{surface}]";
                 if (main.Count > 0)
-                    CreatePart(root.transform, name, main, MaterialFor(materials, model, prim.Material, false), surface, groundLayer);
+                    CreatePart(parent, name, main, invisible ? null : MaterialFor(ctx.Materials, model, prim.Material, false), surface, ctx.GroundLayer);
                 if (green.Count > 0)
-                    CreatePart(root.transform, name + " green", green, MaterialFor(greenMaterials, model, prim.Material, true), greenSurface, groundLayer);
+                    CreatePart(parent, name + " green", green, invisible ? null : MaterialFor(ctx.GreenMaterials, model, prim.Material, true),
+                        greenSurface ?? "none", ctx.GroundLayer);
             }
-            Physics.SyncTransforms();
-            return root;
+        }
+
+        private static bool FacesUp(List<Vertex> tri)
+        {
+            var n = Vector3.Cross(tri[1].Pos - tri[0].Pos, tri[2].Pos - tri[0].Pos);
+            return n.sqrMagnitude > 0 && n.normalized.y > 0.5f;
         }
 
         /// <summary>Map surface ids and the game layer each plays as. Null: collider only (no golf surface).</summary>
@@ -143,8 +209,12 @@ namespace SbgMaps
             go.layer = surface == "slide" ? SlideLayer(groundLayer) : groundLayer;
             go.transform.SetParent(parent, false);
             var mesh = data.ToMesh(name);
-            go.AddComponent<MeshFilter>().sharedMesh = mesh;
-            go.AddComponent<MeshRenderer>().sharedMaterial = material;
+            // A null material means collision only (an invisible collision mesh).
+            if (material != null)
+            {
+                go.AddComponent<MeshFilter>().sharedMesh = mesh;
+                go.AddComponent<MeshRenderer>().sharedMaterial = material;
+            }
             if (surface != "none")
                 go.AddComponent<MeshCollider>().sharedMesh = mesh;
             var layer = Surfaces[surface];
@@ -182,6 +252,25 @@ namespace SbgMaps
             }
             if (src == null || src.DoubleSided)
                 mat.SetFloat("_Cull", 0f);
+            if (src != null && src.AlphaMask)
+            {
+                // Cut-out textures (tree leaves, fences): URP alpha clipping.
+                mat.SetFloat("_AlphaClip", 1f);
+                mat.SetFloat("_Cutoff", 0.5f);
+                mat.EnableKeyword("_ALPHATEST_ON");
+                mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.AlphaTest;
+            }
+            else if (src != null && src.AlphaBlend)
+            {
+                mat.SetFloat("_Surface", 1f);
+                mat.SetFloat("_Blend", 0f);
+                mat.SetOverrideTag("RenderType", "Transparent");
+                mat.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                mat.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                mat.SetFloat("_ZWrite", 0f);
+                mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+                mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+            }
             cache[index] = mat;
             return mat;
         }
