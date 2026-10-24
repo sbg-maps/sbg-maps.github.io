@@ -86,13 +86,18 @@ Unknown values count as rough.
 
 | surface | plays as |
 |---|---|
-| `rough`, `fairway`, `green`, `sand`, `path` | that golf surface |
+| `fairway`, `rough`, `green`, `sand`, `path` | golf surfaces |
+| `snow-fairway`, `snow-rough`, `snow-green`, `ice` | snow surfaces; `ice` is slippery |
+| `desert-sand`, `dry-fairway`, `dry-green`, `sand-rough` | desert surfaces |
+| `road`, `sidewalk`, `bridge`, `building` | city surfaces |
+| `slide` | players can't stand on it and slide off (like steep slopes); the ball plays it as rough |
 | `oob` | out of bounds |
 | `solid` | walls and props: solid, no golf surface |
 | `none` | decoration: no collision |
 
 - Missing or unknown surfaces count as rough.
-- The game cuts a ~2 m square hole in the model under the cup. Ground surfaces within `greenRadius` of the cup become green.
+- The game cuts a ~2 m square hole in the model under the cup.
+- Ground surfaces within `greenRadius` of the cup become green: snow surfaces become `snow-green`, desert ones `dry-green`.
 
 ## Tools
 

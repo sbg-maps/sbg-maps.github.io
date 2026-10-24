@@ -148,7 +148,7 @@ function showViewHole(index) {
     <h2>${esc(hole.name ?? "Unnamed")}</h2>
     <div class="tags"><span class="tag par">Par ${hole.par}</span><span class="tag">${esc(hole.difficulty ?? "none")}</span></div>
     <div class="stats">
-      ${stat("Tee to cup", `${Math.round(length)} m`)}
+      ${stat("Start to flag", `${Math.round(length)} m`)}
       ${stat("Size", `${hole.size[0]} x ${hole.size[1]} m`)}
       ${stat("Water level", `${hole.water ?? 5} m`)}
       ${stat("Item boxes", hole.itemBoxes?.length ?? 0)}
@@ -161,8 +161,8 @@ function showViewHole(index) {
 
 const TOOLS = [
   { id: "look", name: "Look", tip: "Orbit around. Click the model to find its material." },
-  { id: "tee", name: "Tee", tip: "Click to place the tee." },
-  { id: "cup", name: "Cup", tip: "Click to place the cup." },
+  { id: "tee", name: "Start", tip: "Click to place the Start: the tee, where players hit their first shot." },
+  { id: "cup", name: "Flag", tip: "Click to place the Flag: the hole (cup) players are aiming for." },
   { id: "itemBoxes", name: "Item box", tip: "Click to add item boxes." },
   { id: "checkpoints", name: "Checkpoint", tip: "Click to add a checkpoint." },
   { id: "erase", name: "Erase", tip: "Click a marker to remove it." },
@@ -246,9 +246,18 @@ function modelPanel() {
       .map(({ material }, i) => `<div class="material ${material === selectedMaterial ? "selected" : ""}" data-i="${i}">
           <span class="thumb" style="${materialThumb(material)}"></span>
           <span class="mat-name" title="${esc(material.name)}">${esc(material.name || `Material ${i + 1}`)}</span>
-          <select data-i="${i}" class="surface">${MODEL_SURFACES.map((s) => `<option value="${s.id}" ${s.id === material.userData.surface ? "selected" : ""}>${s.name}</option>`).join("")}</select>
+          <select data-i="${i}" class="surface">${surfaceOptions(material.userData.surface)}</select>
         </div>`)
       .join("")}</div>`;
+}
+
+function surfaceOptions(selected) {
+  const groups = [...new Set(MODEL_SURFACES.map((s) => s.group))];
+  return groups
+    .map((g) => `<optgroup label="${g}">${MODEL_SURFACES.filter((s) => s.group === g)
+      .map((s) => `<option value="${s.id}" ${s.id === selected ? "selected" : ""}>${s.name}</option>`)
+      .join("")}</optgroup>`)
+    .join("");
 }
 
 function wireModel() {
@@ -277,7 +286,7 @@ function wireModel() {
 
 function holesPanel() {
   const h = project.hole;
-  const length = h.tee && h.cup ? `${Math.round(Math.hypot(h.cup.x - h.tee.x, h.cup.z - h.tee.z))} m` : "place tee and cup";
+  const length = h.tee && h.cup ? `${Math.round(Math.hypot(h.cup.x - h.tee.x, h.cup.z - h.tee.z))} m` : "place Start and Flag";
   return `
     <div class="row">
       <button class="btn btn-primary small" id="add-hole">Add hole</button>
@@ -289,15 +298,15 @@ function holesPanel() {
       .map((d) => `<option ${d === h.difficulty ? "selected" : ""}>${d}</option>`)
       .join("")}</select></div>
     <div class="field"><label for="water">Water level (m)</label><input id="water" type="number" step="1" value="${h.water}" /></div>
-    <div class="field"><label for="green">Green radius (m)</label><input id="green" type="number" min="3" max="40" step="1" value="${h.greenRadius}" /></div>
+    <div class="field"><label for="green">Green radius around the flag (m)</label><input id="green" type="number" min="3" max="40" step="1" value="${h.greenRadius}" /></div>
     <div class="stats">
-      ${stat("Tee to cup", length)}
-      ${stat("Tee", h.tee ? "placed" : "missing")}
-      ${stat("Cup", h.cup ? "placed" : "missing")}
+      ${stat("Start to flag", length)}
+      ${stat("Start (tee)", h.tee ? "placed" : "missing")}
+      ${stat("Flag (cup)", h.cup ? "placed" : "missing")}
       ${stat(MARKERS.itemBoxes.name + "es", `${h.itemBoxes.length} / 16`)}
       ${stat(MARKERS.checkpoints.name + "s", `${h.checkpoints.length} / 1`)}
     </div>
-    <p class="hint">Use the toolbar over the 3D view to place markers. Everything around the cup within the green radius plays as green.</p>`;
+    <p class="hint">Use the toolbar over the 3D view to place things. <b>Start</b> is where players tee off, <b>Flag</b> is the hole they aim for. Ground within the green radius of the flag plays as a putting green.</p>`;
 }
 
 function wireHoles() {

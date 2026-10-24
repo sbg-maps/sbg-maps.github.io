@@ -6,21 +6,34 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { scene, fromMap, toMap, disposeObject } from "./scene.js";
 import { materialsOf } from "./importer.js";
 
-/** Surfaces a model material can have. `id` is what goes into the map file. */
+/** Surfaces a model material can have, grouped for the picker. `id` is what goes into the map file. */
 export const MODEL_SURFACES = [
-  { id: "rough", name: "Rough", color: "#62a642" },
-  { id: "fairway", name: "Fairway", color: "#84ce54" },
-  { id: "green", name: "Green", color: "#a8e870" },
-  { id: "sand", name: "Sand", color: "#f4e2a8" },
-  { id: "path", name: "Dirt path", color: "#a0785a" },
-  { id: "oob", name: "Out of bounds", color: "#8a8a8a" },
-  { id: "solid", name: "Wall / solid", color: "#c27ad6" },
-  { id: "none", name: "No collision", color: "#e05a5a" },
+  { id: "fairway", name: "Fairway", group: "Golf", color: "#84ce54" },
+  { id: "rough", name: "Rough", group: "Golf", color: "#62a642" },
+  { id: "green", name: "Green", group: "Golf", color: "#a8e870" },
+  { id: "sand", name: "Sand (bunker)", group: "Golf", color: "#f4e2a8" },
+  { id: "path", name: "Dirt path", group: "Golf", color: "#a0785a" },
+  { id: "snow-fairway", name: "Snow fairway", group: "Snow", color: "#e8f2f8" },
+  { id: "snow-rough", name: "Snow rough", group: "Snow", color: "#c8d8e4" },
+  { id: "snow-green", name: "Snow green", group: "Snow", color: "#f4fbff" },
+  { id: "ice", name: "Ice (slippery)", group: "Snow", color: "#8fd8f4" },
+  { id: "desert-sand", name: "Desert sand", group: "Desert", color: "#e8c482" },
+  { id: "dry-fairway", name: "Dry fairway", group: "Desert", color: "#b8c86a" },
+  { id: "dry-green", name: "Dry green", group: "Desert", color: "#ccd88a" },
+  { id: "sand-rough", name: "Sandy rough", group: "Desert", color: "#c8b47a" },
+  { id: "road", name: "Road", group: "City", color: "#5a5e66" },
+  { id: "sidewalk", name: "Sidewalk", group: "City", color: "#b4b4ac" },
+  { id: "bridge", name: "Wooden bridge", group: "City", color: "#a8743c" },
+  { id: "building", name: "Building / roof", group: "City", color: "#9a8aa8" },
+  { id: "slide", name: "Slide (can't stand on it)", group: "Special", color: "#ff9a3c" },
+  { id: "oob", name: "Out of bounds", group: "Special", color: "#8a8a8a" },
+  { id: "solid", name: "Wall / solid", group: "Special", color: "#c27ad6" },
+  { id: "none", name: "No collision", group: "Special", color: "#e05a5a" },
 ];
 
 export const MARKERS = {
-  tee: { name: "Tee", color: 0xffffff },
-  cup: { name: "Cup", color: 0xe8443a },
+  tee: { name: "Start", color: 0xffffff },
+  cup: { name: "Flag", color: 0xe8443a },
   itemBoxes: { name: "Item box", color: 0xf5c400 },
   checkpoints: { name: "Checkpoint", color: 0xb400dc },
 };
@@ -245,8 +258,8 @@ export class Project {
     if (sx > MAX_SIZE || sz > MAX_SIZE) out.push(`The level is ${sx} x ${sz} m; the game fits at most ${MAX_SIZE} x ${MAX_SIZE} m. Lower the scale.`);
     this.holes.forEach((h, i) => {
       const label = `${h.name || `Hole ${i + 1}`}`;
-      if (!h.tee) out.push(`${label}: place a tee.`);
-      if (!h.cup) out.push(`${label}: place a cup.`);
+      if (!h.tee) out.push(`${label}: place the Start (where players tee off).`);
+      if (!h.cup) out.push(`${label}: place the Flag (the hole players aim for).`);
       if (h.itemBoxes.length > 16) out.push(`${label}: at most 16 item boxes for now.`);
       if (h.checkpoints.length > 1) out.push(`${label}: at most 1 checkpoint for now.`);
     });

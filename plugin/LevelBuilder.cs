@@ -36,7 +36,9 @@ namespace SbgMaps
             {
                 var mat = prim.Material >= 0 && prim.Material < model.Materials.Count ? model.Materials[prim.Material] : null;
                 string surface = mat?.Surface ?? "rough";
-                bool ground = IsGround(surface);
+                if (!Surfaces.ContainsKey(surface))
+                    surface = "rough";
+                string greenSurface = GreenFor(surface);
 
                 var main = new MeshData();
                 var green = new MeshData();
@@ -48,7 +50,7 @@ namespace SbgMaps
                     if (surface != "none" && NearHeight(tri, localCup.y, CupCutHeight))
                         pieces = SubtractAll(pieces, cutSquare, out _);
 
-                    if (ground && NearHeight(tri, localCup.y, GreenZoneHeight))
+                    if (greenSurface != null && NearHeight(tri, localCup.y, GreenZoneHeight))
                     {
                         pieces = SubtractAll(pieces, greenCircle, out var inside);
                         foreach (var p in inside)
@@ -62,39 +64,90 @@ namespace SbgMaps
                 if (main.Count > 0)
                     CreatePart(root.transform, name, main, MaterialFor(materials, model, prim.Material, false), surface, groundLayer);
                 if (green.Count > 0)
-                    CreatePart(root.transform, name + " green", green, MaterialFor(greenMaterials, model, prim.Material, true), "green", groundLayer);
+                    CreatePart(root.transform, name + " green", green, MaterialFor(greenMaterials, model, prim.Material, true), greenSurface, groundLayer);
             }
             Physics.SyncTransforms();
             return root;
         }
 
-        private static bool IsGround(string surface) =>
-            surface == "rough" || surface == "fairway" || surface == "green" || surface == "sand" || surface == "path";
-
-        private static TerrainLayer? LayerFor(string surface) => surface switch
+        /// <summary>Map surface ids and the game layer each plays as. Null: collider only (no golf surface).</summary>
+        private static readonly Dictionary<string, TerrainLayer?> Surfaces = new Dictionary<string, TerrainLayer?>
         {
-            "rough" => TerrainLayer.Rough,
-            "fairway" => TerrainLayer.Fairway,
-            "green" => TerrainLayer.Green,
-            "sand" => TerrainLayer.Sand,
-            "path" => TerrainLayer.DirtPath,
-            "oob" => TerrainLayer.OutOfBounds,
-            _ => null, // solid: plain collider; none: no collider
+            ["rough"] = TerrainLayer.Rough,
+            ["fairway"] = TerrainLayer.Fairway,
+            ["green"] = TerrainLayer.Green,
+            ["sand"] = TerrainLayer.Sand,
+            ["path"] = TerrainLayer.DirtPath,
+            ["snow-fairway"] = TerrainLayer.SnowFairway,
+            ["snow-rough"] = TerrainLayer.SnowRough,
+            ["snow-green"] = TerrainLayer.SnowGreen,
+            ["ice"] = TerrainLayer.Ice,
+            ["desert-sand"] = TerrainLayer.DesertSand,
+            ["dry-fairway"] = TerrainLayer.DryFairway,
+            ["dry-green"] = TerrainLayer.DryGreen,
+            ["sand-rough"] = TerrainLayer.SandRough,
+            ["road"] = TerrainLayer.Road,
+            ["sidewalk"] = TerrainLayer.Sidewalk,
+            ["bridge"] = TerrainLayer.WoodenBridge,
+            ["building"] = TerrainLayer.Building,
+            ["slide"] = TerrainLayer.Rough,
+            ["oob"] = TerrainLayer.OutOfBounds,
+            ["solid"] = null,
+            ["none"] = null,
         };
+
+        /// <summary>What a surface turns into inside the green zone around the cup, or null if it stays as it is.</summary>
+        private static string GreenFor(string surface) => surface switch
+        {
+            "rough" or "fairway" or "green" or "sand" or "path" or "road" or "sidewalk" => "green",
+            "snow-fairway" or "snow-rough" or "snow-green" or "ice" => "snow-green",
+            "desert-sand" or "dry-fairway" or "dry-green" or "sand-rough" => "dry-green",
+            _ => null,
+        };
+
+        private static int? slideLayer;
+
+        /// <summary>
+        /// A physics layer that players and balls collide with but players can't stand on, so they slide off like
+        /// on a steep slope. Picked from the game's own layer setup; falls back to the ground layer if none fits.
+        /// </summary>
+        private static int SlideLayer(int groundLayer)
+        {
+            if (slideLayer.HasValue)
+                return slideLayer.Value;
+            var ls = GameManager.LayerSettings;
+            int[] taken = { ls.StationaryBallLayer, ls.DynamicBallLayer, ls.HittablesLayer, ls.GolfCartPassengersLayer, ls.ElectromagnetShieldLayer,
+                ls.PlayerLayer, ls.GolfCartLayer, ls.FoliageLayer, ls.VfxLayer, ls.ItemsLayer, ls.IceBlockLayer };
+            int best = -1;
+            for (int l = 0; l < 32; l++)
+            {
+                if (System.Array.IndexOf(taken, l) >= 0 || (ls.PlayerGroundableMask & (1 << l)) != 0)
+                    continue;
+                if (Physics.GetIgnoreLayerCollision(l, ls.PlayerLayer) || Physics.GetIgnoreLayerCollision(l, ls.DynamicBallLayer))
+                    continue;
+                // Prefer a layer the ball still treats as ground, so it rolls rather than skids.
+                if (best < 0 || ((ls.BallGroundableMask & (1 << l)) != 0 && (ls.BallGroundableMask & (1 << best)) == 0))
+                    best = l;
+            }
+            Plugin.Log.LogInfo($"Slide surface uses physics layer {best} ('{(best >= 0 ? LayerMask.LayerToName(best) : "")}'); " +
+                $"player groundable mask {ls.PlayerGroundableMask.value:X8}, ball groundable mask {ls.BallGroundableMask.value:X8}");
+            slideLayer = best >= 0 ? best : groundLayer;
+            return slideLayer.Value;
+        }
 
         private static void CreatePart(Transform parent, string name, MeshData data, Material material, string surface, int groundLayer)
         {
             var go = new GameObject(name);
             // TerrainAddition reads its layer in Awake, so fill everything in while inactive.
             go.SetActive(false);
-            go.layer = groundLayer;
+            go.layer = surface == "slide" ? SlideLayer(groundLayer) : groundLayer;
             go.transform.SetParent(parent, false);
             var mesh = data.ToMesh(name);
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             go.AddComponent<MeshRenderer>().sharedMaterial = material;
             if (surface != "none")
                 go.AddComponent<MeshCollider>().sharedMesh = mesh;
-            var layer = LayerFor(surface);
+            var layer = Surfaces[surface];
             if (layer.HasValue)
             {
                 var addition = go.AddComponent<TerrainAddition>();
