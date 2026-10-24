@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using HarmonyLib;
 using UnityEngine;
 
@@ -11,8 +12,13 @@ namespace SbgMaps
     /// </summary>
     internal static class LevelBuilder
     {
-        /// <summary>Half the side of the square cut out under the cup (the cup's own mesh covers 2.5 m).</summary>
+        /// <summary>Half the side of the hole left open under the cup (the cup's own plate covers 2.5 m).</summary>
         private const float CupCutHalf = 1.0f;
+        /// <summary>The cup plate is flat and 2.5 m wide; the apron is flat out to this half-width...</summary>
+        private const float ApronFlatHalf = 1.3f;
+        /// <summary>...and blends back into the level's own slope by this half-width.</summary>
+        private const float ApronHalf = 3f;
+        private const float ApronStep = 0.25f;
         /// <summary>Only ground this close (vertically) to the cup is cut or turned into green, so bridges above stay.</summary>
         private const float CupCutHeight = 3f;
         private const float GreenZoneHeight = 8f;
@@ -26,7 +32,9 @@ namespace SbgMaps
             root.transform.position = origin;
             var ctx = new Context { Model = model, GroundLayer = groundLayer };
             var localCup = cup - origin;
-            BuildParts(ctx, root.transform, model.Primitives, "level", new CupZone(localCup, greenRadius));
+            var zone = new CupZone(localCup, greenRadius);
+            BuildParts(ctx, root.transform, model.Primitives, "level", zone);
+            BuildCupApron(ctx, root.transform, model.Primitives, zone);
 
             int seesaws = 0, rollers = 0;
             foreach (var obj in model.Objects)
@@ -79,7 +87,7 @@ namespace SbgMaps
             public CupZone(Vector3 cup, float greenRadius)
             {
                 Cup = cup;
-                Cut = Square(cup.x, cup.z, CupCutHalf);
+                Cut = Square(cup.x, cup.z, ApronHalf);
                 Green = Circle(cup.x, cup.z, greenRadius, GreenZoneSides);
             }
         }
@@ -107,7 +115,8 @@ namespace SbgMaps
                     var pieces = new List<List<Vertex>> { tri };
                     if (zone != null)
                     {
-                        if ((surface != "none" || renderOnly) && NearHeight(tri, zone.Cup.y, CupCutHeight))
+                        // Ground around the cup is replaced by a flattened apron (BuildCupApron).
+                        if ((surface != "none" || renderOnly) && FacesUp(tri) && NearHeight(tri, zone.Cup.y, CupCutHeight))
                             pieces = SubtractAll(pieces, zone.Cut, out _);
                         bool greenLook = renderOnly && FacesUp(tri);
                         if ((greenSurface != null || greenLook) && NearHeight(tri, zone.Cup.y, GreenZoneHeight))
@@ -127,6 +136,143 @@ namespace SbgMaps
                 if (green.Count > 0)
                     CreatePart(parent, name + " green", green, invisible ? null : MaterialFor(ctx.GreenMaterials, model, prim.Material, true),
                         greenSurface ?? "none", ctx.GroundLayer);
+            }
+        }
+
+        /// <summary>
+        /// Fills the square cut around the cup with a fine grid: flat where the cup's plate sits, blending back into the
+        /// level's original slope at the edge, like vanilla greens. Samples the original ground for heights, UVs and
+        /// materials, so textures continue seamlessly. Visual and collision meshes each get their own apron.
+        /// </summary>
+        private static void BuildCupApron(Context ctx, Transform parent, List<GlbReader.Primitive> prims, CupZone zone)
+        {
+            var model = ctx.Model;
+            GlbReader.Material MatOf(GlbReader.Primitive p) => p.Material >= 0 && p.Material < model.Materials.Count ? model.Materials[p.Material] : null;
+            bool hasCollisionMesh = model.Materials.Any(m => m.Invisible);
+
+            // Visual ground: drawn triangles. Collision ground: the invisible mesh, or the drawn one if there is none.
+            var visual = new Sampler(prims.Where(p => !(MatOf(p)?.Invisible ?? false) && ((MatOf(p)?.RenderOnly ?? false) || Surfaces.ContainsKey(MatOf(p)?.Surface ?? "rough") && (MatOf(p)?.Surface ?? "rough") != "none")), zone);
+            var collision = hasCollisionMesh ? new Sampler(prims.Where(p => MatOf(p)?.Invisible ?? false), zone) : visual;
+
+            BuildApronMesh(ctx, parent, zone, visual, drawn: true, collides: !hasCollisionMesh);
+            if (hasCollisionMesh)
+                BuildApronMesh(ctx, parent, zone, collision, drawn: false, collides: true);
+        }
+
+        private static void BuildApronMesh(Context ctx, Transform parent, CupZone zone, Sampler sampler, bool drawn, bool collides)
+        {
+            int n = Mathf.RoundToInt(ApronHalf * 2 / ApronStep);
+            var grid = new Sampler.Hit?[n + 1, n + 1];
+            var cup = zone.Cup;
+            for (int i = 0; i <= n; i++)
+                for (int j = 0; j <= n; j++)
+                {
+                    float dx = -ApronHalf + i * ApronStep, dz = -ApronHalf + j * ApronStep;
+                    var hit = sampler.Sample(cup.x + dx, cup.z + dz);
+                    if (hit == null)
+                        continue;
+                    var h = hit.Value;
+                    // Flat at cup height under the plate, easing back to the original ground at the edge.
+                    float d = Mathf.Max(Mathf.Abs(dx), Mathf.Abs(dz));
+                    float t = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(ApronFlatHalf, ApronHalf, d));
+                    h.Vertex.Pos = new Vector3(cup.x + dx, Mathf.Lerp(cup.y, h.Vertex.Pos.y, t), cup.z + dz);
+                    h.Vertex.Normal = Vector3.Slerp(Vector3.up, h.Vertex.Normal, t);
+                    grid[i, j] = h;
+                }
+
+            // One mesh per source material, so textures stay right.
+            var byMaterial = new Dictionary<int, MeshData>();
+            for (int i = 0; i < n; i++)
+                for (int j = 0; j < n; j++)
+                {
+                    float cx = -ApronHalf + (i + 0.5f) * ApronStep, cz = -ApronHalf + (j + 0.5f) * ApronStep;
+                    if (Mathf.Abs(cx) < CupCutHalf && Mathf.Abs(cz) < CupCutHalf)
+                        continue; // the hole itself
+                    var a = grid[i, j];
+                    var b = grid[i + 1, j];
+                    var c = grid[i + 1, j + 1];
+                    var d = grid[i, j + 1];
+                    if (a == null || b == null || c == null || d == null)
+                        continue;
+                    int material = a.Value.Material;
+                    if (!byMaterial.TryGetValue(material, out var mesh))
+                        byMaterial[material] = mesh = new MeshData();
+                    // Clockwise seen from above (a, d, c, b) faces up in Unity.
+                    mesh.AddPolygon(new List<Vertex> { a.Value.Vertex, d.Value.Vertex, c.Value.Vertex, b.Value.Vertex });
+                }
+
+            foreach (var kv in byMaterial)
+            {
+                var src = kv.Key >= 0 && kv.Key < ctx.Model.Materials.Count ? ctx.Model.Materials[kv.Key] : null;
+                string surface = GreenFor(src?.Surface ?? "rough") ?? "green";
+                var material = drawn ? MaterialFor(ctx.GreenMaterials, ctx.Model, kv.Key, true) : null;
+                CreatePart(parent, $"cup apron {(drawn ? "visual" : "collision")} {src?.Name}", kv.Value, material, collides ? surface : "none", ctx.GroundLayer);
+            }
+        }
+
+        /// <summary>Finds the ground triangle under a point near the cup and interpolates its vertex.</summary>
+        private class Sampler
+        {
+            public struct Hit
+            {
+                public Vertex Vertex;
+                public int Material;
+            }
+
+            private readonly List<(Vertex a, Vertex b, Vertex c, int material)> tris = new List<(Vertex, Vertex, Vertex, int)>();
+            private readonly float cupY;
+
+            public Sampler(IEnumerable<GlbReader.Primitive> prims, CupZone zone)
+            {
+                cupY = zone.Cup.y;
+                float reach = ApronHalf + 0.5f;
+                foreach (var p in prims)
+                    for (int t = 0; t < p.Indices.Length; t += 3)
+                    {
+                        var a = Vertex.From(p, p.Indices[t]);
+                        var b = Vertex.From(p, p.Indices[t + 1]);
+                        var c = Vertex.From(p, p.Indices[t + 2]);
+                        float minX = Mathf.Min(a.Pos.x, Mathf.Min(b.Pos.x, c.Pos.x)), maxX = Mathf.Max(a.Pos.x, Mathf.Max(b.Pos.x, c.Pos.x));
+                        float minZ = Mathf.Min(a.Pos.z, Mathf.Min(b.Pos.z, c.Pos.z)), maxZ = Mathf.Max(a.Pos.z, Mathf.Max(b.Pos.z, c.Pos.z));
+                        if (maxX < zone.Cup.x - reach || minX > zone.Cup.x + reach || maxZ < zone.Cup.z - reach || minZ > zone.Cup.z + reach)
+                            continue;
+                        if (!NearHeight(new List<Vertex> { a, b, c }, cupY, CupCutHeight + 1f) || !FacesUp(new List<Vertex> { a, b, c }))
+                            continue;
+                        tris.Add((a, b, c, p.Material));
+                    }
+            }
+
+            public Hit? Sample(float x, float z)
+            {
+                Hit? best = null;
+                float bestDy = float.MaxValue;
+                foreach (var (a, b, c, material) in tris)
+                {
+                    // Barycentric coordinates in XZ.
+                    float d = (b.Pos.z - c.Pos.z) * (a.Pos.x - c.Pos.x) + (c.Pos.x - b.Pos.x) * (a.Pos.z - c.Pos.z);
+                    if (Mathf.Abs(d) < 1e-8f)
+                        continue;
+                    float u = ((b.Pos.z - c.Pos.z) * (x - c.Pos.x) + (c.Pos.x - b.Pos.x) * (z - c.Pos.z)) / d;
+                    float v = ((c.Pos.z - a.Pos.z) * (x - c.Pos.x) + (a.Pos.x - c.Pos.x) * (z - c.Pos.z)) / d;
+                    float w = 1f - u - v;
+                    const float eps = -1e-4f;
+                    if (u < eps || v < eps || w < eps)
+                        continue;
+                    var vert = new Vertex
+                    {
+                        Pos = a.Pos * u + b.Pos * v + c.Pos * w,
+                        Normal = (a.Normal * u + b.Normal * v + c.Normal * w).normalized,
+                        Uv = a.Uv * u + b.Uv * v + c.Uv * w,
+                    };
+                    // Prefer the ground closest to the cup's height (not a bridge above or a cave below).
+                    float dy = Mathf.Abs(vert.Pos.y - cupY);
+                    if (dy < bestDy)
+                    {
+                        bestDy = dy;
+                        best = new Hit { Vertex = vert, Material = material };
+                    }
+                }
+                return best;
             }
         }
 
