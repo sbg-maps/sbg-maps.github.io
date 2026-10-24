@@ -45,12 +45,16 @@ namespace SbgMaps
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
             Log.LogInfo($"Scene loaded: '{scene.name}' ({scene.path}) mode={mode}");
-            SteamQueue.RaiseLimits();
             CustomCourse.InjectLate();
             HoleSync.OnSceneLoaded(scene);
         }
 
-        private void Update() => DevTools.Update();
+        private void Update()
+        {
+            // Steam comes up a moment after the main menu loads; raise its send limits before any lobby is hosted.
+            SteamQueue.RaiseLimits();
+            DevTools.Update();
+        }
     }
 
     [HarmonyPatch(typeof(CourseCollection), nameof(CourseCollection.RuntimeInitialize))]
