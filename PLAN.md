@@ -92,6 +92,23 @@
 - Phase 2 (friend test) skipped by choice; risk noted: every player needs the mod and the same maps.
 - Phase 3 in progress: format 1 (FORMAT.md), loader, "Custom" course tab, host->client hole selection message, sample pack.
 
+## Import track: levels from other games (requested 2026-10-24)
+
+Goal: import ripped levels (e.g. SM64 Bob-omb Battlefield, WoW Stormwind) and split them into holes.
+
+- Imported levels stay **meshes**: they have overhangs, bridges and buildings that a heightmap would flatten.
+  - Surfaces are tagged with `TerrainAddition`, which is how vanilla does bridges/buildings.
+  - The regenerated shot-preview grid includes TerrainAddition meshes (ProcessHitsJob raycasts them), so the preview works on them.
+  - The cup cuts a hole in the collision mesh under the cup. The terrain under the cup is painted green, because the preview uses terrain paint at cup height there.
+  - The sunken donor terrain stays as sea floor; the water level works as now.
+- Editor = web app (three.js) since it has loaders for glTF/GLB, OBJ, FBX and DAE.
+  - It converts every input into one simple mesh format (positions/normals/uvs/indices per material + PNG textures), so the plugin only reads that.
+  - Editor steps: import, scale (player-height reference), assign surfaces per material and then per face, split into holes (tee/cup/items/bounds/camera per hole), crop to the used area (decimate if huge), keep it within the 1000 m playfield.
+- Map format 2: map-level shared assets (meshes, textures) plus holes that reference them. Heightmap holes stay supported and can be mixed with meshes.
+- Plugin: runtime mesh + texture loading, URP Lit materials (`Universal Render Pipeline/Lit` is in the build), MeshCollider + TerrainAddition per surface group, ground layer 8.
+- Ripped assets: private play with friends only, never published to Thunderstore.
+- First step: import proof with one real ripped level as a playable hole, before building the editor.
+
 ## Phases
 
 0. Setup: BepInEx in game, plugin skeleton, dump a vanilla hole scene's hierarchy (AssetRipper/UnityPy) to get the exact required component list.
