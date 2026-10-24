@@ -254,14 +254,14 @@ namespace SbgMaps
             body.interpolation = RigidbodyInterpolation.Interpolate;
             var sphere = ball.AddComponent<SphereCollider>();
             sphere.radius = radius / Mathf.Max(0.001f, ball.transform.lossyScale.x);
-            ball.AddComponent<RollingBallHit>();
+            ball.AddComponent<KnockbackOnTouch>();
             ball.SetActive(true);
             return ball;
         }
     }
 
-    /// <summary>Knocks over the local player when a rolling ball hits them (mirrors the game's traffic hits).</summary>
-    internal class RollingBallHit : MonoBehaviour
+    /// <summary>Knocks over the local player when this (a rolling ball, a chomp) hits them, the way the game handles traffic.</summary>
+    internal class KnockbackOnTouch : MonoBehaviour
     {
         private float cooldownUntil;
 
@@ -299,6 +299,251 @@ namespace SbgMaps
             if (playerBody != null && !playerBody.isKinematic)
                 playerBody.linearVelocity += knockback;
             player.PlayCollisionKnockoutEffectsForAllClients(player.transform.InverseTransformPoint(collision.GetContact(0).point));
+        }
+    }
+}
+
+namespace SbgMaps
+{
+    /// <summary>
+    /// Platforms that ride a path, looping or back and forth, like SM64's checkerboard elevators. Positions come
+    /// from the shared network clock so every machine agrees; their velocity is set so players ride along.
+    /// </summary>
+    internal class Mover : MonoBehaviour
+    {
+        private Vector3[] path;      // the object's local space
+        private float[] distances;
+        private float length, speed;
+        private bool loop;
+        private readonly List<Rigidbody> platforms = new List<Rigidbody>();
+
+        public static void Attach(GameObject go, GameObject template, JObject extras, int groundLayer)
+        {
+            var raw = extras?["path"] as JArray;
+            if (raw == null || raw.Count < 2)
+            {
+                Plugin.Log.LogWarning($"Mover '{go.name}' has no path");
+                return;
+            }
+            var m = go.AddComponent<Mover>();
+            // Path points are in the object's local space with glTF axes (z flipped like the vertices).
+            m.path = raw.Select(p => new Vector3((float)p[0], (float)p[1], -(float)p[2])).ToArray();
+            m.loop = (bool?)extras["loop"] ?? false;
+            if (m.loop)
+                m.path = m.path.Append(m.path[0]).ToArray();
+            m.distances = new float[m.path.Length];
+            for (int i = 1; i < m.path.Length; i++)
+                m.distances[i] = m.distances[i - 1] + Vector3.Distance(m.path[i - 1], m.path[i]);
+            m.length = m.distances[m.distances.Length - 1];
+            m.speed = (float?)extras["speed"] ?? 300f;
+            int count = Mathf.Clamp((int?)extras["count"] ?? 1, 1, 16);
+            for (int i = 0; i < count; i++)
+            {
+                var platform = i == 0 ? template : Instantiate(template, go.transform);
+                platform.name = $"platform {i}";
+                var body = platform.AddComponent<Rigidbody>();
+                body.isKinematic = true;
+                body.interpolation = RigidbodyInterpolation.Interpolate;
+                m.platforms.Add(body);
+            }
+            Plugin.Log.LogInfo($"Mover '{go.name}': {count} platform(s), path {m.length * go.transform.lossyScale.x:F1} m, {(m.loop ? "loop" : "back and forth")}");
+        }
+
+        private void FixedUpdate()
+        {
+            if (path == null)
+                return;
+            double now = NetworkClient.active || NetworkServer.active ? NetworkTime.time : Time.timeAsDouble;
+            for (int i = 0; i < platforms.Count; i++)
+            {
+                double s = now * speed + i * (double)length / platforms.Count;
+                float along;
+                if (loop)
+                    along = (float)(s % length);
+                else
+                {
+                    // Back and forth.
+                    double phase = s % (2 * length);
+                    along = (float)(phase < length ? phase : 2 * length - phase);
+                }
+                var world = transform.TransformPoint(Sample(along));
+                var body = platforms[i];
+                body.linearVelocity = (world - body.position) / Time.fixedDeltaTime;
+                body.MovePosition(world);
+            }
+        }
+
+        private Vector3 Sample(float s)
+        {
+            int i = Array.BinarySearch(distances, s);
+            if (i < 0)
+                i = ~i;
+            i = Mathf.Clamp(i, 1, path.Length - 1);
+            float seg = distances[i] - distances[i - 1];
+            return Vector3.Lerp(path[i - 1], path[i], seg > 0 ? Mathf.Clamp01((s - distances[i - 1]) / seg) : 0f);
+        }
+    }
+
+    /// <summary>
+    /// A chain chomp tied to its post: hops around, then lunges. The lunge schedule and direction come from the
+    /// shared network clock, so everyone sees the same chomp. Touching it knocks players over.
+    /// </summary>
+    internal class Chomp : MonoBehaviour
+    {
+        private const float Cycle = 5f;
+        private const int ChainLinks = 5;
+
+        private Transform look;
+        private Rigidbody body;
+        private readonly List<Transform> links = new List<Transform>();
+        private float radius, reach, idleReach, lungeSpeed;
+        private int id;
+
+        public static void Attach(GameObject go, GameObject look, JObject extras, int id, int groundLayer)
+        {
+            var c = go.AddComponent<Chomp>();
+            c.id = id;
+            c.radius = (float?)extras?["radius"] ?? 80f;
+            c.reach = (float?)extras?["reach"] ?? 900f;
+            c.idleReach = (float?)extras?["idleReach"] ?? 450f;
+            c.lungeSpeed = (float?)extras?["lungeSpeed"] ?? 3000f;
+
+            // The moving part: the chomp's look plus a solid sphere that knocks players over.
+            var mover = new GameObject("chomp");
+            mover.layer = groundLayer;
+            mover.transform.SetParent(go.transform, false);
+            // Centre the look on the moving part.
+            var bounds = new Bounds(look.transform.position, Vector3.zero);
+            foreach (var r in look.GetComponentsInChildren<Renderer>())
+                bounds.Encapsulate(r.bounds);
+            look.transform.SetParent(mover.transform, true);
+            look.transform.position -= bounds.center - go.transform.position;
+            c.look = mover.transform;
+            c.body = mover.AddComponent<Rigidbody>();
+            c.body.isKinematic = true;
+            c.body.interpolation = RigidbodyInterpolation.Interpolate;
+            var sphere = mover.AddComponent<SphereCollider>();
+            sphere.radius = c.radius;
+            mover.AddComponent<KnockbackOnTouch>();
+
+            // Chain: dark iron balls from the post to the chomp.
+            var iron = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+            iron.SetColor("_BaseColor", new Color(0.15f, 0.15f, 0.17f));
+            iron.SetFloat("_Metallic", 0.8f);
+            iron.SetFloat("_Smoothness", 0.6f);
+            for (int i = 0; i < ChainLinks; i++)
+            {
+                var link = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                Destroy(link.GetComponent<Collider>());
+                link.name = $"chain {i}";
+                link.transform.SetParent(go.transform, false);
+                link.transform.localScale = Vector3.one * c.radius * 0.45f;
+                link.GetComponent<MeshRenderer>().sharedMaterial = iron;
+                c.links.Add(link.transform);
+            }
+        }
+
+        private void FixedUpdate()
+        {
+            if (look == null)
+                return;
+            double now = NetworkClient.active || NetworkServer.active ? NetworkTime.time : Time.timeAsDouble;
+            now += id * 1.7;
+            long cycle = (long)Math.Floor(now / Cycle);
+            float t = (float)(now - cycle * Cycle);
+            float idleAngle = (float)(now * 0.9);
+            // Lunge direction from a hash of the cycle number, identical on every machine.
+            uint h = (uint)(cycle * 2654435761L ^ (id * 40503L));
+            float lungeAngle = (h % 3600) / 10f * Mathf.Deg2Rad;
+
+            Vector3 Flat(float angle, float dist) => new Vector3(Mathf.Cos(angle) * dist, 0f, Mathf.Sin(angle) * dist);
+            var idle = Flat(idleAngle, idleReach * 0.6f);
+            float lungeTime = reach / lungeSpeed;
+            Vector3 local;
+            float hop;
+            if (t < 3.2f)
+            {
+                local = idle;
+                hop = Mathf.Abs(Mathf.Sin(t * Mathf.PI * 2.2f)) * radius * 0.6f; // little hops
+            }
+            else if (t < 3.6f)
+            {
+                local = Vector3.Lerp(idle, Flat(lungeAngle + Mathf.PI, idleReach * 0.3f), Mathf.SmoothStep(0, 1, (t - 3.2f) / 0.4f)); // wind up
+                hop = 0f;
+            }
+            else if (t < 3.6f + lungeTime)
+            {
+                local = Vector3.Lerp(Flat(lungeAngle + Mathf.PI, idleReach * 0.3f), Flat(lungeAngle, reach), (t - 3.6f) / lungeTime); // lunge
+                hop = radius * 0.3f;
+            }
+            else if (t < 4.1f + lungeTime)
+            {
+                local = Flat(lungeAngle, reach);
+                hop = 0f;
+            }
+            else
+            {
+                float back = Mathf.SmoothStep(0, 1, (t - 4.1f - lungeTime) / (Cycle - 4.1f - lungeTime));
+                local = Vector3.Lerp(Flat(lungeAngle, reach), Flat(idleAngle, idleReach * 0.6f), back);
+                hop = 0f;
+            }
+            local.y = radius + hop;
+
+            var world = transform.TransformPoint(local);
+            var previous = body.position;
+            body.linearVelocity = (world - previous) / Time.fixedDeltaTime;
+            body.MovePosition(world);
+            var heading = Vector3.ProjectOnPlane(world - transform.position, Vector3.up);
+            if (heading.sqrMagnitude > 0.01f)
+                body.MoveRotation(Quaternion.LookRotation(heading.normalized));
+
+            // Chain sags between the post top and the chomp.
+            var postTop = transform.TransformPoint(new Vector3(0f, radius * 0.9f, 0f));
+            for (int i = 0; i < links.Count; i++)
+            {
+                float f = (i + 1f) / (links.Count + 1f);
+                var p = Vector3.Lerp(postTop, world, f);
+                p.y -= Mathf.Sin(f * Mathf.PI) * radius * transform.lossyScale.y * 0.4f;
+                links[i].position = p;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Makes Slide ground slippery and hard to climb for the local player: pulls them downhill and bleeds off
+    /// uphill speed, scaled by steepness. The ground stays solid, so nothing falls through.
+    /// </summary>
+    [DefaultExecutionOrder(10000)]
+    internal class SlideController : MonoBehaviour
+    {
+        private static readonly HashSet<Collider> slideColliders = new HashSet<Collider>();
+
+        public static void Register(Collider c) => slideColliders.Add(c);
+
+        private void OnDestroy() => slideColliders.RemoveWhere(c => c == null);
+
+        private void FixedUpdate()
+        {
+            var player = GameManager.LocalPlayerMovement;
+            if (player == null || slideColliders.Count == 0)
+                return;
+            if (!Physics.Raycast(player.transform.position + Vector3.up * 0.4f, Vector3.down, out var hit, 1.2f, ~0, QueryTriggerInteraction.Ignore))
+                return;
+            if (!slideColliders.Contains(hit.collider))
+                return;
+            float slope = Vector3.Angle(hit.normal, Vector3.up);
+            if (slope < 3f)
+                return;
+            var body = player.GetComponent<Rigidbody>();
+            if (body == null || body.isKinematic)
+                return;
+            var downhill = Vector3.ProjectOnPlane(Vector3.down, hit.normal).normalized;
+            var v = body.linearVelocity;
+            float uphill = Vector3.Dot(v, -downhill);
+            if (uphill > 0f)
+                v += downhill * uphill * 0.12f; // climbing loses speed
+            v += downhill * (Physics.gravity.magnitude * 1.2f * Mathf.Sin(slope * Mathf.Deg2Rad) * Time.fixedDeltaTime);
+            body.linearVelocity = v;
         }
     }
 }

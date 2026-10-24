@@ -331,10 +331,11 @@ export class Project {
     }
     // Paths that rollers follow.
     for (const obj of this.objects) {
-      const path = obj.userData.object === "roller" ? obj.userData.path : null;
+      const path = ["roller", "mover"].includes(obj.userData.object) ? obj.userData.path : null;
       if (!path?.length || !obj.visible) continue;
       obj.updateMatrixWorld(true);
       const pts = path.map((p) => new THREE.Vector3(...p).applyMatrix4(obj.matrixWorld));
+      if (obj.userData.loop) pts.push(pts[0]);
       this.markersGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0xff8a00 })));
     }
     // Water plane for the active hole.

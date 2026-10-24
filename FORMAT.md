@@ -90,7 +90,7 @@ Unknown values count as rough.
 | `snow-fairway`, `snow-rough`, `snow-green`, `ice` | snow surfaces; `ice` is slippery |
 | `desert-sand`, `dry-fairway`, `dry-green`, `sand-rough` | desert surfaces |
 | `road`, `sidewalk`, `bridge`, `building` | city surfaces |
-| `slide` | players can't stand on it and slide off (like steep slopes); the ball plays it as rough |
+| `slide` | slippery and hard to climb: plays as ice, and pulls players downhill harder the steeper it is |
 | `oob` | out of bounds |
 | `solid` | walls and props: solid, no golf surface |
 | `none` | decoration: no collision |
@@ -109,6 +109,8 @@ A node with `extras.object` is an object. It is built separately, with its own t
 | `static` | a prop: built like the level |
 | `seesaw` | tilts toward players standing on it (around its local x axis; its length runs along local z). Host-simulated, synced. |
 | `roller` | rolls copies of its model along `extras.path`, knocking players over. Positions come from the network clock, so they match on every machine. |
+| `mover` | platforms riding `extras.path` (`loop: true` to go round, otherwise back and forth), `count` evenly spaced copies at `speed` units/s. Clock-synced; players ride along. |
+| `chomp` | hops around its origin (the post) and lunges up to `reach` in a clock-chosen direction (`radius`, `idleReach`, `lungeSpeed`); touching it knocks players over. |
 
 Roller extras, all in the node's local units (scaled by the node's transform):
 - `path`: [[x, y, z], ...] points on the ground.

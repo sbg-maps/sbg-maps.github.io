@@ -36,7 +36,7 @@ namespace SbgMaps
             BuildParts(ctx, root.transform, model.Primitives, "level", zone);
             BuildCupApron(ctx, root.transform, model.Primitives, zone);
 
-            int seesaws = 0, rollers = 0;
+            int seesaws = 0, rollers = 0, movers = 0, chomps = 0;
             foreach (var obj in model.Objects)
             {
                 var go = new GameObject(obj.Name);
@@ -58,13 +58,26 @@ namespace SbgMaps
                         BuildParts(ctx, template.transform, obj.Primitives, obj.Name, null, forceSurface: "none");
                         Roller.Attach(go, template, obj.Extras, rollers++, groundLayer);
                         break;
+                    case "mover":
+                        var platform = new GameObject("platform template");
+                        platform.transform.SetParent(go.transform, false);
+                        BuildParts(ctx, platform.transform, obj.Primitives, obj.Name, null);
+                        Mover.Attach(go, platform, obj.Extras, groundLayer);
+                        movers++;
+                        break;
+                    case "chomp":
+                        var look = new GameObject("chomp look");
+                        look.transform.SetParent(go.transform, false);
+                        BuildParts(ctx, look.transform, obj.Primitives, obj.Name, null, forceSurface: "none");
+                        Chomp.Attach(go, look, obj.Extras, chomps++, groundLayer);
+                        break;
                     default:
                         BuildParts(ctx, go.transform, obj.Primitives, obj.Name, null);
                         break;
                 }
             }
-            if (seesaws + rollers > 0)
-                Plugin.Log.LogInfo($"LevelBuilder: {model.Objects.Count} objects ({seesaws} see-saws, {rollers} rollers)");
+            Plugin.Log.LogInfo($"LevelBuilder: {model.Objects.Count} objects ({seesaws} see-saws, {rollers} rollers, {movers} movers, {chomps} chomps)");
+            root.AddComponent<SlideController>();
             Physics.SyncTransforms();
             return root;
         }
@@ -302,7 +315,7 @@ namespace SbgMaps
             ["sidewalk"] = TerrainLayer.Sidewalk,
             ["bridge"] = TerrainLayer.WoodenBridge,
             ["building"] = TerrainLayer.Building,
-            ["slide"] = TerrainLayer.Rough,
+            ["slide"] = TerrainLayer.Ice, // slippery, plus a downhill pull on players (SlideController)
             ["oob"] = TerrainLayer.OutOfBounds,
             ["solid"] = null,
             ["none"] = null,
@@ -317,42 +330,12 @@ namespace SbgMaps
             _ => null,
         };
 
-        private static int? slideLayer;
-
-        /// <summary>
-        /// A physics layer that players and balls collide with but players can't stand on, so they slide off like
-        /// on a steep slope. Picked from the game's own layer setup; falls back to the ground layer if none fits.
-        /// </summary>
-        private static int SlideLayer(int groundLayer)
-        {
-            if (slideLayer.HasValue)
-                return slideLayer.Value;
-            var ls = GameManager.LayerSettings;
-            int[] taken = { ls.StationaryBallLayer, ls.DynamicBallLayer, ls.HittablesLayer, ls.GolfCartPassengersLayer, ls.ElectromagnetShieldLayer,
-                ls.PlayerLayer, ls.GolfCartLayer, ls.FoliageLayer, ls.VfxLayer, ls.ItemsLayer, ls.IceBlockLayer };
-            int best = -1;
-            for (int l = 0; l < 32; l++)
-            {
-                if (System.Array.IndexOf(taken, l) >= 0 || (ls.PlayerGroundableMask & (1 << l)) != 0)
-                    continue;
-                if (Physics.GetIgnoreLayerCollision(l, ls.PlayerLayer) || Physics.GetIgnoreLayerCollision(l, ls.DynamicBallLayer))
-                    continue;
-                // Prefer a layer the ball still treats as ground, so it rolls rather than skids.
-                if (best < 0 || ((ls.BallGroundableMask & (1 << l)) != 0 && (ls.BallGroundableMask & (1 << best)) == 0))
-                    best = l;
-            }
-            Plugin.Log.LogInfo($"Slide surface uses physics layer {best} ('{(best >= 0 ? LayerMask.LayerToName(best) : "")}'); " +
-                $"player groundable mask {ls.PlayerGroundableMask.value:X8}, ball groundable mask {ls.BallGroundableMask.value:X8}");
-            slideLayer = best >= 0 ? best : groundLayer;
-            return slideLayer.Value;
-        }
-
         private static void CreatePart(Transform parent, string name, MeshData data, Material material, string surface, int groundLayer)
         {
             var go = new GameObject(name);
             // TerrainAddition reads its layer in Awake, so fill everything in while inactive.
             go.SetActive(false);
-            go.layer = surface == "slide" ? SlideLayer(groundLayer) : groundLayer;
+            go.layer = groundLayer;
             go.transform.SetParent(parent, false);
             var mesh = data.ToMesh(name);
             // A null material means collision only (an invisible collision mesh).
@@ -362,7 +345,12 @@ namespace SbgMaps
                 go.AddComponent<MeshRenderer>().sharedMaterial = material;
             }
             if (surface != "none")
-                go.AddComponent<MeshCollider>().sharedMesh = mesh;
+            {
+                var collider = go.AddComponent<MeshCollider>();
+                collider.sharedMesh = mesh;
+                if (surface == "slide")
+                    SlideController.Register(collider);
+            }
             var layer = Surfaces[surface];
             if (layer.HasValue)
             {
@@ -383,8 +371,8 @@ namespace SbgMaps
             if (greenZone)
                 color *= GreenTint;
             mat.SetColor("_BaseColor", color);
-            mat.SetFloat("_Smoothness", 0f);
-            mat.SetFloat("_Metallic", 0f);
+            mat.SetFloat("_Smoothness", src != null ? Mathf.Clamp01(1f - src.Roughness) : 0f);
+            mat.SetFloat("_Metallic", src != null ? Mathf.Clamp01(src.Metallic) : 0f);
             if (src?.Image != null)
             {
                 var tex = new Texture2D(2, 2, TextureFormat.RGBA32, mipChain: true);

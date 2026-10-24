@@ -344,6 +344,8 @@ const BEHAVIOURS = [
   ["static", "Static"],
   ["seesaw", "Tilting see-saw"],
   ["roller", "Roller (rolls balls along a path)"],
+  ["mover", "Moving platform (follows a path)"],
+  ["chomp", "Chain chomp (lunges around its post)"],
 ];
 
 function objectsPanel() {
@@ -360,7 +362,7 @@ function objectsPanel() {
       .map((o, i) => `<div class="object ${o === sel ? "selected" : ""}" data-i="${i}">
         <input type="checkbox" class="obj-visible" data-i="${i}" ${o.visible ? "checked" : ""} title="Include in the map" />
         <span class="mat-name" title="${esc(o.name)}">${esc(o.name || `Object ${i + 1}`)}</span>
-        <select class="obj-behaviour" data-i="${i}">${BEHAVIOURS.filter(([id]) => id !== "roller" || o.userData.path)
+        <select class="obj-behaviour" data-i="${i}">${BEHAVIOURS.filter(([id]) => !["roller", "mover"].includes(id) || o.userData.path)
           .map(([id, name]) => `<option value="${id}" ${id === o.userData.object ? "selected" : ""}>${name}</option>`)
           .join("")}</select>
         <button class="icon-btn obj-delete" data-i="${i}" title="Delete">&times;</button>

@@ -27,6 +27,8 @@ namespace SbgMaps
         {
             public string Name;
             public float[] BaseColor = { 1, 1, 1, 1 };
+            public float Metallic;
+            public float Roughness = 1f;
             public byte[] Image;        // PNG/JPEG bytes of the base colour texture, or null
             public bool DoubleSided;
             public bool AlphaBlend;
@@ -120,6 +122,8 @@ namespace SbgMaps
                     RenderOnly = (bool?)m["extras"]?["renderOnly"] ?? false,
                 };
                 var pbr = m["pbrMetallicRoughness"];
+                mat.Metallic = (float?)pbr?["metallicFactor"] ?? 0f;
+                mat.Roughness = (float?)pbr?["roughnessFactor"] ?? 1f;
                 if (pbr?["baseColorFactor"] is JArray f && f.Count == 4)
                     mat.BaseColor = new[] { (float)f[0], (float)f[1], (float)f[2], (float)f[3] };
                 var texIndex = (int?)pbr?["baseColorTexture"]?["index"];

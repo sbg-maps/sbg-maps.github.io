@@ -310,6 +310,29 @@ SM64_TO_SURFACE = {
 }
 
 
+# SM64 floor classes and the steepest slope Mario can stand on for each (mario_floor_is_slippery).
+VERY_SLIPPERY = {"SURFACE_VERY_SLIPPERY", "SURFACE_ICE", "SURFACE_HARD_VERY_SLIPPERY", "SURFACE_NOISE_VERY_SLIPPERY",
+                 "SURFACE_NOISE_VERY_SLIPPERY_73", "SURFACE_NOISE_VERY_SLIPPERY_74", "SURFACE_NO_CAM_COL_VERY_SLIPPERY"}
+SLIPPERY = {"SURFACE_SLIPPERY", "SURFACE_NOISE_SLIPPERY", "SURFACE_HARD_SLIPPERY", "SURFACE_NO_CAM_COL_SLIPPERY",
+            "SURFACE_NOISE_SLIPPERY_73", "SURFACE_NOISE_SLIPPERY_74"}
+NOT_SLIPPERY = {"SURFACE_NOT_SLIPPERY", "SURFACE_HARD_NOT_SLIPPERY", "SURFACE_SWITCH"}
+STAND_LIMIT = {"very": 0.9848077, "slippery": 0.9396926, "default": 0.7880108, "not": 0.0}  # minimum normal.y
+
+
+def classify(kind, normal):
+    """Our surface for an SM64 collision triangle: slide where Mario would slide, ice for walkable very slippery floor."""
+    fixed = {"SURFACE_BURNING": "oob", "SURFACE_DEATH_PLANE": "oob", "SURFACE_INSTANT_QUICKSAND": "oob", "SURFACE_DEEP_QUICKSAND": "oob",
+             "SURFACE_QUICKSAND": "sand", "SURFACE_SHALLOW_QUICKSAND": "sand", "SURFACE_WALL_MISC": "solid", "SURFACE_HANGABLE": "solid"}
+    if kind in fixed:
+        return fixed[kind]
+    if normal[1] < 0.1:
+        return "rough"  # walls: nobody stands on them
+    cls = "very" if kind in VERY_SLIPPERY else "slippery" if kind in SLIPPERY else "not" if kind in NOT_SLIPPERY else "default"
+    if normal[1] < STAND_LIMIT[cls]:
+        return "slide"
+    return "ice" if cls == "very" else "rough"
+
+
 def collision_triangles(dec, name):
     verts, tris, kind = [], [], None
     for macro, args in dec.collision.get(name, []):
@@ -345,12 +368,19 @@ BEHAVIOUR = {"bhvSeesawPlatform": "seesaw"}
 ROLLER_SPAWNERS = {"bhvBoBBowlingBallSpawner", "bhvTTMBowlingBallSpawner", "bhvThiBowlingBallSpawner"}
 ROLLER_PATHS = {"BBALL_BP_STYPE_BOB_UPPER": "bob_seg7_metal_ball_path0", "BBALL_BP_STYPE_BOB_LOWER": "bob_seg7_metal_ball_path1",
                 "BBALL_BP_STYPE_TTM": "ttm_seg7_trajectory_070170A0"}
+# Checkerboard elevator groups (checkerboard_platform.inc.c): two platforms on a vertical loop around a pole.
+ELEVATOR_TYPES = {0: (145, (0.7, 1.5, 0.7)), 1: (235, (1.2, 2.0, 1.2))}  # (loop radius, platform scale)
+ELEVATOR_SPEED = 300  # units per second (10 per frame)
+
+# Chain chomp (chain_chomp.inc.c): hitbox radius 80, chain 750 units, stretches to 900 when lunging.
+CHOMP = {"radius": 80, "reach": 900, "idleReach": 450, "lungeSpeed": 3000}
+
 # SM64 bowling ball: hitbox radius 100 units, rolls at about 28 units per frame (30 fps), one every ~2-4 s.
 ROLLER_DEFAULTS = {"radius": 100, "speed": 750, "interval": 3.5}
 
 # Characters, enemies and collectibles are not level pieces; left out unless --all-objects is given.
 NOT_SCENERY = re.compile(r"bhv(KingBobomb|Koopa|Star|HiddenStar|HiddenRedCoinStar|PitBowlingBall|BobombBuddy\w*|Bobomb|Goomba\w*|"
-                         r"ChainChomp$|Mario|\w*Coin\w*|RedCoin\w*|OneUp\w*|Butterfly|Bird\w*|Fish\w*|Bubba|Piranha\w*)")
+                         r"Mario|RecoveryHeart|1Up\w*|Hidden1Up\w*|WaterBombCannon|Cannon$|CannonBarrel\w*|\w*Coin\w*|RedCoin\w*|OneUp\w*|Butterfly|Bird\w*|Fish\w*|Bubba|Piranha\w*)")
 
 
 def level_objects(dec, script_path, area, special_presets):
@@ -387,6 +417,47 @@ def special_objects(dec, collision_name, presets):
             yaw = num(args[4]) * 360.0 / 256.0 if len(args) > 4 and macro != "SPECIAL_OBJECT" else 0.0
             objs.append({"model": preset[0], "pos": pos, "rot": [0, yaw, 0], "behavior": preset[1]})
     return objs
+
+
+def macro_objects(dec, root, level, area):
+    """MACRO_OBJECT placements (enemies, posts, chomps...) with their preset's model and behaviour."""
+    presets = {}
+    for m in re.finditer(r"/\*\s*(macro_\w+)\s*\*/\s*\{\s*(\w+)\s*,\s*(\w+)\s*,", open(os.path.join(root, "include", "macro_presets.inc.c")).read()):
+        presets[m.group(1)] = (m.group(3), m.group(2))
+    path = os.path.join(root, "levels", level, "areas", str(area), "macro.inc.c")
+    if not os.path.exists(path):
+        return []
+    objs = []
+    for c in CALL.finditer(strip_comments(open(path).read())):
+        if c.group(1).startswith("MACRO_OBJECT"):
+            a = split_args(c.group(2))
+            if len(a) >= 5 and a[0] in presets:
+                model, bhv = presets[a[0]]
+                objs.append({"model": model, "pos": [num(x) for x in a[2:5]], "rot": [0, num(a[1]) * 360.0 / 256.0 if "." not in a[1] else num(a[1]), 0], "behavior": bhv})
+    return objs
+
+
+def sphere_mesh(radius, rings=12, segments=20):
+    """A UV sphere as MeshBuilder parts (used for the rolling balls, which SM64 draws as flat sprites)."""
+    out = MeshBuilder()
+    def p(i, j):
+        th, ph = math.pi * i / rings, 2 * math.pi * j / segments
+        n = (math.sin(th) * math.cos(ph), math.cos(th), math.sin(th) * math.sin(ph))
+        return {"pos": tuple(radius * q for q in n), "nrm": n, "uv": (j / segments, i / rings), "col": (255, 255, 255, 255)}
+    for i in range(rings):
+        for j in range(segments):
+            a, b, c, d = p(i, j), p(i + 1, j), p(i + 1, j + 1), p(i, j + 1)
+            out.add(("ball",), [a, c, b])
+            out.add(("ball",), [a, d, c])
+    return out
+
+
+def loop_path(height, r, steps=12):
+    """Vertical loop: up one side, half circle over the top, down the other side, half circle underneath."""
+    pts = [(0, 0, -r)]
+    pts += [(0, height + r * math.cos(f), r * math.sin(f)) for f in (math.radians(-90 + 180 * k / steps) for k in range(steps + 1))]
+    pts += [(0, r * math.cos(f), r * math.sin(f)) for f in (math.radians(90 + 180 * k / steps) for k in range(steps + 1))]
+    return [list(q) for q in pts]
 
 
 def load_special_presets(root):
@@ -552,30 +623,43 @@ def main():
         centroid = tuple((a[k] + b[k] + c[k]) / 3 for k in range(3))
         n = face_normal([a, b, c])
         tex = nearest_texture(cells, centroid, n, cell)
-        col.add((kind, tex), [{"pos": v, "nrm": n, "uv": (0, 0), "col": (255, 255, 255, 255)} for v in (a, b, c)])
+        col.add((kind, tex, classify(kind, n)), [{"pos": v, "nrm": n, "uv": (0, 0), "col": (255, 255, 255, 255)} for v in (a, b, c)])
     prims = []
-    for (kind, tex), part in sorted(col.parts.items(), key=lambda kv: (kv[0][0], str(kv[0][1]))):
-        surface = SM64_TO_SURFACE.get(kind, "rough")
-        label = f"{texture_label(dec, tex)} / {kind.replace('SURFACE_', '').lower()}"
-        mat = writer.material(("c", kind, tex), label, dec.textures.get(tex), {"surface": surface, "invisible": True, "sm64Surface": kind}, None)
+    for (kind, tex, surface), part in sorted(col.parts.items(), key=lambda kv: (kv[0][0], str(kv[0][1]), kv[0][2])):
+        label = f"{texture_label(dec, tex)} / {kind.replace('SURFACE_', '').lower()}{' (steep)' if surface == 'slide' else ''}"
+        mat = writer.material(("c", kind, tex, surface), label, dec.textures.get(tex), {"surface": surface, "invisible": True, "sm64Surface": kind}, None)
         prims.append(primitive_for(writer, part, mat, with_colors=False))
     writer.node({"name": "collision", "mesh": writer.mesh("collision", prims)})
     print(f"collision: {sum(len(p['pos']) for p in col.parts.values()) // 3} triangles in {len(prims)} groups")
 
     # Objects.
     presets = load_special_presets(root)
-    objs = level_objects(dec, script, area, presets) + special_objects(dec, collision_name, presets)
+    objs = level_objects(dec, script, area, presets) + special_objects(dec, collision_name, presets) + macro_objects(dec, root, level, area)
+    # The chain chomp stands on its own post.
+    objs += [{**o, "model": "MODEL_WOODEN_POST", "behavior": "bhvWoodenPost", "rot": [0, 0, 0]} for o in objs if o["behavior"] == "bhvChainChomp"]
     placed = 0
     seen = set()
     for i, o in enumerate(objs):
         extras = {}
-        if o["behavior"] in ROLLER_SPAWNERS:
+        mesh_override = None
+        if o["behavior"] == "bhvCheckerboardElevatorGroup":
+            params = re.findall(r"BPARAM(\d)\((\d+)\)", o.get("param", ""))
+            p = {int(k): int(v) for k, v in params}
+            radius, scale = ELEVATOR_TYPES.get(p.get(1, 0), ELEVATOR_TYPES[0])
+            height = (p.get(2) or 65) * 10
+            mesh_override = MeshBuilder()
+            run_geo(dec, dec.models["MODEL_CHECKERBOARD_PLATFORM"], [[scale[0], 0, 0, 0], [0, scale[1], 0, 0], [0, 0, scale[2], 0], [0, 0, 0, 1]], mesh_override)
+            extras = {"object": "mover", "path": loop_path(height, radius), "loop": True, "count": 2, "speed": ELEVATOR_SPEED}
+        elif o["behavior"] == "bhvChainChomp":
+            extras = {"object": "chomp", **CHOMP}
+        elif o["behavior"] in ROLLER_SPAWNERS:
             # Invisible spawner: becomes a roller that carries the ball model and its path (relative to the node).
             path = dec.trajectories.get(ROLLER_PATHS.get(re.sub(r"BPARAM2\((\w+)\)", r"\1", o.get("param", "")), ""))
             if not path:
                 continue
             o = {**o, "model": "MODEL_BOWLING_BALL", "pos": list(path[0]), "rot": [0, 0, 0]}
             extras = {"object": "roller", "path": [[p[k] - path[0][k] for k in range(3)] for p in path], **ROLLER_DEFAULTS}
+            mesh_override = sphere_mesh(ROLLER_DEFAULTS["radius"])
         elif not all_objects and NOT_SCENERY.match(o["behavior"]):
             continue
         # SM64 places some objects once per star act; keep one of each.
@@ -583,8 +667,10 @@ def main():
         if key in seen:
             continue
         seen.add(key)
-        mesh = MeshBuilder()
-        if o["model"] in dec.models:
+        mesh = mesh_override or MeshBuilder()
+        if mesh_override:
+            pass
+        elif o["model"] in dec.models:
             run_geo(dec, dec.models[o["model"]], IDENTITY, mesh)
         elif o["model"] in dec.models_dl:
             dl, layer = dec.models_dl[o["model"]]
@@ -592,9 +678,17 @@ def main():
         if not mesh.parts:
             continue
         behaviour = extras.get("object") or BEHAVIOUR.get(o["behavior"], "static")
-        surface = {"seesaw": "bridge", "roller": "none"}.get(behaviour, "solid")
+        surface = {"seesaw": "bridge", "roller": "none", "chomp": "none", "mover": "rough"}.get(behaviour, "solid")
         prims = []
-        for (tex, lit, layer), part in mesh.parts.items():
+        if mesh_override is not None and ("ball",) in mesh.parts:
+            # Dark polished metal, like SM64's iron balls.
+            mat = writer.material(("ballmat",), "iron ball", None, {"surface": "none"}, None)
+            writer.gltf["materials"][mat]["pbrMetallicRoughness"].update({"baseColorFactor": [0.12, 0.12, 0.14, 1], "metallicFactor": 0.8, "roughnessFactor": 0.3})
+            prims.append(primitive_for(writer, mesh.parts[("ball",)], mat, with_colors=False))
+        for key, part in mesh.parts.items():
+            if key == ("ball",):
+                continue
+            tex, lit, layer = key
             label = f"{o['model'].replace('MODEL_', '').lower()}: {texture_label(dec, tex)}"
             mat = writer.material(("o", o["model"], tex, lit, layer), label, dec.textures.get(tex), {"surface": surface}, alpha_for(layer))
             prims.append(primitive_for(writer, part, mat, with_colors=not lit))
