@@ -33,11 +33,26 @@ namespace SbgMaps
             var ctx = new Context { Model = model, GroundLayer = groundLayer };
             var localCup = cup - origin;
             var zone = new CupZone(localCup, greenRadius);
-            BuildParts(ctx, root.transform, model.Primitives, "level", zone);
-            BuildCupApron(ctx, root.transform, model.Primitives, zone);
+            // Static props the cup sits on or next to (a cannon lid, a crate) become level ground for this hole,
+            // so the cup is cut through them and the apron covers them like any other ground.
+            var ground = new List<GlbReader.Primitive>(model.Primitives);
+            var objects = new List<GlbReader.SceneObject>();
+            foreach (var obj in model.Objects)
+            {
+                var baked = IsStaticGround(obj) ? InMapSpace(obj) : null;
+                if (baked != null && baked.Any(p => TouchesCup(p, zone)))
+                {
+                    ground.AddRange(baked);
+                    Plugin.Log.LogInfo($"LevelBuilder: '{obj.Name}' is at the cup, built as level ground");
+                }
+                else
+                    objects.Add(obj);
+            }
+            BuildParts(ctx, root.transform, ground, "level", zone);
+            BuildCupApron(ctx, root.transform, ground, zone);
 
             int seesaws = 0, rollers = 0, movers = 0, chomps = 0;
-            foreach (var obj in model.Objects)
+            foreach (var obj in objects)
             {
                 try
                 {
@@ -53,6 +68,63 @@ namespace SbgMaps
             root.AddComponent<SlideController>();
             Physics.SyncTransforms();
             return root;
+        }
+
+        private static bool IsStaticGround(GlbReader.SceneObject obj) =>
+            ((string)obj.Extras?["object"] ?? "static") == "static" && !((bool?)obj.Extras?["billboard"] ?? false) && !((bool?)obj.Extras?["knocks"] ?? false);
+
+        /// <summary>The object's parts with its position, rotation and scale applied (map coordinates).</summary>
+        private static List<GlbReader.Primitive> InMapSpace(GlbReader.SceneObject obj)
+        {
+            var pos = new Vector3(obj.Position[0], obj.Position[1], obj.Position[2]);
+            var rot = new Quaternion(obj.Rotation[0], obj.Rotation[1], obj.Rotation[2], obj.Rotation[3]);
+            var scale = new Vector3(obj.Scale[0], obj.Scale[1], obj.Scale[2]);
+            bool mirrored = scale.x * scale.y * scale.z < 0f;
+            var result = new List<GlbReader.Primitive>();
+            foreach (var p in obj.Primitives)
+            {
+                var q = new GlbReader.Primitive { Material = p.Material, Uvs = p.Uvs, Positions = new float[p.Positions.Length], Indices = (int[])p.Indices.Clone() };
+                for (int i = 0; i < p.Positions.Length; i += 3)
+                {
+                    var v = pos + rot * Vector3.Scale(scale, new Vector3(p.Positions[i], p.Positions[i + 1], p.Positions[i + 2]));
+                    (q.Positions[i], q.Positions[i + 1], q.Positions[i + 2]) = (v.x, v.y, v.z);
+                }
+                if (p.Normals != null)
+                {
+                    q.Normals = new float[p.Normals.Length];
+                    for (int i = 0; i < p.Normals.Length; i += 3)
+                    {
+                        var n = (rot * new Vector3(p.Normals[i] / scale.x, p.Normals[i + 1] / scale.y, p.Normals[i + 2] / scale.z)).normalized;
+                        (q.Normals[i], q.Normals[i + 1], q.Normals[i + 2]) = (n.x, n.y, n.z);
+                    }
+                }
+                if (mirrored)
+                    for (int t = 0; t < q.Indices.Length; t += 3)
+                        (q.Indices[t + 1], q.Indices[t + 2]) = (q.Indices[t + 2], q.Indices[t + 1]);
+                result.Add(q);
+            }
+            return result;
+        }
+
+        /// <summary>Does any triangle's bounding box reach into the apron square near cup height?</summary>
+        private static bool TouchesCup(GlbReader.Primitive p, CupZone zone)
+        {
+            var c = zone.Cup;
+            for (int t = 0; t < p.Indices.Length; t += 3)
+            {
+                Vector3 min = Vector3.positiveInfinity, max = Vector3.negativeInfinity;
+                for (int k = 0; k < 3; k++)
+                {
+                    int i = p.Indices[t + k] * 3;
+                    var v = new Vector3(p.Positions[i], p.Positions[i + 1], p.Positions[i + 2]);
+                    min = Vector3.Min(min, v);
+                    max = Vector3.Max(max, v);
+                }
+                if (min.x <= c.x + ApronHalf && max.x >= c.x - ApronHalf && min.z <= c.z + ApronHalf && max.z >= c.z - ApronHalf
+                    && min.y <= c.y + CupCutHeight && max.y >= c.y - CupCutHeight)
+                    return true;
+            }
+            return false;
         }
 
         private static void BuildObject(Context ctx, GameObject root, GlbReader.SceneObject obj, int groundLayer, ref int seesaws, ref int rollers, ref int movers, ref int chomps)
