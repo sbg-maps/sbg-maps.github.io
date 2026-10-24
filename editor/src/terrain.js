@@ -14,6 +14,12 @@ const BEACH_HEIGHT = WATER + 1.5;
 const SEA_FLOOR = 1;
 
 const tmpColor = new THREE.Color();
+const tmpRay = new THREE.Ray();
+const tmpMatrix = new THREE.Matrix4();
+const tmpPoint = new THREE.Vector3();
+const tmpBox = new THREE.Box3();
+/** Ray march step for picking, in metres (well under a sample, so slopes are not skipped). */
+const RAY_STEP = 0.25 * TERRAIN_STEP;
 
 export class Terrain {
   /**
@@ -31,9 +37,16 @@ export class Terrain {
     this.cx = this.nx - 1;
     this.cz = this.nz - 1;
     this.paint = data.paint ?? new Uint8Array(this.cx * this.cz);
+    /** Lowest and highest height the mesh has had, for its bounds (they only grow, which is safe for culling). */
+    this.yMin = Infinity;
+    this.yMax = -Infinity;
+    /** Heights before a brush step, only the area around the brush is copied in (see brush). */
+    this.before = new Float32Array(this.heights.length);
     this.mesh = this.buildMesh();
     this.mesh.name = "terrain";
     this.mesh.userData.isTerrain = true;
+    // Picking walks the height grid instead of testing every triangle (over a million on large levels).
+    this.mesh.raycast = (raycaster, intersects) => this.raycast(raycaster, intersects);
   }
 
   /**
@@ -149,6 +162,7 @@ export class Terrain {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute("normal", new THREE.BufferAttribute(new Float32Array(this.nx * this.nz * 3), 3));
     geometry.setIndex(indices);
     const mesh = new THREE.Mesh(geometry, contourMaterial());
     this.geometry = geometry;
@@ -160,26 +174,106 @@ export class Terrain {
     this.refreshArea(0, 0, this.nx - 1, this.nz - 1);
   }
 
-  /** Rewrites vertex positions and colours for samples in [i0..i1] x [j0..j1]. */
+  /**
+   * Rewrites vertex positions, colours and normals for samples in [i0..i1] x [j0..j1] and uploads only those rows,
+   * so a brush step costs the brush area, not the whole level.
+   */
   refreshArea(i0, j0, i1, j1) {
+    i0 = Math.max(0, i0);
+    j0 = Math.max(0, j0);
+    i1 = Math.min(this.nx - 1, i1);
+    j1 = Math.min(this.nz - 1, j1);
+    if (i0 > i1 || j0 > j1) return;
+    const { nx, nz, heights } = this;
     const pos = this.geometry.attributes.position;
     const col = this.geometry.attributes.color;
-    for (let j = Math.max(0, j0); j <= Math.min(this.nz - 1, j1); j++) {
-      for (let i = Math.max(0, i0); i <= Math.min(this.nx - 1, i1); i++) {
-        const k = j * this.nx + i;
-        pos.setXYZ(k, i * TERRAIN_STEP, this.heights[k], -j * TERRAIN_STEP);
+    const nrm = this.geometry.attributes.normal;
+    const h = (i, j) => heights[Math.min(nz - 1, Math.max(0, j)) * nx + Math.min(nx - 1, Math.max(0, i))];
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        const k = j * nx + i;
+        const y = heights[k];
+        if (y < this.yMin) this.yMin = y;
+        if (y > this.yMax) this.yMax = y;
+        pos.setXYZ(k, i * TERRAIN_STEP, y, -j * TERRAIN_STEP);
         // Vertex colour from the cell it is the corner of (clamped at the far edges).
         const s = this.paint[Math.min(j, this.cz - 1) * this.cx + Math.min(i, this.cx - 1)];
         const c = SURFACES[s]?.color ?? SURFACES[0].color;
         tmpColor.setRGB(c[0] / 255, c[1] / 255, c[2] / 255, THREE.SRGBColorSpace);
         col.setXYZ(k, tmpColor.r, tmpColor.g, tmpColor.b);
+        // Normal from the height grid's slopes (map z runs along -z).
+        const dx = (h(i + 1, j) - h(i - 1, j)) / ((Math.min(nx - 1, i + 1) - Math.max(0, i - 1)) * TERRAIN_STEP);
+        const dz = (h(i, j + 1) - h(i, j - 1)) / ((Math.min(nz - 1, j + 1) - Math.max(0, j - 1)) * TERRAIN_STEP);
+        const len = Math.hypot(dx, 1, dz);
+        nrm.setXYZ(k, -dx / len, 1 / len, dz / len);
       }
     }
-    pos.needsUpdate = true;
-    col.needsUpdate = true;
-    this.geometry.computeVertexNormals();
-    this.geometry.computeBoundingBox();
-    this.geometry.computeBoundingSphere();
+    // Neighbours' normals depend on these heights too, so their rows were included by the callers' 1-sample margin.
+    const start = j0 * nx * 3;
+    const count = (j1 - j0 + 1) * nx * 3;
+    for (const attr of [pos, col, nrm]) {
+      attr.clearUpdateRanges();
+      attr.addUpdateRange(start, count);
+      attr.needsUpdate = true;
+    }
+    const box = (this.geometry.boundingBox ??= new THREE.Box3());
+    box.min.set(0, this.yMin, -(nz - 1) * TERRAIN_STEP);
+    box.max.set((nx - 1) * TERRAIN_STEP, this.yMax, 0);
+    this.geometry.boundingSphere ??= new THREE.Sphere();
+    box.getBoundingSphere(this.geometry.boundingSphere);
+  }
+
+  /** Mesh.raycast replacement: marches the ray over the height grid and refines the crossing. */
+  raycast(raycaster, intersects) {
+    const mesh = this.mesh;
+    tmpMatrix.copy(mesh.matrixWorld).invert();
+    tmpRay.copy(raycaster.ray).applyMatrix4(tmpMatrix);
+    // Clip the ray to the terrain's box (padded, so a flat level still has some thickness).
+    const box = tmpBox.copy(this.geometry.boundingBox).expandByScalar(1);
+    let t0 = 0;
+    if (!box.containsPoint(tmpRay.origin)) {
+      const entry = tmpRay.intersectBox(box, tmpPoint);
+      if (!entry) return;
+      t0 = tmpRay.origin.distanceTo(entry);
+    }
+    const dir = tmpRay.direction;
+    // Furthest distance inside the box along the ray.
+    const exitT = (a, d, lo, hi) => (d > 0 ? (hi - a) / d : d < 0 ? (lo - a) / d : Infinity);
+    const t1 = Math.min(
+      exitT(tmpRay.origin.x, dir.x, box.min.x, box.max.x),
+      exitT(tmpRay.origin.y, dir.y, box.min.y, box.max.y),
+      exitT(tmpRay.origin.z, dir.z, box.min.z, box.max.z),
+    );
+    const above = (t) => {
+      const x = tmpRay.origin.x + dir.x * t;
+      const z = tmpRay.origin.z + dir.z * t;
+      return tmpRay.origin.y + dir.y * t - this.heightAt(x, -z);
+    };
+    let prevT = t0;
+    if (above(t0) < 0) return; // starts under the ground (the camera is never there)
+    for (let t = t0 + RAY_STEP; t <= t1 + RAY_STEP; t += RAY_STEP) {
+      const tt = Math.min(t, t1);
+      const cur = above(tt);
+      if (cur <= 0) {
+        let lo = prevT;
+        let hi = tt;
+        for (let n = 0; n < 12; n++) {
+          const mid = (lo + hi) / 2;
+          if (above(mid) > 0) lo = mid;
+          else hi = mid;
+        }
+        const local = tmpRay.at(hi, new THREE.Vector3());
+        const point = local.clone().applyMatrix4(mesh.matrixWorld);
+        const distance = raycaster.ray.origin.distanceTo(point);
+        if (distance < raycaster.near || distance > raycaster.far) return;
+        const i = Math.min(this.cx - 1, Math.max(0, Math.floor(local.x / TERRAIN_STEP)));
+        const j = Math.min(this.cz - 1, Math.max(0, Math.floor(-local.z / TERRAIN_STEP)));
+        intersects.push({ distance, point, object: mesh, faceIndex: (j * this.cx + i) * 2 });
+        return;
+      }
+      prevT = tt;
+      if (tt >= t1) return;
+    }
   }
 
   heightAt(x, z) {
@@ -228,7 +322,16 @@ export class Terrain {
       this.refreshArea(i0 - 1, j0 - 1, i1 + 1, j1 + 1);
       return;
     }
-    const before = op === "smooth" || op === "land" || op === "sea" ? this.heights.slice() : null;
+    // Heights before this step, copied only around the brush (smooth and the beaches read one sample further out).
+    let before = null;
+    if (op === "smooth" || op === "land" || op === "sea") {
+      before = this.before;
+      const a0 = Math.max(0, i0 - 2);
+      const a1 = Math.min(this.nx - 1, i1 + 2);
+      for (let j = Math.max(0, j0 - 2); j <= Math.min(this.nz - 1, j1 + 2); j++) {
+        before.set(this.heights.subarray(j * this.nx + a0, j * this.nx + a1 + 1), j * this.nx + a0);
+      }
+    }
     // strength is metres per second at the brush centre
     const amount = strength * dt;
     for (let j = Math.max(0, j0); j <= Math.min(this.nz - 1, j1); j++) {

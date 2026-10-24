@@ -114,13 +114,14 @@ async function clickView(page, fx, fy) {
   await page.mouse.click(b.x + b.width * fx, b.y + b.height * fy);
 }
 
-async function dragView(page, path) {
+/** Drags across the view; `hold` is how long (ms) to stay at each point (brushes work per second, not per frame). */
+async function dragView(page, path, hold = 80) {
   const b = await canvasBox(page);
   await page.mouse.move(b.x + b.width * path[0][0], b.y + b.height * path[0][1]);
   await page.mouse.down();
   for (const [fx, fy] of path.slice(1)) {
     await page.mouse.move(b.x + b.width * fx, b.y + b.height * fy, { steps: 8 });
-    await page.waitForTimeout(80);
+    await page.waitForTimeout(hold);
   }
   await page.mouse.up();
 }
@@ -240,7 +241,7 @@ await test("open sea: Land brush makes land with beaches; New shape is undoable"
   const landCells = () => page.evaluate(() => Array.from(window.__sbg.project.terrain.heights).filter((h) => h > 8).length);
   assert((await landCells()) === 0, "open sea should start without land");
   assert((await page.evaluate(() => document.querySelector(".tool.active")?.dataset.tool)) === "land", "Land brush should be picked for open sea");
-  for (let k = 0; k < 3; k++) await dragView(page, [[0.4, 0.5], [0.5, 0.5], [0.6, 0.5]]);
+  for (let k = 0; k < 3; k++) await dragView(page, [[0.4, 0.5], [0.5, 0.5], [0.6, 0.5]], 600);
   const land = await landCells();
   assert(land > 50, `Land brush made ${land} land samples`);
   const sand = await page.evaluate(() => window.__sbg.project.terrain.paint.filter((v) => v === 3).length);
@@ -305,6 +306,7 @@ await test("import an OBJ with MTL and texture, export, reopen", async () => {
   await placeStartAndFlag(page);
   await page.click('.tab[data-tab="model"]');
   await page.check(".material .climb input");
+  await page.waitForFunction(() => window.__sbg.project.materials.some((m) => m.material.userData.climbable), null, { timeout: 5000 });
   const file = await exportMap(page, "obj.sbgmap");
   const { gltf } = readSbgmap(file);
   assert(gltf.images?.length > 0, "textures missing from export");
