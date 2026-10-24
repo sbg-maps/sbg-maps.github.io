@@ -886,3 +886,11 @@ button.btn {
   white-space: nowrap;
   cursor: pointer;
 }
+
+.song {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}

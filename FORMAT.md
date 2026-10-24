@@ -27,6 +27,7 @@ New maps, or a different number of holes, need a game restart because the course
   - `size`: [x, z] area shared by all holes.
   - `model`: `{ "file": "level.glb" }`.
   - `credits`: optional text.
+  - `music`: optional song file in the map (e.g. `"music/theme.ogg"`; mp3, ogg, wav or flac). It loops instead of the game's hole music, at the game's music volume, and speeds up slightly on "hurry up". Without it, the game's music plays.
 
 ## Hole
 
@@ -48,6 +49,7 @@ New maps, or a different number of holes, need a game restart because the course
 | `bounds` | [[x, z], ...] | Optional. Playable-area polygon. Default: the whole `size` rectangle. |
 | `green` | [[x, z], ...] | Optional. Green polygon (raises the flag, putting rules). Default: 15 m circle around the cup. |
 | `returnPath` | [[x, z], ...] | Optional. Path that out-of-bounds balls are returned towards. Default: straight line from tee to cup. |
+| `music` | string | Optional. A song file in the map for this hole only, instead of the map's `music`. |
 
 Heights (y) are world heights in metres. x and z are map coordinates in metres.
 Points (`tee`, `cup`, `itemBoxes`, `checkpoints`) may carry `y`. Without it, the height comes from the heightmap, or from the model below the point. Model maps should always give `y` for the cup.

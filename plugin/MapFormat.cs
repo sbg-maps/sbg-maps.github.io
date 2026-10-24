@@ -19,6 +19,8 @@ namespace SbgMaps
         public float[] size;
         /// <summary>Format 2: a level model (.glb) shared by all holes, in map coordinates.</summary>
         public ModelDef model;
+        /// <summary>Optional song (a file in the map: .mp3, .ogg, .wav or .flac) played on every hole.</summary>
+        public string music;
         public List<HoleDef> holes = new List<HoleDef>();
     }
 
@@ -33,6 +35,8 @@ namespace SbgMaps
         public int par = 4;
         public string difficulty = "none";
         public string theme = "coast";
+        /// <summary>Optional song for this hole only, overriding the map's.</summary>
+        public string music;
         /// <summary>Playable area in metres, [x, z]. Map-local coordinates run from (0,0) to size.</summary>
         public float[] size;
         public GridDef heightmap;

@@ -18,6 +18,7 @@
     <Reference Include="$(BepInExCore)/0Harmony.dll" Private="false" />
     <Reference Include="$(Managed)/GameAssembly.dll" Private="false" />
     <Reference Include="$(Managed)/Mirror.dll" Private="false" />
+    <Reference Include="$(Managed)/FMODUnity.dll" Private="false" />
     <Reference Include="$(Managed)/Mirror.Transports.dll" Private="false" />
     <Reference Include="$(Managed)/Facepunch.Steamworks.Win64.dll" Private="false" />
     <Reference Include="$(Managed)/SharedAssembly.dll" Private="false" />

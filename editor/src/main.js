@@ -84,6 +84,7 @@ function clear() {
   selectedObject = null;
   view?.dispose();
   project?.dispose();
+  stopSongPreview();
   view = project = null;
   selectedMaterial = null;
   toolbar.hidden = true;
@@ -867,6 +868,7 @@ function exportPanel() {
     <div class="field"><label for="map-name">Map name</label><input id="map-name" value="${esc(project.info.name)}" /></div>
     <div class="field"><label for="author">Author</label><input id="author" value="${esc(project.info.author)}" /></div>
     <div class="field"><label for="credits">Credits</label><textarea id="credits" rows="3" placeholder="e.g. Model by ...">${esc(project.info.credits)}</textarea></div>
+    ${musicSection()}
     ${problems.length ? `<ul class="problems">${problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : `<p class="ok">Ready to play!</p>`}
     <button class="btn btn-primary" id="export" ${problems.length ? "disabled" : ""}>Download .sbgmap</button>
     <p class="hint">Put the file in <b>Super Battle Golf/SbgMaps/maps/</b> and restart the game. Your holes show up under <b>Custom Maps</b>.</p>`;
@@ -877,6 +879,7 @@ function wireExport() {
   bind("#map-name", "name");
   bind("#author", "author");
   bind("#credits", "credits");
+  wireMusic();
   info.querySelector("#export").addEventListener("click", () =>
     run("Exporting", async () => {
       const bytes = await project.exportSbgmap();
@@ -886,6 +889,89 @@ function wireExport() {
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 10000);
       setStatus(`Saved ${a.download} (${Math.round(bytes.length / 1024)} KB)`);
+    }),
+  );
+}
+
+// Music
+let songPreview = null; // { name, audio, url }
+
+function musicSection() {
+  const songs = [...project.songs.keys()];
+  const label = (name) => esc(name.replace(/^music\//, ""));
+  const options = (selected, first) =>
+    `<option value="">${first}</option>${songs.map((n) => `<option value="${esc(n)}" ${n === selected ? "selected" : ""}>${label(n)}</option>`).join("")}`;
+  const rows = songs
+    .map((n) => {
+      const kb = Math.round(project.songs.get(n).length / 1024);
+      const playing = songPreview?.name === n;
+      return `<div class="song"><span class="mat-name" title="${label(n)}">${label(n)}</span><span class="hint">${kb > 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${kb} KB`}</span>
+        <button class="btn btn-secondary small song-play" data-name="${esc(n)}">${playing ? "Stop" : "Play"}</button>
+        <button class="btn btn-secondary small song-remove" data-name="${esc(n)}" title="Remove this song">Remove</button></div>`;
+    })
+    .join("");
+  return `
+    <h3>Music</h3>
+    <p class="hint">Plays instead of the game's music while people play your map, and goes along with it to everyone. mp3, ogg, wav or flac.</p>
+    <div class="songs">${rows}</div>
+    <label class="btn btn-secondary small" tabindex="0">Add song<input id="song-file" type="file" accept="audio/*,.mp3,.mpga,.ogg,.wav,.flac" hidden /></label>
+    ${songs.length ? `<div class="field"><label for="map-music">Map song</label><select id="map-music">${options(project.music, "Game music")}</select></div>
+    ${project.holes.length > 1 ? project.holes.map((h, i) => `<div class="field"><label for="hole-music-${i}">${esc(h.name)}</label><select class="hole-music" id="hole-music-${i}" data-i="${i}">${options(h.music, "Map song")}</select></div>`).join("") : ""}` : ""}`;
+}
+
+function stopSongPreview() {
+  if (!songPreview) return;
+  songPreview.audio.pause();
+  URL.revokeObjectURL(songPreview.url);
+  songPreview = null;
+}
+
+function wireMusic() {
+  const changed = () => {
+    history.version++; // autosave picks it up
+    renderPanel();
+  };
+  info.querySelector("#song-file").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    run("Adding song", async () => {
+      const name = project.addSong(file.name, new Uint8Array(await file.arrayBuffer()));
+      changed();
+      const mb = file.size / 1048576;
+      setStatus(mb > 15 ? `Added ${name.slice(6)}: ${mb.toFixed(0)} MB is big, friends download it with the map. An ogg around 128 kbps keeps it small.` : `Added ${name.slice(6)}`);
+    });
+  });
+  info.querySelector("#map-music")?.addEventListener("change", (e) => {
+    project.music = e.target.value || null;
+    changed();
+  });
+  info.querySelectorAll(".hole-music").forEach((s) =>
+    s.addEventListener("change", () => {
+      const h = project.holes[Number(s.dataset.i)];
+      if (s.value) h.music = s.value;
+      else delete h.music;
+      changed();
+    }),
+  );
+  info.querySelectorAll(".song-play").forEach((b) =>
+    b.addEventListener("click", () => {
+      const was = songPreview?.name;
+      stopSongPreview();
+      if (was !== b.dataset.name) {
+        const url = URL.createObjectURL(new Blob([project.songs.get(b.dataset.name)]));
+        const audio = new Audio(url);
+        audio.loop = true;
+        audio.play().catch(() => setStatus("This browser can't preview that song (the game can still play it)"));
+        songPreview = { name: b.dataset.name, audio, url };
+      }
+      renderPanel();
+    }),
+  );
+  info.querySelectorAll(".song-remove").forEach((b) =>
+    b.addEventListener("click", () => {
+      if (songPreview?.name === b.dataset.name) stopSongPreview();
+      project.removeSong(b.dataset.name);
+      changed();
     }),
   );
 }

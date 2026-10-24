@@ -338,6 +338,35 @@ if (fs.existsSync(OPTIONAL.sm64Glb)) {
   });
 } else results.push("  skip SM64 decomp level (imports/sm64/bob.glb not present)");
 
+await test("music: add a song, export, reopen", async () => {
+  // A quarter second of silence as a WAV file.
+  const rate = 8000, samples = 2000, wav = Buffer.alloc(44 + samples * 2);
+  wav.write("RIFF", 0); wav.writeUInt32LE(36 + samples * 2, 4); wav.write("WAVEfmt ", 8); wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(rate, 24); wav.writeUInt32LE(rate * 2, 28);
+  wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write("data", 36); wav.writeUInt32LE(samples * 2, 40);
+  const song = path.join(tmp, "Main Theme.wav");
+  fs.writeFileSync(song, wav);
+  const page = await freshPage(browser, url);
+  await page.click("#new-level-btn");
+  await page.click('[data-act="create"]');
+  await page.waitForFunction(() => window.__sbg.project?.terrain, null, { timeout: 20000 });
+  await placeStartAndFlag(page);
+  await page.click('.tab[data-tab="export"]');
+  await page.setInputFiles("#song-file", song);
+  await page.waitForSelector(".song", { timeout: 10000 });
+  const file = await exportMap(page, "music.sbgmap");
+  const { manifest, files } = readSbgmap(file);
+  assert(manifest.music === "music/Main_Theme.wav", `map song: ${manifest.music}`);
+  assert(files["music/Main_Theme.wav"]?.length === wav.length, "song file missing from the map");
+  await page.close();
+  const again = await freshPage(browser, url);
+  await again.setInputFiles("#open-file", file);
+  await again.waitForFunction(() => window.__sbg.project?.music, null, { timeout: 20000 }).catch(() => {});
+  assert(await again.evaluate(() => window.__sbg.project?.music === "music/Main_Theme.wav"), "reopened map lost its song");
+  assert(again.errors.length === 0, again.errors.join("; "));
+  await again.close();
+});
+
 await test("heightmap map: view, then edit a hole as a level", async () => {
   const sampleDir = path.join(tmp, "sample");
   const { execFileSync } = await import("child_process");

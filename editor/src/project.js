@@ -47,6 +47,8 @@ const PAD = 20;
 export const BASE_Y = 20;
 export const DEFAULT_WATER = 15;
 export const MAX_SIZE = 900;
+/** Song formats the game's audio engine (FMOD) plays. */
+export const SONG_TYPES = ["mp3", "ogg", "wav", "flac"];
 
 export class Project {
   /** @param {{terrain?: Terrain}} [options] a sculptable terrain for levels built from scratch */
@@ -64,6 +66,9 @@ export class Project {
     this.holes = [];
     this.materials = [];
     this.golfers = []; // editor-only scale references, in map coordinates
+    /** Songs in the map, by file name inside it (music/...); the map plays `music`, a hole its own `music` if set. */
+    this.songs = new Map();
+    this.music = null;
     /** Real rotations of camera-facing objects, which the editor turns toward the camera while showing them. */
     this.billboardBase = new WeakMap();
     this.collectMaterials();
@@ -460,6 +465,7 @@ export class Project {
       version: "1.0.0",
       size: this.size,
       model: withModel ? { file: "level.glb" } : undefined,
+      music: this.music ?? undefined,
       holes: this.holes.map((h) => ({
         name: h.name,
         par: h.par,
@@ -473,9 +479,35 @@ export class Project {
         cup: h.cup ? round(h.cup) : undefined,
         itemBoxes: h.itemBoxes.map(round),
         checkpoints: h.checkpoints.map(round),
+        music: h.music ?? undefined,
       })),
     };
+    // Only songs something plays go in, stored as they are (they are compressed already).
+    for (const name of this.usedSongs()) files[name] = [this.songs.get(name), { level: 0 }];
     return zipSync({ "map.json": strToU8(JSON.stringify(manifest, null, 2)), ...files }, { level: 6 });
+  }
+
+  usedSongs() {
+    return new Set([this.music, ...this.holes.map((h) => h.music)].filter((n) => n && this.songs.has(n)));
+  }
+
+  /** Adds a song file and returns its name inside the map. */
+  addSong(fileName, bytes) {
+    let ext = fileName.split(".").pop().toLowerCase();
+    if (ext === "mpga" || ext === "mpeg") ext = "mp3";
+    if (!SONG_TYPES.includes(ext)) throw new Error(`Songs can be ${SONG_TYPES.join(", ")} (not .${ext})`);
+    const base = fileName.replace(/\.[^.]*$/, "").replace(/[^\w-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60) || "song";
+    let name = `music/${base}.${ext}`;
+    for (let i = 2; this.songs.has(name); i++) name = `music/${base}-${i}.${ext}`;
+    this.songs.set(name, bytes);
+    this.music ??= name;
+    return name;
+  }
+
+  removeSong(name) {
+    this.songs.delete(name);
+    if (this.music === name) this.music = this.songs.keys().next().value ?? null;
+    for (const h of this.holes) if (h.music === name) delete h.music;
   }
 
   /**
@@ -568,7 +600,12 @@ export class Project {
       cup: h.cup,
       itemBoxes: h.itemBoxes ?? [],
       checkpoints: h.checkpoints ?? [],
+      ...(h.music ? { music: h.music } : {}),
     }));
+    for (const name of [m.music, ...m.holes.map((h) => h.music)]) {
+      if (name && map.files.has(name)) project.songs.set(name, map.files.get(name));
+    }
+    project.music = m.music && project.songs.has(m.music) ? m.music : null;
     // Points saved without a height (format 1) take it from the terrain.
     if (terrain) {
       for (const h of project.holes) for (const [set, p] of project.markerPoints(h)) if (p && p.y == null) set({ ...p, y: terrain.heightAt(p.x, p.z) });
