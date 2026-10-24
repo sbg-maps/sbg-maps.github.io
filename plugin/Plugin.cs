@@ -14,7 +14,7 @@ namespace SbgMaps
     {
         public const string Guid = "loafer.sbgmaps";
         public const string Name = "SbgMaps";
-        public const string Version = "0.0.1";
+        public const string Version = "0.2.0";
 
         internal static ManualLogSource Log;
         internal static Plugin Instance;
@@ -58,6 +58,8 @@ namespace SbgMaps
             SteamQueue.RaiseLimits();
             DevTools.Update();
         }
+
+        private void OnGUI() => MapTransfer.DrawProgress();
     }
 
     [HarmonyPatch(typeof(CourseCollection), nameof(CourseCollection.RuntimeInitialize))]

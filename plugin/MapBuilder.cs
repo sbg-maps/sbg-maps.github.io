@@ -85,7 +85,11 @@ namespace SbgMaps
             var cup = Object.FindObjectsByType<GolfHole>(FindObjectsInactive.Include, FindObjectsSortMode.None).FirstOrDefault(h => h.IsMainHole);
             var builder = new TerrainBuilder(terrain);
             // Copy the cutout vanilla made for its own cup before the cup moves, then stamp it under ours.
-            bool[,] cupCutout = cup != null && grids != null ? builder.ReadHoles(cup.transform.position, 3f) : null;
+            bool[,] cupCutout = cup != null ? builder.ReadHoles(cup.transform.position, 3f) : null;
+            // Model holes cut an opening of the same size into the level, so the cup fills it with no gap around it.
+            float opening = cupCutout != null ? builder.OpeningHalf(cupCutout) : 0f;
+            if (grids == null)
+                cupCutout = null;
 
             builder.SculptAll(SeaFloorHeight);
             if (model != null)
@@ -95,7 +99,7 @@ namespace SbgMaps
                 // The cup cut and green zone need the cup height; the editor always saves it for model maps.
                 float cupY = def.cup.y ?? def.water;
                 LevelBuilder.Build(model, new Vector3(origin.x, 0f, origin.y), new Vector3(origin.x + def.cup.x, cupY, origin.y + def.cup.z),
-                    def.greenRadius, groundLayer, parent.transform);
+                    def.greenRadius, groundLayer, parent.transform, opening);
                 Plugin.Log.LogInfo($"MapBuilder: built level model with {model.Primitives.Count} parts");
             }
             var cupPos = WorldOf(def.cup);

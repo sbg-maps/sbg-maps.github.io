@@ -25,14 +25,17 @@ namespace SbgMaps
         private const int GreenZoneSides = 32;
         private static readonly Color GreenTint = new Color(0.85f, 1f, 0.75f, 1f);
 
-        public static GameObject Build(GlbReader.Model model, Vector3 origin, Vector3 cup, float greenRadius, int groundLayer, Transform parent)
+        public static GameObject Build(GlbReader.Model model, Vector3 origin, Vector3 cup, float greenRadius, int groundLayer, Transform parent, float cupOpeningHalf = 0f)
         {
+            // The opening the game's cup sits in: as wide as the one vanilla terrain cuts for it.
+            float openingHalf = cupOpeningHalf > 0.1f ? Mathf.Min(cupOpeningHalf, CupCutHalf) : CupCutHalf;
+            Plugin.Log.LogInfo($"LevelBuilder: cup opening {openingHalf * 2f:F2} m wide");
             var root = new GameObject("SbgMaps level");
             root.transform.SetParent(parent, false);
             root.transform.position = origin;
             var ctx = new Context { Model = model, GroundLayer = groundLayer };
             var localCup = cup - origin;
-            var zone = new CupZone(localCup, greenRadius);
+            var zone = new CupZone(localCup, greenRadius, openingHalf);
             // Static props the cup sits on or next to (a cannon lid, a crate) become level ground for this hole,
             // so the cup is cut through them and the apron covers them like any other ground.
             var ground = new List<GlbReader.Primitive>(model.Primitives);
@@ -206,12 +209,14 @@ namespace SbgMaps
         private class CupZone
         {
             public readonly Vector3 Cup;
+            public readonly float OpeningHalf;
             public readonly List<Edge> Cut;
             public readonly List<Edge> Green;
 
-            public CupZone(Vector3 cup, float greenRadius)
+            public CupZone(Vector3 cup, float greenRadius, float openingHalf)
             {
                 Cup = cup;
+                OpeningHalf = openingHalf;
                 Cut = Square(cup.x, cup.z, ApronHalf);
                 Green = Circle(cup.x, cup.z, greenRadius, GreenZoneSides);
             }
@@ -329,7 +334,7 @@ namespace SbgMaps
                 for (int j = 0; j < n; j++)
                 {
                     float cx = -ApronHalf + (i + 0.5f) * ApronStep, cz = -ApronHalf + (j + 0.5f) * ApronStep;
-                    if (Mathf.Abs(cx) < CupCutHalf && Mathf.Abs(cz) < CupCutHalf)
+                    if (Mathf.Abs(cx) < zone.OpeningHalf && Mathf.Abs(cz) < zone.OpeningHalf)
                         continue; // the hole itself
                     var a = grid[i, j];
                     var b = grid[i + 1, j];

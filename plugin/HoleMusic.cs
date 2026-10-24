@@ -22,11 +22,13 @@ namespace SbgMaps
         private static FMOD.Sound sound;
         private static FMOD.Channel channel;
         private static FMOD.Sound fading;
+        /// <summary>The course manager of the hole the song belongs to; the song ends with it.</summary>
+        private static UnityEngine.Object owner;
 
         private static string CacheFolder => Path.Combine(Paths.GameRootPath, "SbgMaps", "cache");
 
         [HarmonyPrefix, HarmonyPatch(typeof(CourseManager), "TryPlayHoleMusic")]
-        private static bool PlayPrefix(int ___currentHoleGlobalIndex, ref bool ___isPlayingHoleMusic, bool hurryUpInstantly)
+        private static bool PlayPrefix(CourseManager __instance, int ___currentHoleGlobalIndex, ref bool ___isPlayingHoleMusic, bool hurryUpInstantly)
         {
             if (___isPlayingHoleMusic || SingletonBehaviour<DrivingRangeManager>.HasInstance || ___currentHoleGlobalIndex < 0)
                 return true;
@@ -39,6 +41,7 @@ namespace SbgMaps
                 if (string.IsNullOrEmpty(file))
                     return true;
                 Play(CachedPath(pack, file), hurryUpInstantly);
+                owner = __instance;
                 ___isPlayingHoleMusic = true;
                 return false;
             }
@@ -59,10 +62,22 @@ namespace SbgMaps
         }
 
         [HarmonyPostfix, HarmonyPatch(typeof(CourseManager), "OnDestroy")]
-        private static void StopPostfix() => Stop();
+        private static void StopPostfix(CourseManager __instance)
+        {
+            // Only the hole's own course manager ends its song (the next hole's may already be playing).
+            if (owner == null || owner == __instance)
+                Stop();
+        }
 
-        /// <summary>Any scene change ends the hole, so the song too (a new hole starts its own after loading).</summary>
-        public static void OnSceneLoaded() => Stop();
+        /// <summary>
+        /// A scene change ends the hole the song belongs to. The new hole may already have started its own song
+        /// before Unity reports the scene as loaded, so only a song whose hole is gone is stopped.
+        /// </summary>
+        public static void OnSceneLoaded()
+        {
+            if (owner == null)
+                Stop();
+        }
 
         /// <summary>
         /// The mod is being unloaded (a hot reload): stop at once. The handles are also kept in the AppDomain,
@@ -138,6 +153,7 @@ namespace SbgMaps
             }
             sound = default;
             channel = default;
+            owner = null;
         }
 
         private static void Check(FMOD.RESULT result, string what)

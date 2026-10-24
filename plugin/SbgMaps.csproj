@@ -26,6 +26,8 @@
     <Reference Include="$(Managed)/Unity.Localization.dll" Private="false" />
     <Reference Include="$(Managed)/UnityEngine.dll" Private="false" />
     <Reference Include="$(Managed)/UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="$(Managed)/UnityEngine.IMGUIModule.dll" Private="false" />
+    <Reference Include="$(Managed)/UnityEngine.TextRenderingModule.dll" Private="false" />
     <Reference Include="$(Managed)/UnityEngine.PhysicsModule.dll" Private="false" />
     <Reference Include="$(Managed)/UnityEngine.ParticleSystemModule.dll" Private="false" />
     <Reference Include="$(Managed)/UnityEngine.ImageConversionModule.dll" Private="false" />

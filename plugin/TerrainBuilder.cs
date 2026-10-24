@@ -111,6 +111,18 @@ namespace SbgMaps
             return holes;
         }
 
+        /// <summary>Half the width of the opening in a hole mask, in metres (0 when nothing is cut).</summary>
+        public float OpeningHalf(bool[,] mask)
+        {
+            float step = data.size.x / data.holesResolution;
+            int minX = int.MaxValue, maxX = int.MinValue, minZ = int.MaxValue, maxZ = int.MinValue;
+            for (int z = 0; z < mask.GetLength(0); z++)
+                for (int x = 0; x < mask.GetLength(1); x++)
+                    if (!mask[z, x])
+                        (minX, maxX, minZ, maxZ) = (Mathf.Min(minX, x), Mathf.Max(maxX, x), Mathf.Min(minZ, z), Mathf.Max(maxZ, z));
+            return maxX < minX ? 0f : Mathf.Max(maxX - minX + 1, maxZ - minZ + 1) * step / 2f;
+        }
+
         /// <summary>Cuts the given hole mask centred on a world point.</summary>
         public void StampHoles(Vector3 worldCenter, bool[,] mask)
         {

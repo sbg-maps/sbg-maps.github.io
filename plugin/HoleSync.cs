@@ -85,15 +85,46 @@ namespace SbgMaps
             return new SelectHoleMessage { mapId = "", holeIndex = -1, hash = "" };
         }
 
+        /// <summary>Longest the host waits on the loading screen for players still getting the map.</summary>
+        private const float MaxWaitSeconds = 120f;
+        private static bool waited;
+
+        /// <summary>Holds the scene change until every player has the map, then makes it.</summary>
+        private static System.Collections.IEnumerator WaitThenChange(string sceneName, string mapId)
+        {
+            float start = UnityEngine.Time.realtimeSinceStartup, lastSaid = -10f;
+            while (MapTransfer.IsAnyoneGetting(mapId, out string who) && UnityEngine.Time.realtimeSinceStartup - start < MaxWaitSeconds)
+            {
+                if (UnityEngine.Time.realtimeSinceStartup - lastSaid > 5f)
+                {
+                    lastSaid = UnityEngine.Time.realtimeSinceStartup;
+                    Plugin.Log.LogInfo($"Waiting for {who} to get map '{mapId}'");
+                }
+                yield return null;
+            }
+            if (!NetworkServer.active)
+                yield break;
+            waited = true;
+            BNetworkManager.singleton.ServerChangeScene(sceneName);
+        }
+
         [HarmonyPatch(typeof(BNetworkManager), nameof(BNetworkManager.ServerChangeScene))]
         private static class ServerChangeScenePatch
         {
-            private static void Prefix(string newSceneName)
+            private static bool Prefix(string newSceneName)
             {
-                Current = MessageFor(newSceneName);
+                var next = MessageFor(newSceneName);
+                if (!waited && !string.IsNullOrEmpty(next.mapId) && MapTransfer.IsAnyoneGetting(next.mapId, out _))
+                {
+                    Plugin.Instance.StartCoroutine(WaitThenChange(newSceneName, next.mapId));
+                    return false;
+                }
+                waited = false;
+                Current = next;
                 if (!string.IsNullOrEmpty(Current.mapId))
                     Plugin.Log.LogInfo($"Next hole is custom: {Current.mapId} hole {Current.holeIndex + 1}");
                 NetworkServer.SendToAll(Current);
+                return true;
             }
         }
 

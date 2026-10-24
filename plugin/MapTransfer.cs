@@ -79,10 +79,15 @@ namespace SbgMaps
     internal static class MapTransfer
     {
         private const int ChunkSize = 16 * 1024;
-        /// <summary>How much may be queued on a Steam connection before we wait for it to drain.</summary>
-        private const int MaxInFlight = 384 * 1024;
-        /// <summary>Pace for transports where we can't see the queue (LAN/KCP).</summary>
-        private const int FallbackBytesPerSecond = 2 * 1024 * 1024;
+        /// <summary>
+        /// How much may be sent and not yet confirmed by the player. The player confirms every few chunks, so this
+        /// paces the transfer to what actually arrives, whatever the transport (Steam drops messages that overflow
+        /// its send buffer, and that dropped players before).
+        /// </summary>
+        private const int Window = 512 * 1024;
+        private const int AckEvery = 8;
+        /// <summary>Give up on a player who confirms nothing for this long.</summary>
+        private const float StallSeconds = 30f;
         /// <summary>Largest map a player accepts from a host.</summary>
         private const long MaxMapBytes = 128L * 1024 * 1024;
 
@@ -91,6 +96,21 @@ namespace SbgMaps
             public string[] ids;
             public string[] hashes;
             public long[] sizes;
+            public string version; // the host's SbgMaps version
+        }
+
+        /// <summary>Player to host, answering the map list: its SbgMaps version and the maps it is going to fetch.</summary>
+        public struct ClientInfoMessage : NetworkMessage
+        {
+            public string version;
+            public string[] needs;
+        }
+
+        /// <summary>Player to host: how many chunks of a map have arrived.</summary>
+        public struct MapAckMessage : NetworkMessage
+        {
+            public string id;
+            public int received;
         }
 
         public struct MapRequestMessage : NetworkMessage
@@ -118,6 +138,7 @@ namespace SbgMaps
                     w.WriteString(m.hashes[i]);
                     w.WriteLong(m.sizes[i]);
                 }
+                w.WriteString(m.version);
             };
             Reader<MapListMessage>.read = r =>
             {
@@ -129,8 +150,30 @@ namespace SbgMaps
                     m.hashes[i] = r.ReadString();
                     m.sizes[i] = r.ReadLong();
                 }
+                m.version = r.Remaining > 0 ? r.ReadString() : "0.0.1";
                 return m;
             };
+            Writer<ClientInfoMessage>.write = (w, m) =>
+            {
+                w.WriteString(m.version);
+                w.WriteInt(m.needs.Length);
+                foreach (var id in m.needs)
+                    w.WriteString(id);
+            };
+            Reader<ClientInfoMessage>.read = r =>
+            {
+                var m = new ClientInfoMessage { version = r.ReadString() };
+                m.needs = new string[Mathf.Clamp(r.ReadInt(), 0, 1000)];
+                for (int i = 0; i < m.needs.Length; i++)
+                    m.needs[i] = r.ReadString();
+                return m;
+            };
+            Writer<MapAckMessage>.write = (w, m) =>
+            {
+                w.WriteString(m.id);
+                w.WriteInt(m.received);
+            };
+            Reader<MapAckMessage>.read = r => new MapAckMessage { id = r.ReadString(), received = r.ReadInt() };
             Writer<MapRequestMessage>.write = (w, m) => w.WriteString(m.id);
             Reader<MapRequestMessage>.read = r => new MapRequestMessage { id = r.ReadString() };
             Writer<MapChunkMessage>.write = (w, m) =>
@@ -160,7 +203,86 @@ namespace SbgMaps
                 ids = maps.Select(m => m.Manifest.id).ToArray(),
                 hashes = maps.Select(m => m.Hash).ToArray(),
                 sizes = maps.Select(m => (long)ZipFor(m).Length).ToArray(),
+                version = Plugin.Version,
             });
+        }
+
+        /// <summary>Per player: the maps it still has to get, and how far each running send has been confirmed.</summary>
+        private class Peer
+        {
+            public string Version;
+            public readonly HashSet<string> Needs = new HashSet<string>();
+            public readonly Dictionary<string, int> Acked = new Dictionary<string, int>();
+            public readonly Dictionary<string, int> Totals = new Dictionary<string, int>();
+        }
+
+        private static readonly Dictionary<int, Peer> peers = new Dictionary<int, Peer>();
+
+        private static Peer PeerOf(NetworkConnectionToClient conn)
+        {
+            if (!peers.TryGetValue(conn.connectionId, out var peer))
+                peers[conn.connectionId] = peer = new Peer();
+            return peer;
+        }
+
+        private static void OnClientInfo(NetworkConnectionToClient conn, ClientInfoMessage msg)
+        {
+            var peer = PeerOf(conn);
+            peer.Version = msg.version;
+            peer.Needs.Clear();
+            peer.Needs.UnionWith(msg.needs.Where(SafeId));
+            string who = PlayerName(conn);
+            if (msg.version != Plugin.Version)
+                DevTools.Say($"{who} has SbgMaps {msg.version}, you have {Plugin.Version}. Use the same version, or holes may differ.");
+            if (peer.Needs.Count > 0)
+                DevTools.Say($"{who} is getting {peer.Needs.Count} map{(peer.Needs.Count == 1 ? "" : "s")} from you");
+        }
+
+        private static void OnAck(NetworkConnectionToClient conn, MapAckMessage msg)
+        {
+            var peer = PeerOf(conn);
+            if (!peer.Acked.TryGetValue(msg.id, out int acked) || msg.received <= acked)
+                return;
+            peer.Acked[msg.id] = msg.received;
+            if (peer.Totals.TryGetValue(msg.id, out int total) && msg.received >= total)
+                peer.Needs.Remove(msg.id);
+        }
+
+        /// <summary>
+        /// Is a player still getting this map? Then the hole must wait, or that player loads it without the map.
+        /// </summary>
+        public static bool IsAnyoneGetting(string mapId, out string status)
+        {
+            status = null;
+            foreach (var kv in peers.ToList())
+            {
+                if (!NetworkServer.connections.TryGetValue(kv.Key, out var conn))
+                {
+                    peers.Remove(kv.Key);
+                    continue;
+                }
+                if (!kv.Value.Needs.Contains(mapId))
+                    continue;
+                int percent = kv.Value.Totals.TryGetValue(mapId, out int total) && total > 0 && kv.Value.Acked.TryGetValue(mapId, out int acked) ? acked * 100 / total : 0;
+                status = $"{PlayerName(conn)} ({percent}%)";
+                return true;
+            }
+            return false;
+        }
+
+        private static string PlayerName(NetworkConnectionToClient conn)
+        {
+            try
+            {
+                var id = conn.identity != null ? conn.identity.GetComponent<PlayerId>() : null;
+                if (id != null && !string.IsNullOrEmpty(id.PlayerName))
+                    return id.PlayerName;
+            }
+            catch
+            {
+                // fall back to the connection number
+            }
+            return $"Player {conn.connectionId}";
         }
 
         private static byte[] ZipFor(MapPack pack)
@@ -184,41 +306,77 @@ namespace SbgMaps
         private static IEnumerator SendChunks(NetworkConnectionToClient conn, string id, byte[] bytes)
         {
             int total = Mathf.Max(1, (bytes.Length + ChunkSize - 1) / ChunkSize);
+            var peer = PeerOf(conn);
+            peer.Needs.Add(id);
+            peer.Totals[id] = total;
+            peer.Acked[id] = 0;
             var started = Time.realtimeSinceStartup;
-            float allowance = 0f;
+            float lastProgress = started;
+            int lastAcked = 0;
             int i = 0;
-            while (i < total)
+            while (peer.Acked[id] < total)
             {
                 // Stop if the player left or the lobby closed.
                 if (!NetworkServer.active || !NetworkServer.connections.ContainsKey(conn.connectionId))
                     yield break;
-                // Send as much as the connection can take right now. Steam drops messages that overflow its send
-                // buffer, so with Steam we watch its queue; otherwise we keep to a fixed pace.
-                int budget;
-                int queued = SteamQueue.QueuedBytes(conn.connectionId);
-                if (queued >= 0)
-                    budget = MaxInFlight - queued;
-                else
+                int acked = peer.Acked[id];
+                if (acked != lastAcked)
+                    (lastAcked, lastProgress) = (acked, Time.realtimeSinceStartup);
+                else if (Time.realtimeSinceStartup - lastProgress > StallSeconds)
                 {
-                    allowance = Mathf.Min(allowance + FallbackBytesPerSecond * Time.unscaledDeltaTime, MaxInFlight);
-                    budget = (int)allowance;
+                    peer.Needs.Remove(id);
+                    Plugin.Log.LogError($"Map '{id}' to connection {conn.connectionId}: nothing confirmed for {StallSeconds:F0} s, giving up at {acked}/{total}");
+                    DevTools.Say($"Could not send map '{id}' to {PlayerName(conn)}; they can install it by hand");
+                    yield break;
                 }
-                while (budget >= ChunkSize && i < total)
+                // Keep at most a window of unconfirmed data on the way.
+                while (i < total && (i - acked) * ChunkSize < Window)
                 {
                     int offset = i * ChunkSize;
                     int length = Math.Min(ChunkSize, bytes.Length - offset);
                     var data = new byte[length];
                     Buffer.BlockCopy(bytes, offset, data, 0, length);
                     conn.Send(new MapChunkMessage { id = id, index = i, total = total, data = data });
-                    budget -= ChunkSize;
-                    if (queued < 0)
-                        allowance -= ChunkSize;
                     i++;
                 }
                 yield return null;
             }
+            peer.Needs.Remove(id);
             float seconds = Mathf.Max(0.001f, Time.realtimeSinceStartup - started);
             Plugin.Log.LogInfo($"Sent map '{id}' ({bytes.Length / 1024} KB) in {seconds:F1} s ({bytes.Length / 1024f / seconds:F0} KB/s)");
+        }
+
+        // ---------- progress bar ----------
+
+        private static GUIStyle barLabel;
+
+        /// <summary>A bar at the top of the screen for every map on its way: to this player, or from this host.</summary>
+        public static void DrawProgress()
+        {
+            var bars = new List<(string label, float done)>();
+            foreach (var kv in active)
+                if (kv.Value.Chunks != null)
+                    bars.Add(($"Getting map '{kv.Key}' from the host", kv.Value.Received / (float)kv.Value.Chunks.Length));
+            if (NetworkServer.active)
+                foreach (var kv in peers)
+                    if (NetworkServer.connections.TryGetValue(kv.Key, out var conn))
+                        foreach (var id in kv.Value.Needs)
+                            if (kv.Value.Totals.TryGetValue(id, out int total) && total > 0)
+                                bars.Add(($"Sending map '{id}' to {PlayerName(conn)}", kv.Value.Acked.TryGetValue(id, out int acked) ? acked / (float)total : 0f));
+            if (bars.Count == 0)
+                return;
+            barLabel ??= new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 18, fontStyle = FontStyle.Bold };
+            float width = Mathf.Min(560f, Screen.width - 40f), x = (Screen.width - width) / 2f, y = 16f;
+            foreach (var (label, done) in bars)
+            {
+                GUI.color = new Color(0f, 0f, 0f, 0.6f);
+                GUI.DrawTexture(new Rect(x, y, width, 34f), Texture2D.whiteTexture);
+                GUI.color = new Color(0.35f, 0.8f, 0.3f, 0.95f);
+                GUI.DrawTexture(new Rect(x + 3f, y + 3f, (width - 6f) * Mathf.Clamp01(done), 28f), Texture2D.whiteTexture);
+                GUI.color = Color.white;
+                GUI.Label(new Rect(x, y, width, 34f), $"{label}  {Mathf.FloorToInt(done * 100f)}%", barLabel);
+                y += 40f;
+            }
         }
 
         // ---------- player ----------
@@ -256,6 +414,9 @@ namespace SbgMaps
                     missing.Add(msg.ids[i]);
             }
             CustomCourse.UseHostMaps(hostOrder);
+            if (msg.version != Plugin.Version)
+                DevTools.Say($"The host has SbgMaps {msg.version}, you have {Plugin.Version}. Use the same version, or holes may differ.");
+            NetworkClient.Send(new ClientInfoMessage { version = Plugin.Version, needs = missing.ToArray() });
             if (missing.Count == 0)
                 return;
             long totalBytes = missing.Sum(id => msg.sizes[Array.IndexOf(msg.ids, id)]);
@@ -288,6 +449,8 @@ namespace SbgMaps
                 return;
             dl.Chunks[msg.index] = msg.data;
             dl.Received++;
+            if (dl.Received % AckEvery == 0 || dl.Received == msg.total)
+                NetworkClient.Send(new MapAckMessage { id = msg.id, received = dl.Received });
             int percent = dl.Received * 100 / msg.total;
             if (msg.total > 8 && percent / 25 > dl.LastReported / 25 && percent < 100)
             {
@@ -357,7 +520,12 @@ namespace SbgMaps
         [HarmonyPatch(typeof(NetworkManager), "RegisterServerMessages")]
         private static class RegisterServerPatch
         {
-            private static void Postfix() => NetworkServer.ReplaceHandler<MapRequestMessage>(OnRequest);
+            private static void Postfix()
+            {
+                NetworkServer.ReplaceHandler<MapRequestMessage>(OnRequest);
+                NetworkServer.ReplaceHandler<ClientInfoMessage>(OnClientInfo);
+                NetworkServer.ReplaceHandler<MapAckMessage>(OnAck);
+            }
         }
 
         public static void RegisterClientHandlers()
