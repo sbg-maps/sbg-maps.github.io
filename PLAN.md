@@ -109,6 +109,17 @@ Goal: import ripped levels (e.g. SM64 Bob-omb Battlefield, WoW Stormwind) and sp
 - Ripped assets: private play with friends only, never published to Thunderstore.
 - First step: import proof with one real ripped level as a playable hole, before building the editor.
 
+## Seamless creator/player experience (user requirement, 2026-10-24)
+
+- **Host-to-player map transfer, in the lobby.** On join, the host sends its map list (id + hash).
+  - Missing or outdated maps download in the background over the Mirror connection, chunked, with a progress bar.
+  - If a hole starts before a download finishes, that player's scene load waits for it.
+- **In-game community browser.** Thunderstore is the catalog: the game's community already has a "Courses" category, moderation, versioning and free hosting.
+  - The mod lists map packages and installs them with one click; r2modman users get them too.
+  - The editor exports a Thunderstore-ready package. No server of our own.
+- Ripped/copyrighted levels never go to the public catalog; host transfer covers private play.
+- **Editor hosting:** GitHub Pages from `editor/` (workflow `.github/workflows/pages.yml`), fully client-side.
+
 ## Phases
 
 0. Setup: BepInEx in game, plugin skeleton, dump a vanilla hole scene's hierarchy (AssetRipper/UnityPy) to get the exact required component list.

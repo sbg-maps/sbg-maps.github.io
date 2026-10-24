@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SBG Map Editor</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>SBG Map Editor</h1>
+      <label class="button">Open .sbgmap<input id="open-file" type="file" accept=".sbgmap,.zip" hidden /></label>
+      <label class="button">Open map folder<input id="open-folder" type="file" webkitdirectory hidden /></label>
+      <select id="hole-select" disabled></select>
+      <span id="status">Open a map to view it. Files stay on your computer.</span>
+    </header>
+    <main id="viewport"></main>
+    <aside id="info"></aside>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

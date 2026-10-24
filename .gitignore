@@ -8,3 +8,5 @@ plugin/bin/
 plugin/obj/
 devreloader/bin/
 devreloader/obj/
+editor/node_modules/
+editor/dist/
