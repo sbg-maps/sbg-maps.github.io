@@ -487,7 +487,7 @@ export class Project {
     const wasOverlay = this.surfaceOverlay;
     this.setSurfaceOverlay(false);
     // Only game-relevant fields go into the file (userData becomes glTF extras); keep editor-only data out.
-    const KEEP = ["surface", "invisible", "renderOnly", "sm64Surface", "alphaBlend"];
+    const KEEP = ["surface", "invisible", "renderOnly", "climbable", "sm64Surface", "alphaBlend"];
     const savedUserData = this.materials.map(({ material }) => [material, material.userData, material.visible]);
     for (const [m, data] of savedUserData) {
       m.userData = Object.fromEntries(KEEP.filter((k) => data[k] !== undefined).map((k) => [k, data[k]]));

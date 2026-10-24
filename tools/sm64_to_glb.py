@@ -751,7 +751,10 @@ def main():
     prims = []
     for (kind, tex, surface), part in sorted(col.parts.items(), key=lambda kv: (kv[0][0], str(kv[0][1]), kv[0][2])):
         label = f"{texture_label(dec, tex)} / {kind.replace('SURFACE_', '').lower()}{' (steep)' if surface == 'slide' else ''}"
-        mat = writer.material(("c", kind, tex, surface), label, dec.textures.get(tex), {"surface": surface, "invisible": True, "sm64Surface": kind}, None, ("repeat", "repeat"))
+        extras = {"surface": surface, "invisible": True, "sm64Surface": kind}
+        if surface in ("rough", "sand", "ice"):
+            extras["climbable"] = True  # Mario walks up any of these, however steep; walls stay too steep anyway
+        mat = writer.material(("c", kind, tex, surface), label, dec.textures.get(tex), extras, None, ("repeat", "repeat"))
         prims.append(primitive_for(writer, part, mat, with_colors=False))
     writer.node({"name": "collision", "mesh": writer.mesh("collision", prims)})
     print(f"collision: {sum(len(p['pos']) for p in col.parts.values()) // 3} triangles in {len(prims)} groups")

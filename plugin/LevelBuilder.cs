@@ -183,10 +183,10 @@ namespace SbgMaps
 
                 string name = $"{label} {index++:D3} {mat?.Name ?? "unnamed"} [{surface}]";
                 if (main.Count > 0)
-                    CreatePart(parent, name, main, invisible ? null : MaterialFor(ctx.Materials, model, prim.Material, false), surface, ctx.GroundLayer);
+                    CreatePart(parent, name, main, invisible ? null : MaterialFor(ctx.Materials, model, prim.Material, false), surface, ctx.GroundLayer, mat?.Climbable ?? false);
                 if (green.Count > 0)
                     CreatePart(parent, name + " green", green, invisible ? null : MaterialFor(ctx.GreenMaterials, model, prim.Material, true),
-                        greenSurface ?? "none", ctx.GroundLayer);
+                        greenSurface ?? "none", ctx.GroundLayer, mat?.Climbable ?? false);
             }
         }
 
@@ -368,7 +368,7 @@ namespace SbgMaps
             _ => null,
         };
 
-        private static void CreatePart(Transform parent, string name, MeshData data, Material material, string surface, int groundLayer)
+        private static void CreatePart(Transform parent, string name, MeshData data, Material material, string surface, int groundLayer, bool climbable = false)
         {
             var go = new GameObject(name);
             // TerrainAddition reads its layer in Awake, so fill everything in while inactive.
@@ -388,6 +388,8 @@ namespace SbgMaps
                 collider.sharedMesh = mesh;
                 if (surface == "slide")
                     SlideController.Register(collider);
+                if (climbable)
+                    Climb.Register(collider);
             }
             var layer = Surfaces[surface];
             if (layer.HasValue)

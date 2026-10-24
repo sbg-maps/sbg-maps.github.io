@@ -545,6 +545,7 @@ function modelPanel() {
           <span class="thumb" style="${materialThumb(material)}"></span>
           <span class="mat-name" title="${esc(material.name)}">${esc(material.name || `Material ${i + 1}`)}</span>
           <select data-i="${i}" class="surface">${surfaceOptions(material.userData.surface)}</select>
+          <label class="climb" title="Players can walk up it however steep it is (only walls stop them)"><input type="checkbox" data-i="${i}" ${material.userData.climbable ? "checked" : ""} /> Climb</label>
         </div>`,
     )
     .join("");
@@ -602,9 +603,16 @@ function wireModel() {
   info.querySelectorAll("select.surface").forEach((s) =>
     s.addEventListener("change", () => project.setSurface(project.materials[Number(s.dataset.i)].material, s.value)),
   );
+  info.querySelectorAll(".climb input").forEach((c) =>
+    c.addEventListener("change", () => {
+      const { material } = project.materials[Number(c.dataset.i)];
+      if (c.checked) material.userData.climbable = true;
+      else delete material.userData.climbable;
+    }),
+  );
   info.querySelectorAll(".material").forEach((row) =>
     row.addEventListener("click", (e) => {
-      if (e.target.tagName !== "SELECT") selectMaterial(project.materials[Number(row.dataset.i)].material);
+      if (!["SELECT", "INPUT", "LABEL"].includes(e.target.tagName)) selectMaterial(project.materials[Number(row.dataset.i)].material);
     }),
   );
 }

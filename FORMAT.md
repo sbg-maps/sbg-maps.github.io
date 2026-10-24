@@ -99,6 +99,7 @@ Unknown values count as rough.
 - Other material extras:
   - `invisible: true` makes a collision-only mesh, never drawn. Levels converted from game sources ship their real collision mesh this way.
   - `renderOnly: true` makes a visual-only mesh with no collision. The game still cuts the cup into it and tints it green near the flag.
+  - `climbable: true` lets players walk up it at up to 80 degrees, past the game's usual steepness limit (only walls stop them). The SM64 converter sets it on every floor Mario can walk on.
 
 ### Objects
 

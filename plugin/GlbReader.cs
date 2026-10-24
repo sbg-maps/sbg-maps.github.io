@@ -38,6 +38,7 @@ namespace SbgMaps
             public string Surface;      // from extras.surface
             public bool Invisible;      // extras.invisible: collision only, never drawn
             public bool RenderOnly;     // extras.renderOnly: drawn only, no collision
+            public bool Climbable;      // extras.climbable: players can walk up it however steep (up to Climb.MaxSlope)
         }
 
         /// <summary>A node marked with extras.object: kept separate so the game can move it.</summary>
@@ -122,6 +123,7 @@ namespace SbgMaps
                     Surface = (string)m["extras"]?["surface"],
                     Invisible = (bool?)m["extras"]?["invisible"] ?? false,
                     RenderOnly = (bool?)m["extras"]?["renderOnly"] ?? false,
+                    Climbable = (bool?)m["extras"]?["climbable"] ?? false,
                 };
                 var pbr = m["pbrMetallicRoughness"];
                 mat.Metallic = (float?)pbr?["metallicFactor"] ?? 0f;

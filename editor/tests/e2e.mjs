@@ -303,9 +303,12 @@ await test("import an OBJ with MTL and texture, export, reopen", async () => {
   const textured = await page.evaluate(() => window.__sbg.project.materials.filter((m) => m.material.map).length);
   assert(textured > 0, "no textures loaded");
   await placeStartAndFlag(page);
+  await page.click('.tab[data-tab="model"]');
+  await page.check(".material .climb input");
   const file = await exportMap(page, "obj.sbgmap");
   const { gltf } = readSbgmap(file);
   assert(gltf.images?.length > 0, "textures missing from export");
+  assert(gltf.materials.some((m) => m.extras?.climbable), "Climb box lost on export");
   await page.close();
   const again = await freshPage(browser, url);
   await again.setInputFiles("#open-file", file);
@@ -330,6 +333,7 @@ if (fs.existsSync(OPTIONAL.sm64Glb)) {
     const { gltf } = readSbgmap(await exportMap(page, "sm64.sbgmap"));
     assert(gltf.samplers?.some((x) => x.wrapS === 33071), "clamped textures lost on export");
     assert(gltf.materials.some((m) => m.extras?.invisible), "invisible collision lost on export");
+    assert(gltf.materials.some((m) => m.extras?.climbable), "climbable floors lost on export");
     await page.close();
   });
 } else results.push("  skip SM64 decomp level (imports/sm64/bob.glb not present)");
