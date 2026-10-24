@@ -378,7 +378,8 @@ namespace SbgMaps
                 var tex = new Texture2D(2, 2, TextureFormat.RGBA32, mipChain: true);
                 if (ImageConversion.LoadImage(tex, src.Image))
                 {
-                    tex.wrapMode = TextureWrapMode.Repeat;
+                    tex.wrapModeU = WrapMode(src.WrapS);
+                    tex.wrapModeV = WrapMode(src.WrapT);
                     tex.filterMode = FilterMode.Bilinear;
                     tex.anisoLevel = 4;
                     mat.SetTexture("_BaseMap", tex);
@@ -408,6 +409,13 @@ namespace SbgMaps
             cache[index] = mat;
             return mat;
         }
+
+        private static TextureWrapMode WrapMode(int gl) => gl switch
+        {
+            33071 => TextureWrapMode.Clamp,
+            33648 => TextureWrapMode.Mirror,
+            _ => TextureWrapMode.Repeat,
+        };
 
         // ---------- geometry ----------
 

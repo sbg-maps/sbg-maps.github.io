@@ -30,6 +30,8 @@ namespace SbgMaps
             public float Metallic;
             public float Roughness = 1f;
             public byte[] Image;        // PNG/JPEG bytes of the base colour texture, or null
+            public int WrapS = 10497;   // GL wrap modes from the texture's sampler: 10497 repeat, 33071 clamp, 33648 mirror
+            public int WrapT = 10497;
             public bool DoubleSided;
             public bool AlphaBlend;
             public bool AlphaMask;
@@ -129,7 +131,14 @@ namespace SbgMaps
                 var texIndex = (int?)pbr?["baseColorTexture"]?["index"];
                 if (texIndex.HasValue)
                 {
-                    var source = (int?)Arr("textures")[texIndex.Value]?["source"];
+                    var texture = Arr("textures")[texIndex.Value];
+                    var sampler = (int?)texture?["sampler"];
+                    if (sampler.HasValue && Arr("samplers")[sampler.Value] is JObject smp)
+                    {
+                        mat.WrapS = (int?)smp["wrapS"] ?? 10497;
+                        mat.WrapT = (int?)smp["wrapT"] ?? 10497;
+                    }
+                    var source = (int?)texture?["source"];
                     if (source.HasValue)
                     {
                         var image = Arr("images")[source.Value];

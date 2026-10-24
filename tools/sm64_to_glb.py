@@ -66,6 +66,7 @@ class Decomp:
         self.models_dl = {} # MODEL_* -> (display list, layer)
         self.trajectories = {}  # name -> list of (x, y, z)
         self.collision = {} # name -> list of (macro, args)
+        self.lights = {}    # Lights1 name -> diffuse (r, g, b) 0..1
 
     def load_file(self, path):
         try:
@@ -76,6 +77,10 @@ class Decomp:
         for m in re.finditer(r"const\s+Texture\s+(\w+)\s*\[\s*\]\s*=\s*\{\s*#include\s+\"([^\"]+)\"", text):
             png = m.group(2).replace(".inc.c", ".png")
             self.textures[m.group(1)] = os.path.join(self.root, png)
+        for m in re.finditer(r"const\s+Lights1\s+(\w+)\s*=\s*gdSPDefLights1\s*\(([^)]*)\)", text):
+            v = [num(x) for x in split_args(m.group(2))]
+            # Lit colour ~ ambient + diffuse; the diffuse colour carries the tint (e.g. the purple switch).
+            self.lights[m.group(1)] = tuple(min(1.0, (v[i] + v[i + 3]) / 255.0) for i in range(3))
         for m in re.finditer(r"const\s+Vtx\s+(\w+)\s*\[\s*\]\s*=\s*\{(.*?)\};", text, flags=re.S):
             verts = []
             for v in re.finditer(r"\{\{\{\s*([^}]*)\}\s*,\s*([^,]*),\s*\{\s*([^}]*)\}\s*,\s*\{\s*([^}]*)\}\}\}", m.group(2)):
@@ -163,12 +168,21 @@ def texture_size(dec, tex):
 def run_display_list(dec, name, matrix, layer, out, billboard=False, state=None):
     """Executes a display list, emitting textured triangles into `out` (MeshBuilder)."""
     if state is None:
-        state = {"tex": None, "lit": True, "textured": True, "verts": [None] * 64}
+        state = {"tex": None, "lit": True, "textured": True, "light": (1.0, 1.0, 1.0), "wrap": ("repeat", "repeat"), "verts": [None] * 64}
     for macro, args in dec.gfx.get(name, []):
         if macro in ("gsDPSetTextureImage",):
             state["tex"] = args[3]
         elif macro.startswith("gsDPLoadTextureBlock") or macro.startswith("gsDPLoadTextureTile"):
             state["tex"] = args[0]
+            if len(args) >= 8:
+                state["wrap"] = (wrap_mode(args[6]), wrap_mode(args[7]))
+        elif macro == "gsDPSetTile" and len(args) >= 10 and "G_TX_RENDERTILE" in args[4]:
+            # gsDPSetTile(fmt, siz, line, tmem, tile, palette, cmt, maskt, shiftt, cms, masks, shifts)
+            state["wrap"] = (wrap_mode(args[9]), wrap_mode(args[6]))
+        elif macro in ("gsSPLight", "gsSPSetLights1"):
+            ref = args[0].lstrip("&").split(".")[0]
+            if ref in dec.lights and (macro == "gsSPSetLights1" or args[0].endswith(".l") or args[1].strip() == "1"):
+                state["light"] = dec.lights[ref]
         elif macro == "gsSPTexture":
             state["textured"] = "G_OFF" not in args[-1]
         elif macro == "gsDPSetCombineMode":
@@ -205,7 +219,9 @@ def run_display_list(dec, name, matrix, layer, out, billboard=False, state=None)
 def emit_triangles(dec, state, tris, matrix, layer, out, billboard):
     tex = state["tex"] if state["textured"] else None
     w, h = texture_size(dec, tex) if tex else (32, 32)
-    key = (tex, state["lit"], layer)
+    # Lit geometry takes its tint from the light colour; unlit geometry from vertex colours.
+    tint = tuple(round(c, 3) for c in state["light"]) if state["lit"] else (1.0, 1.0, 1.0)
+    key = (tex, state["lit"], layer, tint, state["wrap"] if tex else None)
     copies = [matrix]
     if billboard:
         # Sprites face the camera in SM64; as a static model, cross two copies so they read from every side.
@@ -234,6 +250,17 @@ def emit_triangles(dec, state, tris, matrix, layer, out, billboard):
                 if v["nrm"] is None:
                     v["nrm"] = fn
             out.add(key, built)
+
+
+def wrap_mode(arg):
+    if "G_TX_CLAMP" in arg:
+        return "clamp"
+    if "G_TX_MIRROR" in arg:
+        return "mirror"
+    return "repeat"
+
+
+GL_WRAP = {"repeat": 10497, "clamp": 33071, "mirror": 33648}
 
 
 def face_normal(p):
@@ -474,7 +501,7 @@ class GlbWriter:
     def __init__(self):
         self.bin = bytearray()
         self.gltf = {"asset": {"version": "2.0", "generator": "sbg-maps sm64_to_glb"}, "buffers": [], "bufferViews": [],
-                     "accessors": [], "meshes": [], "materials": [], "textures": [], "images": [], "samplers": [{"wrapS": 10497, "wrapT": 10497}],
+                     "accessors": [], "meshes": [], "materials": [], "textures": [], "images": [], "samplers": [],
                      "nodes": [], "scenes": [{"nodes": []}], "scene": 0}
         self.material_index = {}
         self.image_index = {}
@@ -502,22 +529,28 @@ class GlbWriter:
         self.gltf["accessors"].append(acc)
         return len(self.gltf["accessors"]) - 1
 
-    def image(self, path):
-        if path in self.image_index:
-            return self.image_index[path]
-        with open(path, "rb") as f:
-            data = f.read()
-        self.gltf["images"].append({"bufferView": self.view(data), "mimeType": "image/png", "name": os.path.basename(path)})
-        self.gltf["textures"].append({"source": len(self.gltf["images"]) - 1, "sampler": 0})
-        self.image_index[path] = len(self.gltf["textures"]) - 1
-        return self.image_index[path]
+    def image(self, path, wrap):
+        """Texture index for an image with a wrap mode; images are stored once, textures per wrap mode."""
+        if (path, wrap) in self.image_index:
+            return self.image_index[(path, wrap)]
+        if path not in self.image_index:
+            with open(path, "rb") as f:
+                data = f.read()
+            self.gltf["images"].append({"bufferView": self.view(data), "mimeType": "image/png", "name": os.path.basename(path)})
+            self.image_index[path] = len(self.gltf["images"]) - 1
+        sampler = {"wrapS": GL_WRAP[wrap[0]], "wrapT": GL_WRAP[wrap[1]]}
+        if sampler not in self.gltf["samplers"]:
+            self.gltf["samplers"].append(sampler)
+        self.gltf["textures"].append({"source": self.image_index[path], "sampler": self.gltf["samplers"].index(sampler)})
+        self.image_index[(path, wrap)] = len(self.gltf["textures"]) - 1
+        return self.image_index[(path, wrap)]
 
-    def material(self, key, name, texture_path, extras, alpha):
+    def material(self, key, name, texture_path, extras, alpha, wrap=None):
         if key in self.material_index:
             return self.material_index[key]
         mat = {"name": name, "pbrMetallicRoughness": {"metallicFactor": 0, "roughnessFactor": 1}, "doubleSided": True, "extras": extras}
         if texture_path and os.path.exists(texture_path):
-            mat["pbrMetallicRoughness"]["baseColorTexture"] = {"index": self.image(texture_path)}
+            mat["pbrMetallicRoughness"]["baseColorTexture"] = {"index": self.image(texture_path, wrap or ("repeat", "repeat"))}
         if alpha == "mask":
             mat["alphaMode"] = "MASK"
             mat["alphaCutoff"] = 0.5
@@ -556,6 +589,11 @@ def primitive_for(writer, part, material, with_colors):
     if with_colors:
         prim["attributes"]["COLOR_0"] = writer.accessor(part["col"], "VEC4", comp=5121, normalized=True)
     return prim
+
+
+def tint_material(writer, index, tint):
+    if tint != (1.0, 1.0, 1.0):
+        writer.gltf["materials"][index]["pbrMetallicRoughness"]["baseColorFactor"] = [*tint, 1.0]
 
 
 def alpha_for(layer):
@@ -599,9 +637,10 @@ def main():
     visual = MeshBuilder()
     run_geo(dec, area_geo, IDENTITY, visual)
     prims = []
-    for (tex, lit, layer), part in visual.parts.items():
+    for (tex, lit, layer, tint, wrap), part in visual.parts.items():
         label = texture_label(dec, tex)
-        mat = writer.material(("v", tex, lit, layer), f"{label}{'' if lit else ' (shaded)'}", dec.textures.get(tex), {"surface": "none", "renderOnly": True}, alpha_for(layer))
+        mat = writer.material(("v", tex, lit, layer, tint, wrap), f"{label}{'' if lit else ' (shaded)'}", dec.textures.get(tex), {"surface": "none", "renderOnly": True}, alpha_for(layer), wrap)
+        tint_material(writer, mat, tint)
         prims.append(primitive_for(writer, part, mat, with_colors=not lit))
     writer.node({"name": "level", "mesh": writer.mesh("level", prims)})
     tri_count = sum(len(p["pos"]) for p in visual.parts.values()) // 3
@@ -610,7 +649,7 @@ def main():
     # Collision, split by SM64 surface type and the texture of the visual geometry it sits on.
     cell = 400.0
     cells = {}
-    for (tex, lit, layer), part in visual.parts.items():
+    for (tex, lit, layer, tint, wrap), part in visual.parts.items():
         if "ALPHA" in layer or "TRANSPARENT" in layer:
             continue
         p = part["pos"]
@@ -627,7 +666,7 @@ def main():
     prims = []
     for (kind, tex, surface), part in sorted(col.parts.items(), key=lambda kv: (kv[0][0], str(kv[0][1]), kv[0][2])):
         label = f"{texture_label(dec, tex)} / {kind.replace('SURFACE_', '').lower()}{' (steep)' if surface == 'slide' else ''}"
-        mat = writer.material(("c", kind, tex, surface), label, dec.textures.get(tex), {"surface": surface, "invisible": True, "sm64Surface": kind}, None)
+        mat = writer.material(("c", kind, tex, surface), label, dec.textures.get(tex), {"surface": surface, "invisible": True, "sm64Surface": kind}, None, ("repeat", "repeat"))
         prims.append(primitive_for(writer, part, mat, with_colors=False))
     writer.node({"name": "collision", "mesh": writer.mesh("collision", prims)})
     print(f"collision: {sum(len(p['pos']) for p in col.parts.values()) // 3} triangles in {len(prims)} groups")
@@ -688,9 +727,10 @@ def main():
         for key, part in mesh.parts.items():
             if key == ("ball",):
                 continue
-            tex, lit, layer = key
+            tex, lit, layer, tint, wrap = key
             label = f"{o['model'].replace('MODEL_', '').lower()}: {texture_label(dec, tex)}"
-            mat = writer.material(("o", o["model"], tex, lit, layer), label, dec.textures.get(tex), {"surface": surface}, alpha_for(layer))
+            mat = writer.material(("o", o["model"], tex, lit, layer, tint, wrap), label, dec.textures.get(tex), {"surface": surface}, alpha_for(layer), wrap)
+            tint_material(writer, mat, tint)
             prims.append(primitive_for(writer, part, mat, with_colors=not lit))
         # SM64 applies yaw, then pitch, then roll; glTF quaternion for R = Ry * Rx * Rz.
         q = quat_mul(quat_mul(quat_axis((0, 1, 0), o["rot"][1]), quat_axis((1, 0, 0), o["rot"][0])), quat_axis((0, 0, 1), o["rot"][2]))
