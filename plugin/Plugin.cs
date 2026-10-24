@@ -27,6 +27,7 @@ namespace SbgMaps
             Instance = this;
             MapLibrary.Scan();
             HoleSync.Init();
+            MapTransfer.Init();
             harmony = new Harmony(Guid);
             harmony.PatchAll();
             SceneManager.sceneLoaded += OnSceneLoaded;
@@ -44,6 +45,7 @@ namespace SbgMaps
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
             Log.LogInfo($"Scene loaded: '{scene.name}' ({scene.path}) mode={mode}");
+            SteamQueue.RaiseLimits();
             CustomCourse.InjectLate();
             HoleSync.OnSceneLoaded(scene);
         }

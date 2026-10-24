@@ -10,6 +10,7 @@ import { PlayerView } from "./pov.js";
 import { Terrain } from "./terrain.js";
 import { History } from "./history.js";
 import { SHAPES, spriteFromImage, circlePath, linePath } from "./shapes.js";
+import { put as storePut, get as storeGet } from "./storage.js";
 
 const status = document.getElementById("status");
 const holeSelect = document.getElementById("hole-select");
@@ -308,6 +309,8 @@ const BRUSH_TOOLS = new Set(TERRAIN_TOOLS.map((t) => t.id));
 
 function startEditing(firstTab = "model") {
   playerView.setActive(true);
+  // Opening something is not a change: only overwrite the autosave once the user edits.
+  savedSignature = projectSignature();
   tool = "look";
   tab = firstTab;
   toolbar.hidden = false;
@@ -882,5 +885,58 @@ function esc(text) {
   return String(text ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
+// ---------- Autosave ----------
+
+// The project is saved in this browser a few seconds after each change, as a .sbgmap (the same format the
+// Export button writes), and offered back when the editor is opened again.
+const AUTOSAVE_KEY = "autosave";
+let savedSignature = null;
+let saving = false;
+
+function projectSignature() {
+  return project ? `${history.version}|${JSON.stringify(project.info)}|${project.scale}|${project.rotation}` : null;
+}
+
+async function autosave() {
+  const sig = projectSignature();
+  if (!sig || sig === savedSignature || saving || stroke) return;
+  saving = true;
+  try {
+    const bytes = await project.exportSbgmap();
+    await storePut(AUTOSAVE_KEY, { bytes, name: project.info.name, savedAt: Date.now() });
+    savedSignature = sig;
+  } catch (e) {
+    console.warn("Autosave failed", e);
+  } finally {
+    saving = false;
+  }
+}
+setInterval(autosave, 4000);
+window.addEventListener("beforeunload", () => autosave());
+
+async function offerRestore() {
+  let saved = null;
+  try {
+    saved = await storeGet(AUTOSAVE_KEY);
+  } catch {
+    return; // storage unavailable (private window)
+  }
+  if (!saved?.bytes || project || view) return;
+  const when = new Date(saved.savedAt).toLocaleString();
+  const box = document.createElement("div");
+  box.className = "restore";
+  box.innerHTML = `<button class="btn btn-primary" id="restore">Continue where you left off</button><span>${esc(saved.name || "Untitled")}, saved ${esc(when)}</span>`;
+  empty.append(box);
+  box.querySelector("#restore").addEventListener("click", () =>
+    run("Restoring", async () => {
+      await openMap(await loadZip(new File([saved.bytes], `${saved.name || "autosave"}.sbgmap`)));
+      // The reopened map is the saved one; no need to save it again until something changes.
+      savedSignature = projectSignature();
+      setStatus(`Restored ${saved.name || "your last session"}`);
+    }),
+  );
+}
+offerRestore();
+
 // Test hook: lets the automated browser tests reach editor state.
-window.__sbg = { get project() { return project; }, history };
+window.__sbg = { get project() { return project; }, history, autosave };

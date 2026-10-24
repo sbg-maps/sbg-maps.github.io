@@ -67,21 +67,58 @@ namespace SbgMaps
 
         public GlbReader.Model LoadModel() => Manifest.model?.file != null ? GlbReader.Read(ReadFile(Manifest.model.file)) : null;
 
+        /// <summary>
+        /// Hash of the map's content (file names and bytes), the same whether it is a folder or a zip, so a folder
+        /// map on the host and its downloaded zip on a player's machine match.
+        /// </summary>
         private string ComputeHash()
         {
             using var sha = SHA256.Create();
-            if (IsZip)
-                return BitConverter.ToString(sha.ComputeHash(File.ReadAllBytes(Path))).Replace("-", "").ToLowerInvariant();
-            // Folder: hash relative paths and contents in a stable order.
-            foreach (var file in Directory.GetFiles(Path, "*", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal))
+            foreach (var (name, data) in Entries())
             {
-                var name = System.Text.Encoding.UTF8.GetBytes(System.IO.Path.GetRelativePath(Path, file).Replace('\\', '/'));
-                sha.TransformBlock(name, 0, name.Length, null, 0);
-                var data = File.ReadAllBytes(file);
+                var nameBytes = System.Text.Encoding.UTF8.GetBytes(name);
+                sha.TransformBlock(nameBytes, 0, nameBytes.Length, null, 0);
                 sha.TransformBlock(data, 0, data.Length, null, 0);
             }
             sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
             return BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
+        }
+
+        /// <summary>All files of the map as (relative path, bytes), in a stable order.</summary>
+        private IEnumerable<(string name, byte[] data)> Entries()
+        {
+            if (IsZip)
+            {
+                using var zip = ZipFile.OpenRead(Path);
+                foreach (var entry in zip.Entries.Where(e => !e.FullName.EndsWith("/")).OrderBy(e => e.FullName, StringComparer.Ordinal))
+                {
+                    using var stream = entry.Open();
+                    using var mem = new MemoryStream();
+                    stream.CopyTo(mem);
+                    yield return (entry.FullName.Replace('\\', '/'), mem.ToArray());
+                }
+                yield break;
+            }
+            foreach (var file in Directory.GetFiles(Path, "*", SearchOption.AllDirectories).OrderBy(f => System.IO.Path.GetRelativePath(Path, f).Replace('\\', '/'), StringComparer.Ordinal))
+                yield return (System.IO.Path.GetRelativePath(Path, file).Replace('\\', '/'), File.ReadAllBytes(file));
+        }
+
+        /// <summary>The map as .sbgmap (zip) bytes, for sending to other players.</summary>
+        public byte[] ToZipBytes()
+        {
+            if (IsZip)
+                return File.ReadAllBytes(Path);
+            using var mem = new MemoryStream();
+            using (var zip = new ZipArchive(mem, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                foreach (var (name, data) in Entries())
+                {
+                    var entry = zip.CreateEntry(name, CompressionLevel.Optimal);
+                    using var stream = entry.Open();
+                    stream.Write(data, 0, data.Length);
+                }
+            }
+            return mem.ToArray();
         }
 
         private static void Validate(MapManifest m)
@@ -124,12 +161,18 @@ namespace SbgMaps
         /// <summary>Where users drop maps: &lt;game&gt;/SbgMaps/maps.</summary>
         public static string MapsFolder => System.IO.Path.Combine(Paths.GameRootPath, "SbgMaps", "maps");
 
+        /// <summary>Maps received from hosts.</summary>
+        public static string DownloadsFolder => System.IO.Path.Combine(MapsFolder, "downloaded");
+
         public static void Scan()
         {
             Maps.Clear();
             Directory.CreateDirectory(MapsFolder);
+            Directory.CreateDirectory(DownloadsFolder);
+            // The player's own maps first, so they win over a downloaded copy with the same id.
             var candidates = Directory.GetDirectories(MapsFolder).Where(d => File.Exists(System.IO.Path.Combine(d, "map.json")))
-                .Concat(Directory.GetFiles(MapsFolder, "*.sbgmap"));
+                .Concat(Directory.GetFiles(MapsFolder, "*.sbgmap"))
+                .Concat(Directory.GetFiles(DownloadsFolder, "*.sbgmap"));
             foreach (var path in candidates)
             {
                 try
@@ -153,5 +196,13 @@ namespace SbgMaps
         }
 
         public static MapPack Find(string id) => Maps.FirstOrDefault(m => m.Manifest.id == id);
+
+        /// <summary>Uses this pack for its id from now on (e.g. a version just downloaded from the host).</summary>
+        public static void Replace(MapPack pack)
+        {
+            Maps.RemoveAll(m => m.Manifest.id == pack.Manifest.id);
+            Maps.Add(pack);
+            Maps.Sort((a, b) => string.CompareOrdinal(a.Manifest.id, b.Manifest.id));
+        }
     }
 }

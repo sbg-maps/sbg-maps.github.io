@@ -1,6 +1,7 @@
 // Golfer used for judging scale: the player's own exported golfer (F9 in game) when loaded, otherwise a stand-in.
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { put as store, get as fetchStored } from "./storage.js";
 
 /** Player height in metres when no exported golfer is loaded. */
 export const DEFAULT_GOLFER_HEIGHT = 1.8;
@@ -12,36 +13,6 @@ const golfer = { model: null, height: DEFAULT_GOLFER_HEIGHT, camera: null, fromG
 const listeners = new Set();
 export const onGolferChange = (fn) => listeners.add(fn);
 export const golferInfo = () => golfer;
-
-const DB = "sbg-map-editor";
-
-function db() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore("files");
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function store(key, value) {
-  const d = await db();
-  await new Promise((res, rej) => {
-    const tx = d.transaction("files", "readwrite");
-    tx.objectStore("files").put(value, key);
-    tx.oncomplete = res;
-    tx.onerror = () => rej(tx.error);
-  });
-}
-
-async function fetchStored(key) {
-  const d = await db();
-  return new Promise((res, rej) => {
-    const req = d.transaction("files").objectStore("files").get(key);
-    req.onsuccess = () => res(req.result ?? null);
-    req.onerror = () => rej(req.error);
-  });
-}
 
 async function useGolferBytes(bytes) {
   const gltf = await new GLTFLoader().parseAsync(bytes, "");

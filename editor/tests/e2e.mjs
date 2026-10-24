@@ -256,6 +256,27 @@ await test("open sea: Land brush makes land with beaches; New shape is undoable"
   await page.close();
 });
 
+await test("autosave and continue where you left off", async () => {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 860 } });
+  const page = await context.newPage();
+  await page.goto(url);
+  await page.click("#new-level-btn");
+  await page.click('[data-act="create"]');
+  await page.waitForFunction(() => window.__sbg.project?.terrain, null, { timeout: 20000 });
+  await page.click('.tab[data-tab="objects"]');
+  await page.click('.add-shape[data-shape="pillar"]');
+  await page.evaluate(() => window.__sbg.autosave());
+  await page.waitForTimeout(500);
+  const again = await context.newPage();
+  await again.goto(url);
+  await again.waitForSelector("#restore", { timeout: 10000 });
+  await again.click("#restore");
+  await again.waitForFunction(() => window.__sbg.project?.objects.length === 1, null, { timeout: 20000 }).catch(() => {});
+  const s = await again.evaluate(() => ({ terrain: !!window.__sbg.project?.terrain, objects: window.__sbg.project?.objects.length }));
+  assert(s.terrain && s.objects === 1, `restore failed: ${JSON.stringify(s)}`);
+  await context.close();
+});
+
 await test("reopen the exported terrain level", async () => {
   const page = await freshPage(browser, url);
   assert(terrainMap, "no exported terrain map to reopen (the previous test failed)");

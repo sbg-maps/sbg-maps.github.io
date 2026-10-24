@@ -7,6 +7,8 @@ export class History {
     this.onChange = onChange;
     this.undoStack = [];
     this.redoStack = [];
+    /** Bumped on every change, so autosave knows when to save. */
+    this.version = 0;
   }
 
   clear() {
@@ -41,6 +43,7 @@ export class History {
     this.undoStack.push({ before, after });
     if (this.undoStack.length > LIMIT) this.undoStack.shift();
     this.redoStack = [];
+    this.version++;
   }
 
   undo() {
@@ -62,6 +65,7 @@ export class History {
   apply(state) {
     const p = this.getProject();
     if (!p || !state) return;
+    this.version++;
     p.holes = structuredClone(state.holes);
     p.activeHole = Math.min(state.activeHole, p.holes.length - 1);
     p.golfers = structuredClone(state.golfers);

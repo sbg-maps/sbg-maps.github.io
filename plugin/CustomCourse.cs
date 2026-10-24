@@ -50,25 +50,64 @@ namespace SbgMaps
             }
         }
 
+        private static CourseData course;
+        private static HoleData donor;
+        /// <summary>Holes made so far, by name + map hash, so the same hole keeps its HoleData (and global index).</summary>
+        private static readonly Dictionary<string, HoleData> holeCache = new Dictionary<string, HoleData>();
+
         /// <summary>
         /// When the plugin loads after the game built its course list (ScriptEngine hot reload loads plugins late),
         /// append the course now and give its holes global indices the way RuntimeInitialize would have.
-        /// Safe to call repeatedly; does nothing until the list exists or once our course is in it.
+        /// Safe to call repeatedly.
         /// </summary>
         public static void InjectLate()
         {
             var collection = GameManager.AllCourses;
-            if (collection == null || collection.allHoles.Count == 0 || collection.Courses.Any(c => c.name == CourseName))
+            if (collection == null || collection.allHoles.Count == 0)
                 return;
-            var course = Inject(collection);
-            if (course == null)
+            if (Attach(collection))
                 return;
-            foreach (var hole in course.Holes)
+            if (MapLibrary.Maps.Count > 0)
+                Apply(collection, LocalHoles(), initialize: true);
+        }
+
+        /// <summary>
+        /// In a lobby, use exactly the host's maps in the host's order, so course and hole numbers match theirs.
+        /// Maps still downloading are added when they arrive (call again).
+        /// </summary>
+        public static void UseHostMaps(IList<string> hostMapIds)
+        {
+            var collection = GameManager.AllCourses;
+            if (collection == null)
+                return;
+            Attach(collection);
+            var holes = new List<(MapPack, int)>();
+            foreach (var id in hostMapIds)
             {
-                hole.RuntimeInitialize(course, collection.allHoles.Count);
-                collection.allHoles.Add(hole);
+                var pack = MapLibrary.Find(id);
+                if (pack != null)
+                    for (int i = 0; i < pack.Manifest.holes.Count; i++)
+                        holes.Add((pack, i));
             }
-            Plugin.Log.LogInfo("Custom course added after startup");
+            if (holes.Count > 0 || course != null)
+                Apply(collection, holes, initialize: true);
+        }
+
+        private static List<(MapPack, int)> LocalHoles() =>
+            MapLibrary.Maps.SelectMany(p => Enumerable.Range(0, p.Manifest.holes.Count).Select(i => (p, i))).ToList();
+
+        /// <summary>Finds our course if it is already in the list (e.g. after a hot reload). True if found.</summary>
+        private static bool Attach(CourseCollection collection)
+        {
+            if (course != null && collection.Courses.Contains(course))
+                return true;
+            course = collection.Courses.FirstOrDefault(c => c.name == CourseName);
+            if (course == null)
+                return false;
+            foreach (var h in course.Holes)
+                if (TryGetMapHole(h, out var pack, out _))
+                    holeCache[h.name + "/" + pack.Hash] = h;
+            return true;
         }
 
         private static CourseData Inject(CourseCollection collection)
@@ -80,42 +119,65 @@ namespace SbgMaps
                 Plugin.Log.LogInfo($"No maps installed in {MapLibrary.MapsFolder}");
                 return null;
             }
-            var template = collection.Courses.FirstOrDefault(c => c.ShouldInitCourses);
-            var donor = collection.Courses.SelectMany(c => c.Holes).FirstOrDefault(h => h.Scene.Name == MapBuilder.DonorScene);
+            // The game's own RuntimeInitialize (running next) gives these holes their indices.
+            return Apply(collection, LocalHoles(), initialize: false);
+        }
+
+        /// <summary>Creates or updates the course with these holes. `initialize` gives new holes their global indices.</summary>
+        private static CourseData Apply(CourseCollection collection, List<(MapPack pack, int index)> wanted, bool initialize)
+        {
+            var template = collection.Courses.FirstOrDefault(c => c.ShouldInitCourses && c.name != CourseName);
+            donor ??= collection.Courses.SelectMany(c => c.Holes).FirstOrDefault(h => h.Scene.Name == MapBuilder.DonorScene && !h.name.StartsWith(HoleNamePrefix));
             if (template == null || donor == null)
             {
                 Plugin.Log.LogError($"Could not find a course template or the donor hole '{MapBuilder.DonorScene}'");
                 return null;
             }
-
-            var holes = new List<HoleData>();
-            foreach (var pack in MapLibrary.Maps)
+            var holes = wanted.Select(w => HoleFor(w.pack, w.index)).ToArray();
+            if (course == null || !collection.Courses.Contains(course))
             {
-                for (int i = 0; i < pack.Manifest.holes.Count; i++)
+                course = UnityEngine.Object.Instantiate(template);
+                course.name = CourseName;
+                Strings.Add(CourseKey, "Custom Maps");
+                course.SetLocalizedName(new LocalizedString("UI", CourseKey));
+                Traverse.Create(collection).Property("Courses").SetValue(collection.Courses.Append(course).ToArray());
+            }
+            course.OverrideHoles(holes);
+            if (initialize)
+            {
+                foreach (var hole in holes)
                 {
-                    var def = pack.Manifest.holes[i];
-                    var hole = UnityEngine.Object.Instantiate(donor);
-                    hole.name = HoleName(pack.Manifest.id, i);
-                    string key = $"SBGMAPS_{pack.Manifest.id}_{i}";
-                    Strings.Add(key, string.IsNullOrWhiteSpace(def.name) ? $"{pack.Manifest.name} {i + 1}" : def.name);
-                    var t = Traverse.Create(hole);
-                    t.Property("LocalizedName").SetValue(new LocalizedString("UI", key));
-                    t.Property("Par").SetValue(Mathf.Max(1, def.par));
-                    t.Property("Difficulty").SetValue(ParseDifficulty(def.difficulty));
-                    t.Property("DontShowNewHoleNotification").SetValue(true);
-                    holes.Add(hole);
+                    if (hole.ParentCourse != null)
+                        continue;
+                    hole.RuntimeInitialize(course, collection.allHoles.Count);
+                    collection.allHoles.Add(hole);
                 }
             }
-
-            var course = UnityEngine.Object.Instantiate(template);
-            course.name = CourseName;
-            Strings.Add(CourseKey, "Custom Maps");
-            course.SetLocalizedName(new LocalizedString("UI", CourseKey));
-            course.OverrideHoles(holes.ToArray());
-            Traverse.Create(collection).Property("Courses").SetValue(collection.Courses.Append(course).ToArray());
             Strings.Inject();
-            Plugin.Log.LogInfo($"Added custom course with {holes.Count} hole(s)");
+            Plugin.Log.LogInfo($"Custom course has {holes.Length} hole(s)");
             return course;
+        }
+
+        private static HoleData HoleFor(MapPack pack, int i)
+        {
+            string name = HoleName(pack.Manifest.id, i);
+            string key = name + "/" + pack.Hash;
+            if (holeCache.TryGetValue(key, out var cached))
+                return cached;
+            var def = pack.Manifest.holes[i];
+            var hole = UnityEngine.Object.Instantiate(donor);
+            hole.name = name;
+            // A fresh copy of the donor carries no course yet.
+            Traverse.Create(hole).Property("ParentCourse").SetValue(null);
+            string label = $"SBGMAPS_{pack.Manifest.id}_{i}";
+            Strings.Add(label, string.IsNullOrWhiteSpace(def.name) ? $"{pack.Manifest.name} {i + 1}" : def.name);
+            var t = Traverse.Create(hole);
+            t.Property("LocalizedName").SetValue(new LocalizedString("UI", label));
+            t.Property("Par").SetValue(Mathf.Max(1, def.par));
+            t.Property("Difficulty").SetValue(ParseDifficulty(def.difficulty));
+            t.Property("DontShowNewHoleNotification").SetValue(true);
+            holeCache[key] = hole;
+            return hole;
         }
 
         private static HoleData.DifficultyLevel ParseDifficulty(string s) =>

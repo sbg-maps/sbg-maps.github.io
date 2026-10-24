@@ -128,8 +128,11 @@ fixed base height + water default.
 
 Next, roughly in order:
 1. In-game test of decomp levels (objects, rollers, see-saw, collision mesh, slide layer). Fix what breaks.
-2. Map transfer host->players in the lobby (no manual copying). Then the in-game community browser (Thunderstore).
-3. ~~Undo/redo~~ (done), autosave of the editor project in the browser, more keyboard shortcuts.
+2. ~~Map transfer host->players in the lobby~~ (built 2026-10-24, needs a two-player test): list on join, content hashes,
+   16 KB chunks paced by Steam's own queue (PendingReliable + SentUnacked kept under 384 KB; Steam drops messages that
+   overflow its buffer), Steam SendRateMax raised to 16 MB/s and buffer to 4 MB; downloads go to SbgMaps/maps/downloaded
+   and join the Custom Maps course in the host's order without a restart. Next: in-game community browser (Thunderstore).
+3. ~~Undo/redo, autosave with "Continue where you left off"~~ (done), more keyboard shortcuts.
 4. Per-face surface painting (brush) on top of per-material surfaces, so greens/bunkers can be drawn on any model.
 5. Bounds polygon, green polygon and return path drawing; intro camera path editing.
 6. Hole settings: night, music, sky/ambience, wind; theme donor selection (forest/desert/snow/city donors).

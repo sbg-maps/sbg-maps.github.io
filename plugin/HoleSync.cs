@@ -100,7 +100,12 @@ namespace SbgMaps
         [HarmonyPatch(typeof(NetworkManager), "OnServerAuthenticated")]
         private static class LateJoinPatch
         {
-            private static void Prefix(NetworkConnectionToClient conn) => conn.Send(Current);
+            private static void Prefix(NetworkConnectionToClient conn)
+            {
+                // Map list first, so the player can start downloading while the lobby loads.
+                MapTransfer.SendListTo(conn);
+                conn.Send(Current);
+            }
         }
 
         [HarmonyPatch(typeof(NetworkManager), "RegisterClientMessages")]
@@ -110,6 +115,7 @@ namespace SbgMaps
             {
                 NetworkClient.ReplaceHandler<SelectHoleMessage>(OnSelectHole, requireAuthentication: false);
                 Seesaw.RegisterClientHandler();
+                MapTransfer.RegisterClientHandlers();
             }
         }
     }
