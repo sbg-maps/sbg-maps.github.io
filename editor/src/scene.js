@@ -31,11 +31,15 @@ new ResizeObserver(resize).observe(viewport);
 
 const frameCallbacks = new Set();
 export const onFrame = (fn) => frameCallbacks.add(fn);
+const afterRenderCallbacks = new Set();
+/** Extra render passes after the main view (e.g. the picture-in-picture player view). */
+export const afterRender = (fn) => afterRenderCallbacks.add(fn);
 
 renderer.setAnimationLoop((t) => {
   controls.update();
   for (const fn of frameCallbacks) fn(t);
   renderer.render(scene, camera);
+  for (const fn of afterRenderCallbacks) fn(renderer);
 });
 
 export const toMap = (v) => ({ x: v.x, y: v.y, z: -v.z });

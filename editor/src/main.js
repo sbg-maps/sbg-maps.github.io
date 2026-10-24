@@ -5,7 +5,8 @@ import { renderer, pick, pickCenter, hitMaterial, frameBox, scene, camera, contr
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { HeightmapView } from "./viewer.js";
 import { Project, MODEL_SURFACES, MARKERS, BASE_Y } from "./project.js";
-import { GOLFER_HEIGHT } from "./golfer.js";
+import { golferInfo, loadGolferFile, restoreGolfer, onGolferChange } from "./golfer.js";
+import { PlayerView } from "./pov.js";
 
 const status = document.getElementById("status");
 const holeSelect = document.getElementById("hole-select");
@@ -24,6 +25,14 @@ let tool = "look";
 let selectedMaterial = null;
 let selectedObject = null;
 
+const playerView = new PlayerView(() => project);
+playerView.setActive(false);
+onGolferChange(() => {
+  project?.rebuildMarkers();
+  if (project && tab === "model") renderPanel();
+});
+restoreGolfer();
+
 // Move/rotate/scale gizmo for objects and props.
 const gizmo = new TransformControls(camera, renderer.domElement);
 gizmo.addEventListener("dragging-changed", (e) => (controls.enabled = !e.value));
@@ -32,6 +41,7 @@ scene.add(gizmo.getHelper());
 
 function setStatus(text, isError = false) {
   status.textContent = text;
+  status.title = text;
   status.classList.toggle("error", isError);
 }
 
@@ -47,6 +57,7 @@ for (const label of document.querySelectorAll("label.btn")) {
 
 function clear() {
   gizmo.detach();
+  playerView.setActive(false);
   selectedObject = null;
   view?.dispose();
   project?.dispose();
@@ -174,11 +185,13 @@ const TOOLS = [
   { id: "cup", name: "Flag", tip: "Click to place the Flag: the hole (cup) players are aiming for." },
   { id: "itemBoxes", name: "Item box", tip: "Click to add item boxes." },
   { id: "checkpoints", name: "Checkpoint", tip: "Click to add a checkpoint." },
+  { id: "pov", name: "Player view", tip: "Click to stand there and see what a player sees (in the Player view window)." },
   { id: "golfer", name: "Golfer", tip: "Click to drop a golfer (player-sized) anywhere, to judge the scale. Not saved into the map." },
   { id: "erase", name: "Erase", tip: "Click a marker or golfer to remove it." },
 ];
 
 function startEditing() {
+  playerView.setActive(true);
   tool = "look";
   tab = "model";
   toolbar.hidden = false;
@@ -210,6 +223,8 @@ renderer.domElement.addEventListener("pointerup", (e) => {
     const owner = project.objects.find((o) => isInside(o, hit.object));
     if (tab === "objects" && owner) selectObject(owner);
     else selectMaterial(hitMaterial(hit));
+  } else if (tool === "pov") {
+    playerView.standAt(hit.point);
   } else if (tool === "erase") {
     if (!project.erase(hit.point)) setStatus("No marker there");
     renderPanel();
@@ -264,7 +279,13 @@ function modelPanel() {
     <h3>Size</h3>
     <div class="field"><label for="scale">Scale</label><input id="scale" type="number" min="0.0001" step="any" value="${+project.scale.toPrecision(3)}" /></div>
     <div class="stats">${stat("Course area", `${sx} x ${sz} m`)}</div>
-    <p class="hint">The golfer at the Start is the size of a player (${GOLFER_HEIGHT} m). Use the Golfer tool to drop more.</p>
+    <h3>Your golfer</h3>
+    <p class="hint">${
+      golferInfo().fromGame
+        ? `Using your golfer from the game (${golferInfo().height.toFixed(2)} m)${golferInfo().camera ? " and its camera" : ""}.`
+        : `Using a stand-in golfer (${golferInfo().height} m). In the game, press <b>F9</b> while playing to save your golfer and camera to <b>SbgMaps/golfer.glb</b>, then load it here. It stays on your computer.`
+    }</p>
+    <label class="btn btn-secondary small" tabindex="0">Load golfer.glb<input id="golfer-file" type="file" accept=".glb" hidden /></label>
     <div class="row"><button class="btn btn-secondary small" id="rotate">Rotate 90&deg;</button>
     <label class="check"><input type="checkbox" id="overlay" ${project.surfaceOverlay ? "checked" : ""} /> Show surfaces</label></div>
     <h3>Surfaces</h3>
@@ -303,6 +324,12 @@ function wireModel() {
     renderPanel();
   });
   info.querySelector("#overlay").addEventListener("change", (e) => project.setSurfaceOverlay(e.target.checked));
+  info.querySelector("#golfer-file").addEventListener("change", (e) =>
+    e.target.files[0] && run("Loading golfer", async () => {
+      await loadGolferFile(e.target.files[0]);
+      setStatus("Golfer loaded");
+    }),
+  );
   info.querySelectorAll("select.surface").forEach((s) =>
     s.addEventListener("change", () => project.setSurface(project.materials[Number(s.dataset.i)].material, s.value)),
   );

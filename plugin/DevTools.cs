@@ -12,6 +12,7 @@ namespace SbgMaps
     ///   F5  restart the current hole (custom holes re-read their map files, so edits show up)
     ///   F7  skip to the next hole
     ///   F8  dump gameplay object positions to the log
+    ///   F9  save your golfer and the camera view to SbgMaps/golfer.glb for the map editor
     /// </summary>
     internal static class DevTools
     {
@@ -27,6 +28,8 @@ namespace SbgMaps
                 SkipHole();
             else if (kb.f8Key.wasPressedThisFrame)
                 DumpGameplayObjects();
+            else if (kb.f9Key.wasPressedThisFrame)
+                GolferExport.Export();
         }
 
         public static void Say(string message)

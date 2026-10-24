@@ -5,7 +5,7 @@ import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { scene, fromMap, toMap, disposeObject } from "./scene.js";
 import { materialsOf } from "./importer.js";
-import { makeGolfer } from "./golfer.js";
+import { makeGolfer, yawToRotation } from "./golfer.js";
 
 /** Surfaces a model material can have, grouped for the picker. `id` is what goes into the map file. */
 export const MODEL_SURFACES = [
@@ -276,13 +276,22 @@ export class Project {
         this.markersGroup.add(m);
       };
       if (h.tee) {
-        add(new THREE.CylinderGeometry(3, 3, 0.6, 24), MARKERS.tee.color, h.tee, 0.3);
+        // A thin ring, so it doesn't get in the way of the player view.
+        const ring = new THREE.Mesh(
+          new THREE.RingGeometry(2.6, 3, 40),
+          new THREE.MeshBasicMaterial({ color: MARKERS.tee.color, side: THREE.DoubleSide, transparent: !active, opacity: active ? 1 : 0.35 }),
+        );
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.copy(fromMap(h.tee)).y += 0.08;
+        this.markersGroup.add(ring);
         if (active) {
           // A golfer at the start shows how big the level is to players.
           const golfer = makeGolfer();
           const yaw0 = h.tee.yaw ?? (h.cup ? (Math.atan2(h.cup.x - h.tee.x, h.cup.z - h.tee.z) * 180) / Math.PI : 0);
-          golfer.position.copy(fromMap(h.tee)).y += 0.6;
-          golfer.rotation.y = Math.PI - (yaw0 * Math.PI) / 180;
+          golfer.position.copy(fromMap(h.tee));
+          golfer.position.x += Math.cos((yaw0 * Math.PI) / 180) * 3.5;
+          golfer.position.z += Math.sin((yaw0 * Math.PI) / 180) * 3.5;
+          golfer.rotation.y = yawToRotation(yaw0);
           this.markersGroup.add(golfer);
         }
         // Arrow showing which way players face at the start.
