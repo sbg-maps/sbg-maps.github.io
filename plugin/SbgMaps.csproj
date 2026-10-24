@@ -6,6 +6,7 @@
     <RootNamespace>SbgMaps</RootNamespace>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
+    <DebugType>embedded</DebugType>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <GameDir>/media/G/SteamLibrary/steamapps/common/Super Battle Golf</GameDir>
     <Managed>$(GameDir)/Super Battle Golf_Data/Managed</Managed>
