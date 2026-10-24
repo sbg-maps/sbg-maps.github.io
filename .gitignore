@@ -6,3 +6,5 @@ scratch*
 scene_*.txt
 plugin/bin/
 plugin/obj/
+devreloader/bin/
+devreloader/obj/

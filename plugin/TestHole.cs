@@ -18,12 +18,13 @@ namespace SbgMaps
         private static readonly HashSet<string> KeepRoots = new HashSet<string>
         {
             "Manager container", "Main Camera", "Gameplay screenspace UI", "EventSystem", "Directional Light",
-            "Item spawners", "Regular main hole", "Checkpoint", "Ocean", "Overview camera track", "Screenshot camera",
+            "Item spawners", "Course item spawner", "Regular main hole", "Checkpoint", "Ocean", "Overview camera track", "Screenshot camera",
         };
 
         private static readonly Vector3 TeePos = new Vector3(568f, 30f, 300f);
         private static readonly Vector3 CupPos = new Vector3(568f, 30f, 520f);
         private const float FairwayWidth = 30f;
+        private const float SeaFloorHeight = 1f;
 
         public static void Apply(Scene scene)
         {
@@ -39,10 +40,11 @@ namespace SbgMaps
             {
                 if (KeepRoots.Contains(root.name) || root.name.StartsWith("Teeing platform"))
                     continue;
-                if (root.GetComponent<Terrain>() != null)
+                var terrain = root.GetComponent<Terrain>();
+                if (terrain != null)
                 {
-                    // Managers keep references to the terrain; park it far below instead of removing it.
-                    root.transform.position += Vector3.down * 500f;
+                    // Managers need a terrain, so keep it but sink it under the water: it becomes the sea around our island.
+                    FlattenTerrain(terrain, SeaFloorHeight);
                     continue;
                 }
                 if (root.GetComponentInChildren<NetworkIdentity>(true) != null)
@@ -62,7 +64,7 @@ namespace SbgMaps
 
             // Rough under and around everything, fairway strip on top, sand trap on the side.
             Surface(parent, "Rough", TerrainLayer.Rough, new Color(0.25f, 0.5f, 0.2f), baseMaterial, groundLayer,
-                new Vector3(TeePos.x, top - 0.55f, midZ), new Vector3(FairwayWidth * 3f, 1f, length + 80f));
+                new Vector3(TeePos.x, top - 0.6f, midZ), new Vector3(FairwayWidth * 3f, 1f, length + 80f));
             Surface(parent, "Fairway", TerrainLayer.Fairway, new Color(0.35f, 0.7f, 0.3f), baseMaterial, groundLayer,
                 new Vector3(TeePos.x, top - 0.5f, midZ - 15f), new Vector3(FairwayWidth, 1f, length - 30f));
             Surface(parent, "Sand", TerrainLayer.Sand, new Color(0.9f, 0.82f, 0.55f), baseMaterial, groundLayer,
@@ -74,11 +76,14 @@ namespace SbgMaps
             if (cup != null)
             {
                 cup.transform.position = CupPos;
-                if (cup.Collider != null)
+                // The collider reports empty bounds this early, so size the gap from the cup's visible mesh.
+                Physics.SyncTransforms();
+                var renderer = cup.GetComponent<MeshRenderer>();
+                if (renderer != null)
                 {
-                    var b = cup.Collider.bounds;
-                    gap = Mathf.Max(b.size.x, b.size.z);
-                    Plugin.Log.LogInfo($"TestHole: cup collider '{cup.Collider.GetType().Name}' bounds size={b.size} center={b.center}");
+                    var b = renderer.bounds;
+                    gap = Mathf.Clamp(Mathf.Max(b.size.x, b.size.z), 0.3f, 4f);
+                    Plugin.Log.LogInfo($"TestHole: cup mesh bounds size={b.size} center={b.center}, collider bounds size={cup.Collider?.bounds.size}, gap={gap}");
                 }
             }
             const float greenSize = 30f;
@@ -86,13 +91,13 @@ namespace SbgMaps
             float off = gap / 2f + slab / 2f;
             var green = new Color(0.45f, 0.85f, 0.35f);
             Surface(parent, "Green N", TerrainLayer.Green, green, baseMaterial, groundLayer,
-                new Vector3(CupPos.x, top - 0.45f, CupPos.z + off), new Vector3(greenSize, 1f, slab));
+                new Vector3(CupPos.x, top - 0.5f, CupPos.z + off), new Vector3(greenSize, 1f, slab));
             Surface(parent, "Green S", TerrainLayer.Green, green, baseMaterial, groundLayer,
-                new Vector3(CupPos.x, top - 0.45f, CupPos.z - off), new Vector3(greenSize, 1f, slab));
+                new Vector3(CupPos.x, top - 0.5f, CupPos.z - off), new Vector3(greenSize, 1f, slab));
             Surface(parent, "Green E", TerrainLayer.Green, green, baseMaterial, groundLayer,
-                new Vector3(CupPos.x + off, top - 0.45f, CupPos.z), new Vector3(slab, 1f, gap));
+                new Vector3(CupPos.x + off, top - 0.5f, CupPos.z), new Vector3(slab, 1f, gap));
             Surface(parent, "Green W", TerrainLayer.Green, green, baseMaterial, groundLayer,
-                new Vector3(CupPos.x - off, top - 0.45f, CupPos.z), new Vector3(slab, 1f, gap));
+                new Vector3(CupPos.x - off, top - 0.5f, CupPos.z), new Vector3(slab, 1f, gap));
 
             // Tees side by side at the start, facing the cup.
             var tees = Object.FindObjectsByType<GolfTeeingPlatform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
@@ -116,7 +121,54 @@ namespace SbgMaps
             foreach (var cp in Object.FindObjectsByType<Checkpoint>(FindObjectsInactive.Include, FindObjectsSortMode.None))
                 cp.transform.position = new Vector3(TeePos.x, top, midZ);
 
+            ForceTerrainDataRegeneration();
+
             Plugin.Log.LogInfo($"TestHole: done ({tees.Length} tees, {spawners.Length} item spawners, layer {groundLayer}, material '{(baseMaterial ? baseMaterial.shader.name : "none")}')");
+        }
+
+        private static void FlattenTerrain(Terrain terrain, float worldHeight)
+        {
+            // Work on a copy so the vanilla TerrainData asset stays untouched for the real hole.
+            var data = Object.Instantiate(terrain.terrainData);
+            terrain.terrainData = data;
+            var collider = terrain.GetComponent<TerrainCollider>();
+            if (collider != null)
+                collider.terrainData = data;
+
+            float h = Mathf.Clamp01((worldHeight - terrain.transform.position.y) / data.size.y);
+            int res = data.heightmapResolution;
+            var heights = new float[res, res];
+            for (int y = 0; y < res; y++)
+                for (int x = 0; x < res; x++)
+                    heights[y, x] = h;
+            data.SetHeights(0, 0, heights);
+            Plugin.Log.LogInfo($"TestHole: flattened terrain at y={terrain.transform.position.y + h * data.size.y} (res {res}, size {data.size})");
+        }
+
+        /// <summary>
+        /// The shot preview reads baked terrain data stored in the scene. Disposing it makes TerrainManager.Start
+        /// regenerate from the live terrain, which also picks up our TerrainAddition meshes.
+        /// </summary>
+        private static void ForceTerrainDataRegeneration()
+        {
+            var manager = Object.FindFirstObjectByType<TerrainManager>();
+            if (manager == null)
+            {
+                Plugin.Log.LogWarning("TestHole: no TerrainManager found");
+                return;
+            }
+            var t = Traverse.Create(manager);
+            foreach (var field in new[] { "allTerrainLayerWeights", "allTerrainHeights", "allTerrainHeightOverrides" })
+            {
+                var array = t.Field(field).GetValue<Unity.Collections.NativeArray<float>>();
+                if (array.IsCreated)
+                    array.Dispose();
+                t.Field(field).SetValue(default(Unity.Collections.NativeArray<float>));
+            }
+            var overrides = t.Field("allTerrainOverrides").GetValue<Unity.Collections.NativeArray<int>>();
+            if (overrides.IsCreated)
+                overrides.Dispose();
+            t.Field("allTerrainOverrides").SetValue(default(Unity.Collections.NativeArray<int>));
         }
 
         private static Material FindBaseMaterial(GameObject[] roots)

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>SbgMaps.DevReloader</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <DebugType>embedded</DebugType>
+    <GameDir>/media/G/SteamLibrary/steamapps/common/Super Battle Golf</GameDir>
+    <Managed>$(GameDir)/Super Battle Golf_Data/Managed</Managed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="$(GameDir)/BepInEx/core/BepInEx.dll" Private="false" />
+    <Reference Include="$(Managed)/UnityEngine.dll" Private="false" />
+    <Reference Include="$(Managed)/UnityEngine.CoreModule.dll" Private="false" />
+  </ItemGroup>
+
+  <!-- Lives in plugins/, not scripts/, so it survives the reloads it triggers. -->
+  <Target Name="DeployToGame" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)/BepInEx/plugins" />
+  </Target>
+
+</Project>
