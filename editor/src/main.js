@@ -4,20 +4,22 @@ import { loadFolder, loadZip, holeGrids, SURFACES } from "./mapfile.js";
 
 // Map coordinates (x right, z forward, Unity-style) are shown as three.js (x, y, -z).
 const MAX_SAMPLES_PER_SIDE = 700;
+const tmpColor = new THREE.Color();
 
 const viewport = document.getElementById("viewport");
 const status = document.getElementById("status");
 const holeSelect = document.getElementById("hole-select");
 const info = document.getElementById("info");
+const empty = document.getElementById("empty");
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+// Transparent canvas so the CSS sky gradient shows behind the course.
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 viewport.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x9fd3ef);
-scene.add(new THREE.HemisphereLight(0xdff2ff, 0x4a5a3a, 1.2));
-const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+scene.add(new THREE.HemisphereLight(0xeaf6ff, 0x6a7a4a, 1.8));
+const sun = new THREE.DirectionalLight(0xfff6e0, 2.2);
 sun.position.set(-200, 400, 150);
 scene.add(sun);
 
@@ -42,8 +44,19 @@ renderer.setAnimationLoop(() => {
   renderer.render(scene, camera);
 });
 
-function setStatus(text) {
+function setStatus(text, isError = false) {
   status.textContent = text;
+  status.classList.toggle("error", isError);
+}
+
+// The file buttons are labels; let Enter and Space open the picker too.
+for (const label of document.querySelectorAll("label.btn")) {
+  label.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      label.querySelector("input").click();
+    }
+  });
 }
 
 async function open(loader, arg) {
@@ -54,11 +67,12 @@ async function open(loader, arg) {
     holeSelect.innerHTML = "";
     manifest.holes.forEach((h, i) => holeSelect.add(new Option(`${i + 1}. ${h.name ?? "Unnamed"} (par ${h.par})`, i)));
     holeSelect.disabled = false;
+    empty.hidden = true;
     showHole(0);
     setStatus(`${manifest.name} by ${manifest.author ?? "unknown"}`);
   } catch (e) {
     console.error(e);
-    setStatus(`Could not open map: ${e.message}`);
+    setStatus(`Could not open map: ${e.message}`, true);
   }
 }
 
@@ -104,8 +118,10 @@ function buildTerrain(hole, grids) {
       const y = grids.heightAtSample(si, sj);
       const o = (j * nx + i) * 3;
       positions.set([x, y, -z], o);
+      // Surface colours are sRGB; vertex colours are linear.
       const c = SURFACES[grids.surfaceAt(x, z)].color;
-      colors.set([c[0] / 255, c[1] / 255, c[2] / 255], o);
+      tmpColor.setRGB(c[0] / 255, c[1] / 255, c[2] / 255, THREE.SRGBColorSpace);
+      colors.set([tmpColor.r, tmpColor.g, tmpColor.b], o);
     }
   }
   const indices = [];
@@ -128,7 +144,7 @@ function buildWater(hole) {
   const pad = 200;
   const water = new THREE.Mesh(
     new THREE.PlaneGeometry(sx + pad * 2, sz + pad * 2),
-    new THREE.MeshStandardMaterial({ color: 0x3c82c8, transparent: true, opacity: 0.8, roughness: 0.2 }),
+    new THREE.MeshStandardMaterial({ color: 0x4fc0e8, transparent: true, opacity: 0.85, roughness: 0.2 }),
   );
   water.rotation.x = -Math.PI / 2;
   water.position.set(sx / 2, hole.water ?? 5, -sz / 2);
@@ -163,19 +179,22 @@ function frame(hole, grids) {
 
 function showInfo(hole) {
   const length = Math.hypot(hole.cup.x - hole.tee.x, hole.cup.z - hole.tee.z);
+  const stat = (label, value) => `<div class="stat"><span>${label}</span><span>${value}</span></div>`;
   info.innerHTML = `
     <h2>${escape(hole.name ?? "Unnamed")}</h2>
-    <dl>
-      <dt>Par</dt><dd>${hole.par}</dd>
-      <dt>Difficulty</dt><dd>${escape(hole.difficulty ?? "none")}</dd>
-      <dt>Size</dt><dd>${hole.size[0]} x ${hole.size[1]} m</dd>
-      <dt>Tee to cup</dt><dd>${Math.round(length)} m</dd>
-      <dt>Water level</dt><dd>${hole.water ?? 5} m</dd>
-      <dt>Item boxes</dt><dd>${hole.itemBoxes?.length ?? 0}</dd>
-      <dt>Checkpoints</dt><dd>${hole.checkpoints?.length ?? 0}</dd>
-    </dl>
+    <div class="tags">
+      <span class="tag par">Par ${hole.par}</span>
+      <span class="tag">${escape(hole.difficulty ?? "none")}</span>
+    </div>
+    <div class="stats">
+      ${stat("Tee to cup", `${Math.round(length)} m`)}
+      ${stat("Size", `${hole.size[0]} x ${hole.size[1]} m`)}
+      ${stat("Water level", `${hole.water ?? 5} m`)}
+      ${stat("Item boxes", hole.itemBoxes?.length ?? 0)}
+      ${stat("Checkpoints", hole.checkpoints?.length ?? 0)}
+    </div>
     <h3>Surfaces</h3>
-    <div class="legend">${SURFACES.map((s) => `<div><span style="background:rgb(${s.color})"></span>${s.name}</div>`).join("")}</div>`;
+    <div class="legend">${SURFACES.map((s) => `<div><i style="background:rgb(${s.color})"></i>${s.name}</div>`).join("")}</div>`;
 }
 
 function escape(text) {

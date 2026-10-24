@@ -2,10 +2,10 @@
 import { unzipSync } from "fflate";
 
 export const SURFACES = [
-  { id: 0, name: "Rough", color: [74, 128, 52] },
-  { id: 1, name: "Fairway", color: [110, 180, 70] },
-  { id: 2, name: "Green", color: [140, 215, 95] },
-  { id: 3, name: "Sand", color: [230, 210, 150] },
+  { id: 0, name: "Rough", color: [98, 166, 66] },
+  { id: 1, name: "Fairway", color: [132, 206, 84] },
+  { id: 2, name: "Green", color: [168, 232, 112] },
+  { id: 3, name: "Sand", color: [244, 226, 168] },
   { id: 4, name: "Dirt path", color: [160, 120, 80] },
   { id: 5, name: "Out of bounds", color: [120, 120, 120] },
 ];
