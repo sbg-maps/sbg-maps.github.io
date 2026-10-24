@@ -1,0 +1,254 @@
+using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
+using HarmonyLib;
+using Mirror;
+using Unity.Mathematics;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+using UnityEngine.Splines;
+
+namespace SbgMaps
+{
+    /// <summary>
+    /// Turns a loaded vanilla donor hole into a custom hole: re-sculpts and repaints the donor terrain from the
+    /// map's grids and moves the donor's networked objects (tees, cup, item boxes, checkpoint) onto the map's markers.
+    /// Runs from sceneLoaded, before Mirror spawns scene objects and before the managers' Start, on every machine.
+    /// </summary>
+    internal static class MapBuilder
+    {
+        public const string DonorScene = "Twin Beach";
+        /// <summary>The donor terrain is 1000 m square; leave room for the beach around the map.</summary>
+        public const float MaxMapSize = 900f;
+        private const float SeaFloorHeight = 1f;
+        private const float BeachWidth = 25f;
+        private const float DefaultGreenRadius = 15f;
+
+        // Root objects the hole needs to keep working. Everything else in the donor is decoration.
+        private static readonly HashSet<string> KeepRoots = new HashSet<string>
+        {
+            "Manager container", "Main Camera", "Gameplay screenspace UI", "EventSystem", "Directional Light",
+            "Item spawners", "Course item spawner", "Regular main hole", "Checkpoint", "Ocean", "Overview camera track", "Screenshot camera",
+        };
+
+        public static void Build(Scene scene, MapPack pack, int holeIndex)
+        {
+            var def = pack.Manifest.holes[holeIndex];
+            Plugin.Log.LogInfo($"MapBuilder: building '{pack.Manifest.name}' hole {holeIndex + 1} '{def.name}' in '{scene.name}'");
+            var grids = pack.LoadGrids(holeIndex);
+
+            Terrain terrain = null;
+            foreach (var root in scene.GetRootGameObjects())
+            {
+                if (KeepRoots.Contains(root.name) || root.name.StartsWith("Teeing platform"))
+                    continue;
+                if (root.TryGetComponent<Terrain>(out var t))
+                {
+                    terrain = t;
+                    continue;
+                }
+                if (root.GetComponentInChildren<NetworkIdentity>(true) != null)
+                {
+                    Plugin.Log.LogWarning($"MapBuilder: keeping unknown networked root '{root.name}'");
+                    continue;
+                }
+                root.SetActive(false);
+            }
+            if (terrain == null)
+            {
+                Plugin.Log.LogError("MapBuilder: donor scene has no terrain");
+                return;
+            }
+
+            // Centre the map on the donor terrain.
+            var tSize = terrain.terrainData.size;
+            var origin = new Vector2(terrain.transform.position.x + (tSize.x - def.size[0]) / 2f, terrain.transform.position.z + (tSize.z - def.size[1]) / 2f);
+            Vector3 World(float x, float z) => new Vector3(origin.x + x, grids.HeightAt(x, z), origin.y + z);
+            Vector3 WorldOf(PointDef p) => World(p.x, p.z);
+            var area = new Rect(origin, def.Size);
+
+            var cup = Object.FindObjectsByType<GolfHole>(FindObjectsInactive.Include, FindObjectsSortMode.None).FirstOrDefault(h => h.IsMainHole);
+            var builder = new TerrainBuilder(terrain);
+            // Copy the cutout vanilla made for its own cup before the cup moves, then stamp it under ours.
+            bool[,] cupCutout = cup != null ? builder.ReadHoles(cup.transform.position, 3f) : null;
+
+            var cupPos = WorldOf(def.cup);
+            builder.SculptAll(SeaFloorHeight);
+            builder.Sculpt(area, BeachWidth, (wx, wz) => grids.HeightAt(wx - origin.x, wz - origin.y), SeaFloorHeight);
+            builder.Paint(area, BeachWidth, (wx, wz) =>
+            {
+                if (!area.Contains(new Vector2(wx, wz)))
+                    return TerrainLayer.Sand;
+                // The shot preview uses the terrain paint right around the cup, so it is always green there.
+                if ((new Vector2(wx, wz) - new Vector2(cupPos.x, cupPos.z)).sqrMagnitude < 9f)
+                    return TerrainLayer.Green;
+                return grids.SurfaceAt(wx - origin.x, wz - origin.y).ToTerrainLayer();
+            });
+            if (cupCutout != null)
+                builder.StampHoles(cupPos, cupCutout);
+
+            if (cup != null)
+                cup.transform.position = cupPos;
+
+            var teePos = World(def.tee.x, def.tee.z);
+            var toCup = Vector3.ProjectOnPlane(cupPos - teePos, Vector3.up);
+            var facing = def.tee.yaw.HasValue ? Quaternion.Euler(0f, def.tee.yaw.Value, 0f) : Quaternion.LookRotation(toCup);
+            var tees = Object.FindObjectsByType<GolfTeeingPlatform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            for (int i = 0; i < tees.Length; i++)
+            {
+                // Platforms side by side, across the direction of play.
+                var offset = facing * Vector3.right * ((i % 2 == 0 ? -1f : 1f) * 6f);
+                var p = teePos + offset;
+                tees[i].transform.SetPositionAndRotation(World(p.x - origin.x, p.z - origin.y), facing);
+            }
+
+            var spawners = Object.FindObjectsByType<ItemSpawner>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            PlaceOrRemove(spawners, def.itemBoxes, WorldOf, "item boxes");
+            var checkpoints = Object.FindObjectsByType<Checkpoint>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            PlaceOrRemove(checkpoints, def.checkpoints, WorldOf, "checkpoints");
+
+            var ocean = Object.FindFirstObjectByType<MainOutOfBoundsHazard>(FindObjectsInactive.Include);
+            if (ocean != null)
+            {
+                var p = ocean.transform.position;
+                ocean.transform.position = new Vector3(p.x, def.water, p.z);
+            }
+
+            SetBounds(def, origin, cupPos, teePos);
+            SetOverviewCamera(teePos, cupPos);
+            ForceTerrainDataRegeneration();
+
+            Plugin.Log.LogInfo($"MapBuilder: done (tee {teePos}, cup {cupPos}, {def.itemBoxes.Count} item boxes, water {def.water})");
+        }
+
+        /// <summary>
+        /// Moves donor objects onto the map's points. Spare ones are removed on the host once Mirror has spawned them,
+        /// which also removes them for clients. Maps can't have more than the donor has yet.
+        /// </summary>
+        private static void PlaceOrRemove<T>(T[] objects, List<PointDef> points, System.Func<PointDef, Vector3> worldOf, string what) where T : Component
+        {
+            if (points.Count > objects.Length)
+                Plugin.Log.LogWarning($"MapBuilder: map has {points.Count} {what} but only {objects.Length} are supported for now; extra ones are ignored");
+            var spare = new List<GameObject>();
+            for (int i = 0; i < objects.Length; i++)
+            {
+                if (i < points.Count)
+                    objects[i].transform.position = worldOf(points[i]);
+                else
+                {
+                    // Park it out of the way until the host can remove it.
+                    objects[i].transform.position = new Vector3(0f, -1000f, 0f);
+                    spare.Add(objects[i].gameObject);
+                }
+            }
+            if (spare.Count > 0)
+                Plugin.Instance.StartCoroutine(DestroyWhenSpawned(spare));
+        }
+
+        private static IEnumerator DestroyWhenSpawned(List<GameObject> objects)
+        {
+            // Wait until the server has spawned the scene objects (netId assigned).
+            float timeout = Time.realtimeSinceStartup + 30f;
+            while (Time.realtimeSinceStartup < timeout)
+            {
+                if (!NetworkServer.active)
+                    yield break; // clients get the destroy from the host
+                if (objects.All(o => o == null || (o.TryGetComponent<NetworkIdentity>(out var id) && id.netId != 0)))
+                    break;
+                yield return null;
+            }
+            foreach (var o in objects)
+                if (o != null && NetworkServer.active)
+                    NetworkServer.Destroy(o);
+        }
+
+        private static void SetBounds(HoleDef def, Vector2 origin, Vector3 cupPos, Vector3 teePos)
+        {
+            var manager = Object.FindFirstObjectByType<BoundsManager>();
+            if (manager == null)
+            {
+                Plugin.Log.LogWarning("MapBuilder: no BoundsManager");
+                return;
+            }
+            var t = Traverse.Create(manager);
+
+            IEnumerable<Vector2> Local(List<float[]> pts) => pts.Select(p => new Vector2(origin.x + p[0], origin.y + p[1]));
+
+            var level = def.bounds != null && def.bounds.Count >= 3
+                ? Local(def.bounds)
+                : new[] { origin, origin + new Vector2(def.size[0], 0f), origin + def.Size, origin + new Vector2(0f, def.size[1]) };
+            ReplaceSpline(t.Field("levelBounds").GetValue<SplineContainer>(), level, closed: true);
+
+            var green = def.green != null && def.green.Count >= 3
+                ? Local(def.green)
+                : Enumerable.Range(0, 24).Select(i => new Vector2(cupPos.x, cupPos.z) + DefaultGreenRadius * new Vector2(Mathf.Cos(i * Mathf.PI / 12f), Mathf.Sin(i * Mathf.PI / 12f)));
+            ReplaceSpline(t.Field("greenBounds").GetValue<SplineContainer>(), green, closed: true);
+
+            var ret = def.returnPath != null && def.returnPath.Count >= 2
+                ? Local(def.returnPath)
+                : new[] { new Vector2(teePos.x, teePos.z), new Vector2(cupPos.x, cupPos.z) };
+            ReplaceSpline(t.Field("returnSplines").GetValue<SplineContainer>(), ret, closed: false);
+        }
+
+        /// <summary>Replaces a container's splines with one straight-edged spline through the given world XZ points.</summary>
+        private static void ReplaceSpline(SplineContainer container, IEnumerable<Vector2> worldPoints, bool closed)
+        {
+            if (container == null)
+                return;
+            float y = container.transform.position.y;
+            var knots = worldPoints.Select(p => new BezierKnot((float3)container.transform.InverseTransformPoint(new Vector3(p.x, y, p.y)))).ToList();
+            var splines = container.Splines;
+            for (int i = 0; i < splines.Count; i++)
+                splines[i].Clear();
+            if (splines.Count == 0)
+                container.AddSpline();
+            var spline = container.Splines[0];
+            foreach (var k in knots)
+                spline.Add(k, TangentMode.Linear);
+            spline.Closed = closed;
+        }
+
+        /// <summary>The hole intro flies from start to end; point it down the hole from behind the cup to the tee.</summary>
+        private static void SetOverviewCamera(Vector3 teePos, Vector3 cupPos)
+        {
+            var track = GameObject.Find("Overview camera track");
+            if (track == null)
+                return;
+            var start = track.transform.Find("Overview camera start");
+            var end = track.transform.Find("Overview camera end");
+            if (start == null || end == null)
+                return;
+            var dir = Vector3.ProjectOnPlane(cupPos - teePos, Vector3.up).normalized;
+            start.position = cupPos + dir * 20f + Vector3.up * 30f;
+            start.rotation = Quaternion.LookRotation(teePos - start.position);
+            end.position = teePos - dir * 25f + Vector3.up * 20f;
+            end.rotation = Quaternion.LookRotation(cupPos - end.position);
+        }
+
+        /// <summary>
+        /// The shot preview reads baked terrain data stored in the scene. Disposing it makes TerrainManager.Start
+        /// regenerate from the live terrain.
+        /// </summary>
+        private static void ForceTerrainDataRegeneration()
+        {
+            var manager = Object.FindFirstObjectByType<TerrainManager>();
+            if (manager == null)
+            {
+                Plugin.Log.LogWarning("MapBuilder: no TerrainManager found");
+                return;
+            }
+            var t = Traverse.Create(manager);
+            foreach (var field in new[] { "allTerrainLayerWeights", "allTerrainHeights", "allTerrainHeightOverrides" })
+            {
+                var array = t.Field(field).GetValue<Unity.Collections.NativeArray<float>>();
+                if (array.IsCreated)
+                    array.Dispose();
+                t.Field(field).SetValue(default(Unity.Collections.NativeArray<float>));
+            }
+            var overrides = t.Field("allTerrainOverrides").GetValue<Unity.Collections.NativeArray<int>>();
+            if (overrides.IsCreated)
+                overrides.Dispose();
+            t.Field("allTerrainOverrides").SetValue(default(Unity.Collections.NativeArray<int>));
+        }
+    }
+}

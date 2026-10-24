@@ -82,9 +82,15 @@
 ## Dev loop
 
 - Plugin builds into `BepInEx/scripts`. `SbgMaps.DevReloader` (in `plugins/`) polls for new builds and triggers ScriptEngine, since its file watcher does not work under Proton.
-- Host hotkeys: F5 restart hole, F7 skip hole, F8 dump objects to log, F9 toggle test hole. Feedback shows in the text chat.
+- Host hotkeys: F5 restart hole (re-reads map files), F7 skip hole, F8 dump objects to log. Feedback shows in the text chat.
 - The game's own console: enable the "Console commands" lobby rule (disables achievements for that match), then press backquote.
   - Built-ins include `skipHole`, `finishHole`, `giveItem <ItemType>`.
+
+## Status
+
+- Phase 1 done (hand-built test hole played fine).
+- Phase 2 (friend test) skipped by choice; risk noted: every player needs the mod and the same maps.
+- Phase 3 in progress: format 1 (FORMAT.md), loader, "Custom" course tab, host->client hole selection message, sample pack.
 
 ## Phases
 

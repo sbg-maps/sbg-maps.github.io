@@ -1,5 +1,4 @@
 using System.Text;
-using BepInEx.Configuration;
 using HarmonyLib;
 using Mirror;
 using UnityEngine;
@@ -10,14 +9,13 @@ namespace SbgMaps
 {
     /// <summary>
     /// Host-side dev hotkeys. Feedback goes to the in-game text chat (local only) and the BepInEx log.
-    ///   F5  restart the current hole
+    ///   F5  restart the current hole (custom holes re-read their map files, so edits show up)
     ///   F7  skip to the next hole
     ///   F8  dump gameplay object positions to the log
-    ///   F9  toggle the test hole on/off and restart the hole
     /// </summary>
     internal static class DevTools
     {
-        public static void Update(ConfigEntry<string> testHoleScene)
+        public static void Update()
         {
             var kb = Keyboard.current;
             if (kb == null)
@@ -29,8 +27,6 @@ namespace SbgMaps
                 SkipHole();
             else if (kb.f8Key.wasPressedThisFrame)
                 DumpGameplayObjects();
-            else if (kb.f9Key.wasPressedThisFrame)
-                ToggleTestHole(testHoleScene);
         }
 
         public static void Say(string message)
@@ -81,14 +77,6 @@ namespace SbgMaps
             Traverse.Create(SingletonNetworkBehaviour<CourseManager>.Instance)
                 .Method("ServerStartNextMatch", new[] { typeof(bool) })
                 .GetValue(false);
-
-        private static void ToggleTestHole(ConfigEntry<string> testHoleScene)
-        {
-            testHoleScene.Value = string.IsNullOrEmpty(testHoleScene.Value) ? "Twin Beach" : "";
-            Say(string.IsNullOrEmpty(testHoleScene.Value) ? "Test hole OFF" : $"Test hole ON (replaces '{testHoleScene.Value}')");
-            if (NetworkServer.active && SceneManager.GetActiveScene().name == "Twin Beach")
-                RestartHole();
-        }
 
         public static void DumpGameplayObjects()
         {

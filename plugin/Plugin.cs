@@ -1,7 +1,6 @@
 using System.Linq;
 using System.Text;
 using BepInEx;
-using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
 using UnityEngine;
@@ -18,15 +17,16 @@ namespace SbgMaps
         public const string Version = "0.0.1";
 
         internal static ManualLogSource Log;
+        internal static Plugin Instance;
 
-        private ConfigEntry<string> testHoleScene;
         private Harmony harmony;
 
         private void Awake()
         {
             Log = Logger;
-            testHoleScene = Config.Bind("Dev", "TestHoleScene", "Twin Beach",
-                "Vanilla hole that gets replaced by the hand-built test hole when it loads. Empty disables it.");
+            Instance = this;
+            MapLibrary.Scan();
+            HoleSync.Init();
             harmony = new Harmony(Guid);
             harmony.PatchAll();
             SceneManager.sceneLoaded += OnSceneLoaded;
@@ -43,11 +43,10 @@ namespace SbgMaps
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
             Log.LogInfo($"Scene loaded: '{scene.name}' ({scene.path}) mode={mode}");
-            if (!string.IsNullOrEmpty(testHoleScene.Value) && scene.name == testHoleScene.Value)
-                TestHole.Apply(scene);
+            HoleSync.OnSceneLoaded(scene);
         }
 
-        private void Update() => DevTools.Update(testHoleScene);
+        private void Update() => DevTools.Update();
     }
 
     [HarmonyPatch(typeof(CourseCollection), nameof(CourseCollection.RuntimeInitialize))]
