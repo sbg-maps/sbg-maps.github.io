@@ -218,9 +218,7 @@ namespace SbgMaps
                 if (!balls.TryGetValue(k, out var ball))
                     balls[k] = ball = SpawnBall(pos);
                 var body = ball.GetComponent<Rigidbody>();
-                var centre = pos + Vector3.up * lift;
-                body.linearVelocity = dir * speed;
-                body.MovePosition(centre);
+                body.MovePosition(pos + Vector3.up * lift);
                 // Roll: rotate about the axis across the direction of travel.
                 var axis = Vector3.Cross(Vector3.up, dir);
                 if (axis.sqrMagnitude > 1e-4f)
@@ -291,7 +289,7 @@ namespace SbgMaps
             float vertical = Mathf.Lerp(settings.RunOverPlayerKnockoutMinVerticalKnockback, settings.RunOverPlayerKnockoutMaxVerticalKnockback, t);
             var away = Vector3.ProjectOnPlane(player.transform.position - transform.position, Vector3.up);
             if (away.sqrMagnitude < 1e-4f)
-                away = Vector3.ProjectOnPlane(body.linearVelocity, Vector3.up);
+                away = Vector3.ProjectOnPlane(-collision.relativeVelocity, Vector3.up);
             var knockback = player.PlayerInfo.AsHittable.ApplyVehicleHitKnockbackReduction(horizontal * away.normalized + vertical * Vector3.up);
             player.TryKnockOut(null, KnockoutType.TrafficVehicle, false, player.transform.InverseTransformPoint(transform.position), 0f, knockback,
                 ElectromagnetShieldHitBlockType.FullyBlocked, ItemUseId.Invalid, false, true, out _, out _);
@@ -378,14 +376,19 @@ namespace SbgMaps
             bool knocks = (bool?)extras["knocks"] ?? false;
             if (knocks)
                 Movers.EnsureCollider(template, groundLayer);
-            for (int i = 0; i < count; i++)
+            // Copy the template first, then give every copy its own physics body (a copy made after adding one
+            // would already carry it).
+            var copies = new List<GameObject> { template };
+            for (int i = 1; i < count; i++)
+                copies.Add(Instantiate(template, go.transform));
+            for (int i = 0; i < copies.Count; i++)
             {
-                var platform = i == 0 ? template : Instantiate(template, go.transform);
+                var platform = copies[i];
                 platform.name = $"platform {i}";
-                var body = platform.AddComponent<Rigidbody>();
+                var body = platform.GetComponent<Rigidbody>() ?? platform.AddComponent<Rigidbody>();
                 body.isKinematic = true;
                 body.interpolation = RigidbodyInterpolation.Interpolate;
-                if (knocks)
+                if (knocks && platform.GetComponent<KnockbackOnTouch>() == null)
                     platform.AddComponent<KnockbackOnTouch>();
                 m.platforms.Add(body);
             }
@@ -409,10 +412,8 @@ namespace SbgMaps
                     double phase = s % (2 * length);
                     along = (float)(phase < length ? phase : 2 * length - phase);
                 }
-                var world = transform.TransformPoint(Sample(along));
-                var body = platforms[i];
-                body.linearVelocity = (world - body.position) / Time.fixedDeltaTime;
-                body.MovePosition(world);
+                // Kinematic: MovePosition gives the platform a velocity for whatever touches it.
+                platforms[i].MovePosition(transform.TransformPoint(Sample(along)));
             }
         }
 
@@ -533,8 +534,6 @@ namespace SbgMaps
             local.y = radius + hop;
 
             var world = transform.TransformPoint(local);
-            var previous = body.position;
-            body.linearVelocity = (world - previous) / Time.fixedDeltaTime;
             body.MovePosition(world);
             var heading = Vector3.ProjectOnPlane(world - transform.position, Vector3.up);
             if (heading.sqrMagnitude > 0.01f)

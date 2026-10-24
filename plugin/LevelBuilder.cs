@@ -39,6 +39,25 @@ namespace SbgMaps
             int seesaws = 0, rollers = 0, movers = 0, chomps = 0;
             foreach (var obj in model.Objects)
             {
+                try
+                {
+                    BuildObject(ctx, root, obj, groundLayer, ref seesaws, ref rollers, ref movers, ref chomps);
+                }
+                catch (System.Exception e)
+                {
+                    // One broken object must not stop the hole from building.
+                    Plugin.Log.LogError($"LevelBuilder: skipped object '{obj.Name}': {e}");
+                }
+            }
+            Plugin.Log.LogInfo($"LevelBuilder: {model.Objects.Count} objects ({seesaws} see-saws, {rollers} rollers, {movers} movers, {chomps} chomps)");
+            root.AddComponent<SlideController>();
+            Physics.SyncTransforms();
+            return root;
+        }
+
+        private static void BuildObject(Context ctx, GameObject root, GlbReader.SceneObject obj, int groundLayer, ref int seesaws, ref int rollers, ref int movers, ref int chomps)
+        {
+            {
                 var go = new GameObject(obj.Name);
                 go.transform.SetParent(root.transform, false);
                 go.transform.localPosition = new Vector3(obj.Position[0], obj.Position[1], obj.Position[2]);
@@ -86,10 +105,6 @@ namespace SbgMaps
                         if (r.GetComponent<Billboard>() == null)
                             r.gameObject.AddComponent<Billboard>();
             }
-            Plugin.Log.LogInfo($"LevelBuilder: {model.Objects.Count} objects ({seesaws} see-saws, {rollers} rollers, {movers} movers, {chomps} chomps)");
-            root.AddComponent<SlideController>();
-            Physics.SyncTransforms();
-            return root;
         }
 
         private class Context
