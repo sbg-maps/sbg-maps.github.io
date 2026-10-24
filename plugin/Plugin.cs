@@ -40,11 +40,14 @@ namespace SbgMaps
         {
             SceneManager.sceneLoaded -= OnSceneLoaded;
             harmony?.UnpatchSelf();
+            HoleMusic.OnUnload();
         }
 
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
             Log.LogInfo($"Scene loaded: '{scene.name}' ({scene.path}) mode={mode}");
+            if (mode == LoadSceneMode.Single)
+                HoleMusic.OnSceneLoaded();
             CustomCourse.InjectLate();
             HoleSync.OnSceneLoaded(scene);
         }

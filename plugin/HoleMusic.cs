@@ -61,6 +61,17 @@ namespace SbgMaps
         [HarmonyPostfix, HarmonyPatch(typeof(CourseManager), "OnDestroy")]
         private static void StopPostfix() => Stop();
 
+        /// <summary>Any scene change ends the hole, so the song too (a new hole starts its own after loading).</summary>
+        public static void OnSceneLoaded() => Stop();
+
+        /// <summary>
+        /// The mod is being unloaded (a hot reload): stop at once. The handles are also kept in the AppDomain,
+        /// so a reloaded copy of the mod can still stop a song an older copy started.
+        /// </summary>
+        public static void OnUnload() => Stop(fade: false);
+
+        private const string SharedKey = "SbgMaps.HoleMusic.handles";
+
         private static bool IsPlaying => channel.hasHandle() && channel.isPlaying(out bool playing) == FMOD.RESULT.OK && playing;
 
         /// <summary>FMOD streams from a file, so the song is unpacked once per map version into SbgMaps/cache.</summary>
@@ -87,17 +98,32 @@ namespace SbgMaps
             RuntimeManager.StudioSystem.flushCommands();
             bus.getChannelGroup(out var group);
             Check(core.playSound(sound, group, false, out channel), "play");
+            AppDomain.CurrentDomain.SetData(SharedKey, new[] { channel.handle, sound.handle });
             if (hurry)
                 channel.setPitch(HurryPitch);
         }
 
         /// <summary>Fades the song out over a second; the sound is released when the next one starts.</summary>
-        private static void Stop()
+        private static void Stop(bool fade = true)
         {
             if (fading.hasHandle())
                 fading.release();
             fading = default;
-            if (IsPlaying && RuntimeManager.CoreSystem.getSoftwareFormat(out int rate, out _, out _) == FMOD.RESULT.OK)
+            // A song started by an earlier copy of the mod (before a hot reload) that this copy does not know about.
+            if (!channel.hasHandle() && AppDomain.CurrentDomain.GetData(SharedKey) is IntPtr[] old && old.Length == 2)
+            {
+                channel = new FMOD.Channel(old[0]);
+                sound = new FMOD.Sound(old[1]);
+            }
+            AppDomain.CurrentDomain.SetData(SharedKey, null);
+            if (!fade)
+            {
+                if (channel.hasHandle())
+                    channel.stop();
+                if (sound.hasHandle())
+                    sound.release();
+            }
+            else if (IsPlaying && RuntimeManager.CoreSystem.getSoftwareFormat(out int rate, out _, out _) == FMOD.RESULT.OK)
             {
                 channel.getDSPClock(out _, out ulong now);
                 ulong end = now + (ulong)(rate * FadeSeconds);
