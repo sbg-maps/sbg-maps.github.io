@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Text;
 using BepInEx;
+using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
 using UnityEngine;
@@ -18,12 +19,32 @@ namespace SbgMaps
 
         internal static ManualLogSource Log;
 
+        private ConfigEntry<string> testHoleScene;
+        private Harmony harmony;
+
         private void Awake()
         {
             Log = Logger;
-            new Harmony(Guid).PatchAll();
-            SceneManager.sceneLoaded += (scene, mode) => Log.LogInfo($"Scene loaded: '{scene.name}' ({scene.path}) mode={mode}");
+            testHoleScene = Config.Bind("Dev", "TestHoleScene", "Twin Beach",
+                "Vanilla hole that gets replaced by the hand-built test hole when it loads. Empty disables it.");
+            harmony = new Harmony(Guid);
+            harmony.PatchAll();
+            SceneManager.sceneLoaded += OnSceneLoaded;
             Log.LogInfo($"{Name} {Version} loaded");
+        }
+
+        // ScriptEngine hot reload destroys and recreates the plugin, so undo everything Awake did.
+        private void OnDestroy()
+        {
+            SceneManager.sceneLoaded -= OnSceneLoaded;
+            harmony?.UnpatchSelf();
+        }
+
+        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+        {
+            Log.LogInfo($"Scene loaded: '{scene.name}' ({scene.path}) mode={mode}");
+            if (!string.IsNullOrEmpty(testHoleScene.Value) && scene.name == testHoleScene.Value)
+                TestHole.Apply(scene);
         }
 
         private void Update()

@@ -23,13 +23,14 @@
     <Reference Include="$(Managed)/UnityEngine.dll" Private="false" />
     <Reference Include="$(Managed)/UnityEngine.CoreModule.dll" Private="false" />
     <Reference Include="$(Managed)/UnityEngine.PhysicsModule.dll" Private="false" />
+    <Reference Include="$(Managed)/UnityEngine.TerrainModule.dll" Private="false" />
     <Reference Include="$(Managed)/Unity.InputSystem.dll" Private="false" />
     <Reference Include="$(Managed)/UnityEngine.AssetBundleModule.dll" Private="false" />
   </ItemGroup>
 
   <!-- Copy the built plugin straight into the game's BepInEx/plugins folder. -->
   <Target Name="DeployToGame" AfterTargets="Build">
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)/BepInEx/plugins/SbgMaps" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)/BepInEx/scripts" />
   </Target>
 
 </Project>

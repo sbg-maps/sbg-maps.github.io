@@ -58,6 +58,17 @@
   - Pros: proven by prior art, full fidelity (custom shaders, terrain, lighting).
   - Cons: every author needs a ~10 GB Unity install, bundles of 50-150 MB, and shader fix-ups.
 
+## Hole scene anatomy (Twin Beach dump, `tools/dump_scene.py`)
+
+- Same in every hole: `Manager container` (SingletonInitializer, ~30 managers, `Networked managers` with CourseManager/WindManager/CheckpointManager...), `Main Camera`, HUD canvases, `EventSystem`.
+- Gameplay: `Teeing platform (stairs|stairless)` x4, `Regular main hole` (GolfHole + Trigger + flag), `Course item spawner` x16 (under `Item spawners`), `Checkpoint`, `Ocean` (MainOutOfBoundsHazard), `Overview camera track`, `Screenshot camera`.
+- Ground: MicroSplat `Terrain` plus spline meshes with `TerrainAddition`. Everything else is decoration (`Entity`/`Foliage`).
+
+**v1 strategy: donor scene.**
+- Load a small vanilla hole, then destroy its decoration and terrain, and spawn the map geometry with `TerrainAddition` per surface.
+- *Move* the existing networked tees/cup/item spawners/checkpoint to the map's markers. Their Mirror sceneIds are already valid on every client.
+- Later: clone extras with deterministic sceneIds when a map needs more than the donor has.
+
 ## Phases
 
 0. Setup: BepInEx in game, plugin skeleton, dump a vanilla hole scene's hierarchy (AssetRipper/UnityPy) to get the exact required component list.
