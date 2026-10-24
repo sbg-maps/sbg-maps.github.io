@@ -37,19 +37,21 @@ namespace SbgMaps
             // so the cup is cut through them and the apron covers them like any other ground.
             var ground = new List<GlbReader.Primitive>(model.Primitives);
             var objects = new List<GlbReader.SceneObject>();
+            var props = new HashSet<GlbReader.Primitive>();
             foreach (var obj in model.Objects)
             {
                 var baked = IsStaticGround(obj) ? InMapSpace(obj) : null;
                 if (baked != null && baked.Any(p => TouchesCup(p, zone)))
                 {
                     ground.AddRange(baked);
+                    props.UnionWith(baked);
                     Plugin.Log.LogInfo($"LevelBuilder: '{obj.Name}' is at the cup, built as level ground");
                 }
                 else
                     objects.Add(obj);
             }
             BuildParts(ctx, root.transform, ground, "level", zone);
-            BuildCupApron(ctx, root.transform, ground, zone);
+            BuildCupApron(ctx, root.transform, ground, zone, props);
 
             int seesaws = 0, rollers = 0, movers = 0, chomps = 0;
             foreach (var obj in objects)
@@ -267,7 +269,7 @@ namespace SbgMaps
         /// level's original slope at the edge, like vanilla greens. Samples the original ground for heights, UVs and
         /// materials, so textures continue seamlessly. Visual and collision meshes each get their own apron.
         /// </summary>
-        private static void BuildCupApron(Context ctx, Transform parent, List<GlbReader.Primitive> prims, CupZone zone)
+        private static void BuildCupApron(Context ctx, Transform parent, List<GlbReader.Primitive> prims, CupZone zone, HashSet<GlbReader.Primitive> props)
         {
             var model = ctx.Model;
             GlbReader.Material MatOf(GlbReader.Primitive p) => p.Material >= 0 && p.Material < model.Materials.Count ? model.Materials[p.Material] : null;
@@ -275,7 +277,8 @@ namespace SbgMaps
 
             // Visual ground: drawn triangles. Collision ground: the invisible mesh, or the drawn one if there is none.
             var visual = new Sampler(prims.Where(p => !(MatOf(p)?.Invisible ?? false) && ((MatOf(p)?.RenderOnly ?? false) || Surfaces.ContainsKey(MatOf(p)?.Surface ?? "rough") && (MatOf(p)?.Surface ?? "rough") != "none")), zone);
-            var collision = hasCollisionMesh ? new Sampler(prims.Where(p => MatOf(p)?.Invisible ?? false), zone) : visual;
+            // Props built into the ground at the cup have no separate collision mesh: their drawn mesh is their collision.
+            var collision = hasCollisionMesh ? new Sampler(prims.Where(p => (MatOf(p)?.Invisible ?? false) || props.Contains(p) && !(MatOf(p)?.RenderOnly ?? false)), zone) : visual;
 
             BuildApronMesh(ctx, parent, zone, visual, drawn: true, collides: !hasCollisionMesh);
             if (hasCollisionMesh)
@@ -302,6 +305,23 @@ namespace SbgMaps
                     h.Vertex.Normal = Vector3.Slerp(Vector3.up, h.Vertex.Normal, t);
                     grid[i, j] = h;
                 }
+
+            // The flat plate around the hole is always solid, even over a gap in the ground (a pit under a lid).
+            Sampler.Hit? any = null;
+            foreach (var h in grid)
+                if (h != null) { any = h; break; }
+            if (any != null)
+                for (int i = 0; i <= n; i++)
+                    for (int j = 0; j <= n; j++)
+                    {
+                        float dx = -ApronHalf + i * ApronStep, dz = -ApronHalf + j * ApronStep;
+                        if (grid[i, j] != null || Mathf.Max(Mathf.Abs(dx), Mathf.Abs(dz)) > ApronFlatHalf)
+                            continue;
+                        var h = any.Value;
+                        h.Vertex.Pos = new Vector3(cup.x + dx, cup.y, cup.z + dz);
+                        h.Vertex.Normal = Vector3.up;
+                        grid[i, j] = h;
+                    }
 
             // One mesh per source material, so textures stay right.
             var byMaterial = new Dictionary<int, MeshData>();
