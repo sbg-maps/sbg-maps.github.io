@@ -16,6 +16,7 @@ namespace SbgMaps
     {
         private const string HoleNamePrefix = "sbgmaps:";
         private const string CourseKey = "SBGMAPS_Course";
+        private const string CourseName = "SbgMaps custom";
 
         public static bool TryGetMapHole(HoleData hole, out MapPack pack, out int holeIndex)
         {
@@ -49,19 +50,42 @@ namespace SbgMaps
             }
         }
 
-        private static void Inject(CourseCollection collection)
+        /// <summary>
+        /// When the plugin loads after the game built its course list (ScriptEngine hot reload loads plugins late),
+        /// append the course now and give its holes global indices the way RuntimeInitialize would have.
+        /// Safe to call repeatedly; does nothing until the list exists or once our course is in it.
+        /// </summary>
+        public static void InjectLate()
         {
+            var collection = GameManager.AllCourses;
+            if (collection == null || collection.allHoles.Count == 0 || collection.Courses.Any(c => c.name == CourseName))
+                return;
+            var course = Inject(collection);
+            if (course == null)
+                return;
+            foreach (var hole in course.Holes)
+            {
+                hole.RuntimeInitialize(course, collection.allHoles.Count);
+                collection.allHoles.Add(hole);
+            }
+            Plugin.Log.LogInfo("Custom course added after startup");
+        }
+
+        private static CourseData Inject(CourseCollection collection)
+        {
+            if (collection.Courses.Any(c => c.name == CourseName))
+                return null;
             if (MapLibrary.Maps.Count == 0)
             {
                 Plugin.Log.LogInfo($"No maps installed in {MapLibrary.MapsFolder}");
-                return;
+                return null;
             }
             var template = collection.Courses.FirstOrDefault(c => c.ShouldInitCourses);
             var donor = collection.Courses.SelectMany(c => c.Holes).FirstOrDefault(h => h.Scene.Name == MapBuilder.DonorScene);
             if (template == null || donor == null)
             {
                 Plugin.Log.LogError($"Could not find a course template or the donor hole '{MapBuilder.DonorScene}'");
-                return;
+                return null;
             }
 
             var holes = new List<HoleData>();
@@ -84,13 +108,14 @@ namespace SbgMaps
             }
 
             var course = UnityEngine.Object.Instantiate(template);
-            course.name = "SbgMaps custom";
-            Strings.Add(CourseKey, "Custom");
+            course.name = CourseName;
+            Strings.Add(CourseKey, "Custom Maps");
             course.SetLocalizedName(new LocalizedString("UI", CourseKey));
             course.OverrideHoles(holes.ToArray());
             Traverse.Create(collection).Property("Courses").SetValue(collection.Courses.Append(course).ToArray());
             Strings.Inject();
             Plugin.Log.LogInfo($"Added custom course with {holes.Count} hole(s)");
+            return course;
         }
 
         private static HoleData.DifficultyLevel ParseDifficulty(string s) =>

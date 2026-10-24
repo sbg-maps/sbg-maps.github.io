@@ -30,6 +30,7 @@ namespace SbgMaps
             harmony = new Harmony(Guid);
             harmony.PatchAll();
             SceneManager.sceneLoaded += OnSceneLoaded;
+            CustomCourse.InjectLate();
             Log.LogInfo($"{Name} {Version} loaded");
         }
 
@@ -43,6 +44,7 @@ namespace SbgMaps
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
             Log.LogInfo($"Scene loaded: '{scene.name}' ({scene.path}) mode={mode}");
+            CustomCourse.InjectLate();
             HoleSync.OnSceneLoaded(scene);
         }
 
