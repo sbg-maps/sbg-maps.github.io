@@ -1,48 +1,25 @@
 import * as THREE from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { loadFolder, loadZip, holeGrids, SURFACES } from "./mapfile.js";
+import { loadFolder, loadZip } from "./mapfile.js";
+import { importModel } from "./importer.js";
+import { renderer, pick, frameBox } from "./scene.js";
+import { HeightmapView } from "./viewer.js";
+import { Project, MODEL_SURFACES, MARKERS } from "./project.js";
 
-// Map coordinates (x right, z forward, Unity-style) are shown as three.js (x, y, -z).
-const MAX_SAMPLES_PER_SIDE = 700;
-const tmpColor = new THREE.Color();
-
-const viewport = document.getElementById("viewport");
 const status = document.getElementById("status");
 const holeSelect = document.getElementById("hole-select");
 const info = document.getElementById("info");
 const empty = document.getElementById("empty");
+const toolbar = document.getElementById("toolbar");
+const dropOverlay = document.getElementById("drop");
 
-// Transparent canvas so the CSS sky gradient shows behind the course.
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-renderer.setPixelRatio(window.devicePixelRatio);
-viewport.appendChild(renderer.domElement);
+/** Golf-sized default: the longest side of an imported level becomes roughly this many metres. */
+const DEFAULT_LEVEL_SIZE = 450;
 
-const scene = new THREE.Scene();
-scene.add(new THREE.HemisphereLight(0xeaf6ff, 0x6a7a4a, 1.8));
-const sun = new THREE.DirectionalLight(0xfff6e0, 2.2);
-sun.position.set(-200, 400, 150);
-scene.add(sun);
-
-const camera = new THREE.PerspectiveCamera(50, 1, 0.5, 5000);
-camera.position.set(0, 300, 300);
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-
-let holeGroup = null;
-let currentMap = null;
-
-function resize() {
-  const { clientWidth: w, clientHeight: h } = viewport;
-  renderer.setSize(w, h);
-  camera.aspect = w / Math.max(h, 1);
-  camera.updateProjectionMatrix();
-}
-new ResizeObserver(resize).observe(viewport);
-
-renderer.setAnimationLoop(() => {
-  controls.update();
-  renderer.render(scene, camera);
-});
+let view = null; // HeightmapView for format 1 maps
+let project = null; // Project for model maps
+let tab = "model";
+let tool = "look";
+let selectedMaterial = null;
 
 function setStatus(text, isError = false) {
   status.textContent = text;
@@ -59,133 +36,117 @@ for (const label of document.querySelectorAll("label.btn")) {
   });
 }
 
-async function open(loader, arg) {
+function clear() {
+  view?.dispose();
+  project?.dispose();
+  view = project = null;
+  selectedMaterial = null;
+  toolbar.hidden = true;
+}
+
+async function run(label, fn) {
   try {
-    setStatus("Loading...");
-    currentMap = await loader(arg);
-    const { manifest } = currentMap;
-    holeSelect.innerHTML = "";
-    manifest.holes.forEach((h, i) => holeSelect.add(new Option(`${i + 1}. ${h.name ?? "Unnamed"} (par ${h.par})`, i)));
-    holeSelect.disabled = false;
-    empty.hidden = true;
-    showHole(0);
-    setStatus(`${manifest.name} by ${manifest.author ?? "unknown"}`);
+    setStatus(`${label}...`);
+    await fn();
   } catch (e) {
     console.error(e);
-    setStatus(`Could not open map: ${e.message}`, true);
+    setStatus(`${label} failed: ${e.message}`, true);
   }
 }
 
-document.getElementById("open-file").addEventListener("change", (e) => e.target.files[0] && open(loadZip, e.target.files[0]));
-document.getElementById("open-folder").addEventListener("change", (e) => e.target.files.length && open(loadFolder, e.target.files));
-holeSelect.addEventListener("change", () => showHole(Number(holeSelect.value)));
+// ---------- Opening things ----------
 
-function showHole(index) {
-  const hole = currentMap.manifest.holes[index];
-  const grids = holeGrids(currentMap, hole);
-  if (holeGroup) {
-    scene.remove(holeGroup);
-    holeGroup.traverse((o) => {
-      o.geometry?.dispose();
-      o.material?.dispose();
-    });
+async function openMap(map) {
+  clear();
+  empty.hidden = true;
+  if (map.manifest.format === 2) {
+    project = await Project.fromMap(map);
+    startEditing();
+  } else {
+    view = new HeightmapView(map);
+    fillHoleSelect(map.manifest.holes, 0);
+    showViewHole(0);
   }
-  holeGroup = new THREE.Group();
-  holeGroup.add(buildTerrain(hole, grids));
-  holeGroup.add(buildWater(hole));
-  addMarkers(holeGroup, hole, grids);
-  scene.add(holeGroup);
-  frame(hole, grids);
-  showInfo(hole);
+  setStatus(`${map.manifest.name} by ${map.manifest.author || "unknown"}`);
 }
 
-function buildTerrain(hole, grids) {
-  const { width, depth } = hole.heightmap;
-  const [sx, sz] = hole.size;
-  // Decimate very large heightmaps so the browser stays responsive.
-  const step = Math.max(1, Math.ceil(Math.max(width, depth) / MAX_SAMPLES_PER_SIDE));
-  const nx = Math.floor((width - 1) / step) + 1;
-  const nz = Math.floor((depth - 1) / step) + 1;
+async function openModel(files) {
+  const { root, missing } = await importModel(files);
+  clear();
+  empty.hidden = true;
+  project = new Project(root);
+  const size = project.box.getSize(new THREE.Vector3());
+  project.scale = Math.max(0.01, Math.round((DEFAULT_LEVEL_SIZE / Math.max(size.x, size.z)) * 2) / 2);
+  project.applyTransform();
+  project.holes[0].water = Math.floor(project.box.min.y - 5);
+  project.rebuildMarkers();
+  startEditing();
+  setStatus(missing.length ? `Imported, but these files were missing: ${missing.join(", ")}` : `Imported ${root.name}`, missing.length > 0);
+}
 
-  const positions = new Float32Array(nx * nz * 3);
-  const colors = new Float32Array(nx * nz * 3);
-  for (let j = 0; j < nz; j++) {
-    for (let i = 0; i < nx; i++) {
-      const si = Math.min(i * step, width - 1);
-      const sj = Math.min(j * step, depth - 1);
-      const x = (si / (width - 1)) * sx;
-      const z = (sj / (depth - 1)) * sz;
-      const y = grids.heightAtSample(si, sj);
-      const o = (j * nx + i) * 3;
-      positions.set([x, y, -z], o);
-      // Surface colours are sRGB; vertex colours are linear.
-      const c = SURFACES[grids.surfaceAt(x, z)].color;
-      tmpColor.setRGB(c[0] / 255, c[1] / 255, c[2] / 255, THREE.SRGBColorSpace);
-      colors.set([tmpColor.r, tmpColor.g, tmpColor.b], o);
-    }
+/** Decides what a set of picked or dropped files is: a map folder, a .sbgmap, or a model. */
+async function openFiles(entries) {
+  const files = entries.map((e) => e.file);
+  const sbgmap = files.find((f) => /\.(sbgmap|zip)$/i.test(f.name));
+  if (entries.some((e) => e.path.split("/").pop() === "map.json")) return openMap(await loadFolder(entries));
+  if (sbgmap && files.length === 1) return openMap(await loadZip(sbgmap));
+  return openModel(files);
+}
+
+const asEntries = (fileList) => [...fileList].map((file) => ({ file, path: file.webkitRelativePath || file.name }));
+document.getElementById("import-files").addEventListener("change", (e) => e.target.files.length && run("Importing", () => openModel(e.target.files)));
+document.getElementById("import-folder").addEventListener("change", (e) => e.target.files.length && run("Importing", () => openFiles(asEntries(e.target.files))));
+document.getElementById("open-file").addEventListener("change", (e) => e.target.files[0] && run("Opening", async () => openMap(await loadZip(e.target.files[0]))));
+
+// Drag and drop, including whole folders.
+let dragDepth = 0;
+window.addEventListener("dragenter", (e) => {
+  e.preventDefault();
+  dropOverlay.hidden = ++dragDepth <= 0;
+});
+window.addEventListener("dragleave", () => (dropOverlay.hidden = --dragDepth <= 0));
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dragDepth = 0;
+  dropOverlay.hidden = true;
+  const roots = [...e.dataTransfer.items].map((i) => i.webkitGetAsEntry?.()).filter(Boolean);
+  run("Opening", async () => openFiles((await Promise.all(roots.map((r) => readEntry(r, "")))).flat()));
+});
+
+async function readEntry(entry, prefix) {
+  if (entry.isFile) return [{ file: await new Promise((res, rej) => entry.file(res, rej)), path: prefix + entry.name }];
+  const reader = entry.createReader();
+  const children = [];
+  for (let batch; (batch = await new Promise((res, rej) => reader.readEntries(res, rej))).length; ) children.push(...batch);
+  return (await Promise.all(children.map((c) => readEntry(c, `${prefix}${entry.name}/`)))).flat();
+}
+
+// ---------- Hole picker ----------
+
+function fillHoleSelect(holes, selected) {
+  holeSelect.innerHTML = "";
+  holes.forEach((h, i) => holeSelect.add(new Option(`${i + 1}. ${h.name || "Unnamed"} (par ${h.par})`, i)));
+  holeSelect.value = selected;
+  holeSelect.disabled = false;
+}
+
+holeSelect.addEventListener("change", () => {
+  const i = Number(holeSelect.value);
+  if (view) showViewHole(i);
+  if (project) {
+    project.activeHole = i;
+    project.rebuildMarkers();
+    renderPanel();
   }
-  const indices = [];
-  for (let j = 0; j < nz - 1; j++) {
-    for (let i = 0; i < nx - 1; i++) {
-      const a = j * nx + i;
-      indices.push(a, a + 1, a + nx, a + 1, a + nx + 1, a + nx);
-    }
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  return new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, side: THREE.DoubleSide }));
-}
+});
 
-function buildWater(hole) {
-  const [sx, sz] = hole.size;
-  const pad = 200;
-  const water = new THREE.Mesh(
-    new THREE.PlaneGeometry(sx + pad * 2, sz + pad * 2),
-    new THREE.MeshStandardMaterial({ color: 0x4fc0e8, transparent: true, opacity: 0.85, roughness: 0.2 }),
-  );
-  water.rotation.x = -Math.PI / 2;
-  water.position.set(sx / 2, hole.water ?? 5, -sz / 2);
-  return water;
-}
-
-function addMarkers(group, hole, grids) {
-  const at = (p, lift = 0) => new THREE.Vector3(p.x, grids.heightAt(p.x, p.z) + lift, -p.z);
-  const marker = (geometry, color, position) => {
-    const m = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color }));
-    m.position.copy(position);
-    group.add(m);
-  };
-  marker(new THREE.CylinderGeometry(3, 3, 0.6, 24), 0xffffff, at(hole.tee, 0.3));
-  marker(new THREE.CylinderGeometry(0.15, 0.15, 6, 8), 0xeeeeee, at(hole.cup, 3));
-  marker(new THREE.ConeGeometry(1, 2, 3), 0xdd2222, at(hole.cup, 5.5));
-  for (const b of hole.itemBoxes ?? []) marker(new THREE.BoxGeometry(2, 2, 2), 0xf5c400, at(b, 1.5));
-  for (const c of hole.checkpoints ?? []) marker(new THREE.OctahedronGeometry(1.5), 0xb400dc, at(c, 2));
-}
-
-function frame(hole, grids) {
-  const tee = new THREE.Vector3(hole.tee.x, grids.heightAt(hole.tee.x, hole.tee.z), -hole.tee.z);
-  const cup = new THREE.Vector3(hole.cup.x, grids.heightAt(hole.cup.x, hole.cup.z), -hole.cup.z);
-  const mid = tee.clone().lerp(cup, 0.5);
-  const length = tee.distanceTo(cup);
-  const back = tee.clone().sub(cup).setY(0).normalize();
-  controls.target.copy(mid);
-  camera.position.copy(mid).addScaledVector(back, length * 0.9).add(new THREE.Vector3(0, length * 0.6, 0));
-  camera.far = Math.max(5000, length * 10);
-  camera.updateProjectionMatrix();
-}
-
-function showInfo(hole) {
+function showViewHole(index) {
+  const hole = view.show(index);
   const length = Math.hypot(hole.cup.x - hole.tee.x, hole.cup.z - hole.tee.z);
-  const stat = (label, value) => `<div class="stat"><span>${label}</span><span>${value}</span></div>`;
   info.innerHTML = `
-    <h2>${escape(hole.name ?? "Unnamed")}</h2>
-    <div class="tags">
-      <span class="tag par">Par ${hole.par}</span>
-      <span class="tag">${escape(hole.difficulty ?? "none")}</span>
-    </div>
+    <h2>${esc(hole.name ?? "Unnamed")}</h2>
+    <div class="tags"><span class="tag par">Par ${hole.par}</span><span class="tag">${esc(hole.difficulty ?? "none")}</span></div>
     <div class="stats">
       ${stat("Tee to cup", `${Math.round(length)} m`)}
       ${stat("Size", `${hole.size[0]} x ${hole.size[1]} m`)}
@@ -193,10 +154,214 @@ function showInfo(hole) {
       ${stat("Item boxes", hole.itemBoxes?.length ?? 0)}
       ${stat("Checkpoints", hole.checkpoints?.length ?? 0)}
     </div>
-    <h3>Surfaces</h3>
-    <div class="legend">${SURFACES.map((s) => `<div><i style="background:rgb(${s.color})"></i>${s.name}</div>`).join("")}</div>`;
+    <p class="hint">Heightmap maps are view-only for now.</p>`;
 }
 
-function escape(text) {
-  return String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+// ---------- Editing ----------
+
+const TOOLS = [
+  { id: "look", name: "Look", tip: "Orbit around. Click the model to find its material." },
+  { id: "tee", name: "Tee", tip: "Click to place the tee." },
+  { id: "cup", name: "Cup", tip: "Click to place the cup." },
+  { id: "itemBoxes", name: "Item box", tip: "Click to add item boxes." },
+  { id: "checkpoints", name: "Checkpoint", tip: "Click to add a checkpoint." },
+  { id: "erase", name: "Erase", tip: "Click a marker to remove it." },
+];
+
+function startEditing() {
+  tool = "look";
+  tab = "model";
+  toolbar.hidden = false;
+  renderToolbar();
+  fillHoleSelect(project.holes, project.activeHole);
+  frameBox(project.box);
+  renderPanel();
+}
+
+function renderToolbar() {
+  toolbar.innerHTML = TOOLS.map((t) => `<button class="tool ${t.id === tool ? "active" : ""}" data-tool="${t.id}" title="${t.tip}">${t.name}</button>`).join("");
+  toolbar.querySelectorAll("button").forEach((b) =>
+    b.addEventListener("click", () => {
+      tool = b.dataset.tool;
+      renderToolbar();
+      setStatus(TOOLS.find((t) => t.id === tool).tip);
+    }),
+  );
+}
+
+// A click is a pointer press that did not move (so orbiting never places markers).
+let downAt = null;
+renderer.domElement.addEventListener("pointerdown", (e) => (downAt = { x: e.clientX, y: e.clientY }));
+renderer.domElement.addEventListener("pointerup", (e) => {
+  if (!project || !downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 5) return;
+  const hit = pick(e, [project.root]);
+  if (!hit) return;
+  if (tool === "look") {
+    const materials = Array.isArray(hit.object.material) ? hit.object.material : [hit.object.material];
+    const group = hit.object.geometry.groups.find((g) => hit.faceIndex * 3 >= g.start && hit.faceIndex * 3 < g.start + g.count);
+    selectMaterial(materials[group?.materialIndex ?? 0]);
+  } else if (tool === "erase") {
+    if (!project.erase(hit.point)) setStatus("No marker there");
+    renderPanel();
+  } else {
+    project.place(tool, hit.point);
+    renderPanel();
+  }
+});
+
+function selectMaterial(material) {
+  if (selectedMaterial) selectedMaterial.emissive.setHex(0x000000);
+  selectedMaterial = material;
+  if (material) material.emissive.setHex(0x665500);
+  tab = "model";
+  renderPanel();
+  info.querySelector(".material.selected")?.scrollIntoView({ block: "nearest" });
+}
+
+function renderPanel() {
+  if (!project) return;
+  const tabs = [
+    ["model", "Model"],
+    ["holes", "Holes"],
+    ["export", "Export"],
+  ];
+  info.innerHTML = `
+    <nav class="tabs">${tabs.map(([id, name]) => `<button class="tab ${id === tab ? "active" : ""}" data-tab="${id}">${name}</button>`).join("")}</nav>
+    <section>${{ model: modelPanel, holes: holesPanel, export: exportPanel }[tab]()}</section>`;
+  info.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => ((tab = b.dataset.tab), renderPanel())));
+  ({ model: wireModel, holes: wireHoles, export: wireExport })[tab]();
+}
+
+function modelPanel() {
+  const [sx, sz] = project.size;
+  return `
+    <h3>Size</h3>
+    <div class="field"><label for="scale">Scale</label><input id="scale" type="number" min="0.01" step="0.5" value="${project.scale}" /></div>
+    <div class="stats">${stat("Course area", `${sx} x ${sz} m`)}</div>
+    <div class="row"><button class="btn btn-secondary small" id="rotate">Rotate 90&deg;</button>
+    <label class="check"><input type="checkbox" id="overlay" ${project.surfaceOverlay ? "checked" : ""} /> Show surfaces</label></div>
+    <h3>Surfaces</h3>
+    <p class="hint">Pick what each material is. Tip: click the model with Look to find a material.</p>
+    <div class="materials">${project.materials
+      .map(({ material }, i) => `<div class="material ${material === selectedMaterial ? "selected" : ""}" data-i="${i}">
+          <span class="thumb" style="${materialThumb(material)}"></span>
+          <span class="mat-name" title="${esc(material.name)}">${esc(material.name || `Material ${i + 1}`)}</span>
+          <select data-i="${i}" class="surface">${MODEL_SURFACES.map((s) => `<option value="${s.id}" ${s.id === material.userData.surface ? "selected" : ""}>${s.name}</option>`).join("")}</select>
+        </div>`)
+      .join("")}</div>`;
+}
+
+function wireModel() {
+  info.querySelector("#scale").addEventListener("change", (e) => {
+    project.scale = Math.max(0.01, Number(e.target.value) || 1);
+    project.applyTransform();
+    frameBox(project.box);
+    renderPanel();
+  });
+  info.querySelector("#rotate").addEventListener("click", () => {
+    project.rotation = (project.rotation + 1) % 4;
+    project.applyTransform();
+    frameBox(project.box);
+    renderPanel();
+  });
+  info.querySelector("#overlay").addEventListener("change", (e) => project.setSurfaceOverlay(e.target.checked));
+  info.querySelectorAll("select.surface").forEach((s) =>
+    s.addEventListener("change", () => project.setSurface(project.materials[Number(s.dataset.i)].material, s.value)),
+  );
+  info.querySelectorAll(".material").forEach((row) =>
+    row.addEventListener("click", (e) => {
+      if (e.target.tagName !== "SELECT") selectMaterial(project.materials[Number(row.dataset.i)].material);
+    }),
+  );
+}
+
+function holesPanel() {
+  const h = project.hole;
+  const length = h.tee && h.cup ? `${Math.round(Math.hypot(h.cup.x - h.tee.x, h.cup.z - h.tee.z))} m` : "place tee and cup";
+  return `
+    <div class="row">
+      <button class="btn btn-primary small" id="add-hole">Add hole</button>
+      <button class="btn btn-secondary small" id="remove-hole" ${project.holes.length < 2 ? "disabled" : ""}>Remove this hole</button>
+    </div>
+    <div class="field"><label for="hole-name">Name</label><input id="hole-name" value="${esc(h.name)}" /></div>
+    <div class="field"><label for="par">Par</label><input id="par" type="number" min="1" max="9" value="${h.par}" /></div>
+    <div class="field"><label for="difficulty">Difficulty</label><select id="difficulty">${["none", "beginner", "intermediate", "expert"]
+      .map((d) => `<option ${d === h.difficulty ? "selected" : ""}>${d}</option>`)
+      .join("")}</select></div>
+    <div class="field"><label for="water">Water level (m)</label><input id="water" type="number" step="1" value="${h.water}" /></div>
+    <div class="field"><label for="green">Green radius (m)</label><input id="green" type="number" min="3" max="40" step="1" value="${h.greenRadius}" /></div>
+    <div class="stats">
+      ${stat("Tee to cup", length)}
+      ${stat("Tee", h.tee ? "placed" : "missing")}
+      ${stat("Cup", h.cup ? "placed" : "missing")}
+      ${stat(MARKERS.itemBoxes.name + "es", `${h.itemBoxes.length} / 16`)}
+      ${stat(MARKERS.checkpoints.name + "s", `${h.checkpoints.length} / 1`)}
+    </div>
+    <p class="hint">Use the toolbar over the 3D view to place markers. Everything around the cup within the green radius plays as green.</p>`;
+}
+
+function wireHoles() {
+  const h = project.hole;
+  const bind = (id, fn) =>
+    info.querySelector(id).addEventListener("change", (e) => {
+      fn(e.target.value);
+      project.rebuildMarkers();
+      fillHoleSelect(project.holes, project.activeHole);
+      renderPanel();
+    });
+  bind("#hole-name", (v) => (h.name = v));
+  bind("#par", (v) => (h.par = Math.max(1, Number(v) || 4)));
+  bind("#difficulty", (v) => (h.difficulty = v));
+  bind("#water", (v) => (h.water = Number(v) || 0));
+  bind("#green", (v) => (h.greenRadius = Math.max(3, Number(v) || 10)));
+  info.querySelector("#add-hole").addEventListener("click", () => {
+    project.addHole();
+    fillHoleSelect(project.holes, project.activeHole);
+    renderPanel();
+  });
+  info.querySelector("#remove-hole").addEventListener("click", () => {
+    project.removeHole(project.activeHole);
+    fillHoleSelect(project.holes, project.activeHole);
+    renderPanel();
+  });
+}
+
+function exportPanel() {
+  const problems = project.problems();
+  return `
+    <div class="field"><label for="map-name">Map name</label><input id="map-name" value="${esc(project.info.name)}" /></div>
+    <div class="field"><label for="author">Author</label><input id="author" value="${esc(project.info.author)}" /></div>
+    <div class="field"><label for="credits">Credits</label><textarea id="credits" rows="3" placeholder="e.g. Model by ...">${esc(project.info.credits)}</textarea></div>
+    ${problems.length ? `<ul class="problems">${problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : `<p class="ok">Ready to play!</p>`}
+    <button class="btn btn-primary" id="export" ${problems.length ? "disabled" : ""}>Download .sbgmap</button>
+    <p class="hint">Put the file in <b>Super Battle Golf/SbgMaps/maps/</b> and restart the game. Your holes show up under <b>Custom Maps</b>.</p>`;
+}
+
+function wireExport() {
+  const bind = (id, key) => info.querySelector(id).addEventListener("input", (e) => (project.info[key] = e.target.value));
+  bind("#map-name", "name");
+  bind("#author", "author");
+  bind("#credits", "credits");
+  info.querySelector("#export").addEventListener("click", () =>
+    run("Exporting", async () => {
+      const bytes = await project.exportSbgmap();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([bytes], { type: "application/zip" }));
+      a.download = `${(project.info.name || "map").replace(/[^\w.-]+/g, "_")}.sbgmap`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      setStatus(`Saved ${a.download} (${Math.round(bytes.length / 1024)} KB)`);
+    }),
+  );
+}
+
+function materialThumb(material) {
+  const url = material.userData.thumb;
+  return url ? `background-image:url('${url}')` : `background:#${material.color.getHexString()}`;
+}
+
+const stat = (label, value) => `<div class="stat"><span>${label}</span><span>${value}</span></div>`;
+
+function esc(text) {
+  return String(text ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }

@@ -1,10 +1,13 @@
-# SbgMaps map format (format 1)
+# SbgMaps map format (formats 1 and 2)
 
 A map is either a folder with `map.json` at its root, or the same contents zipped into a `.sbgmap` file.
 Maps go in `<game folder>/SbgMaps/maps/`. One map holds one or more holes, and all of them show up in the "Custom" course tab.
 
 The plugin re-reads a map's files every time one of its holes loads. Editing a map and restarting the hole (host hotkey F5) shows the change.
 New maps, or a different number of holes, need a game restart because the course list is built at startup.
+
+- **Format 1:** heightmap holes (sculpted terrain plus painted surfaces).
+- **Format 2:** adds a level **model** (`.glb`) shared by all holes, for imported levels. The map editor at https://sbg-maps.github.io/ produces this format.
 
 ## map.json
 
@@ -20,6 +23,10 @@ New maps, or a different number of holes, need a game restart because the course
 ```
 
 - `id` must be unique; it is how players' copies are matched up. Maps are listed sorted by `id`.
+- Format 2 adds:
+  - `size`: [x, z] area shared by all holes.
+  - `model`: `{ "file": "level.glb" }`.
+  - `credits`: optional text.
 
 ## Hole
 
@@ -33,6 +40,7 @@ New maps, or a different number of holes, need a game restart because the course
 | `heightmap` | grid | Ground heights (see below). |
 | `paintmap` | grid | Surface types (see below). Optional; without it everything is rough. |
 | `water` | number | World height of the water. Ground below it is water (out of bounds). Default 5. |
+| `greenRadius` | number | Model maps: ground within this many metres of the cup plays and looks like green. Default 10. |
 | `tee` | {x, z, yaw?} | Where the teeing platforms go. `yaw` is degrees clockwise from +z; by default the tee faces the cup. |
 | `cup` | {x, z} | The cup. The ground within 3 m of it is always painted green. |
 | `itemBoxes` | [{x, z}] | Item box positions. Up to 16 for now. |
@@ -42,6 +50,7 @@ New maps, or a different number of holes, need a game restart because the course
 | `returnPath` | [[x, z], ...] | Optional. Path that out-of-bounds balls are returned towards. Default: straight line from tee to cup. |
 
 Heights (y) are world heights in metres. x and z are map coordinates in metres.
+Points (`tee`, `cup`, `itemBoxes`, `checkpoints`) may carry `y`. Without it, the height comes from the heightmap, or from the model below the point. Model maps should always give `y` for the cup.
 The plugin centres the map on a 1000 m terrain and slopes the edges down into the sea with a 25 m beach.
 
 ## Grids
@@ -67,6 +76,23 @@ The plugin centres the map on a 1000 m terrain and slopes the edges down into th
 | 5 | out of bounds |
 
 Unknown values count as rough.
+
+## Level model (format 2)
+
+- A binary glTF (`.glb`) in map coordinates. glTF is right-handed, so a vertex at glTF (x, y, z) sits at map (x, y, -z).
+  - The editor bakes scale, rotation and placement into the vertices.
+- Supported: triangle meshes with positions, normals, the first UV set, base colour factor and embedded PNG/JPEG base colour textures. Node transforms are applied.
+- Each material's `extras.surface` decides how it plays:
+
+| surface | plays as |
+|---|---|
+| `rough`, `fairway`, `green`, `sand`, `path` | that golf surface |
+| `oob` | out of bounds |
+| `solid` | walls and props: solid, no golf surface |
+| `none` | decoration: no collision |
+
+- Missing or unknown surfaces count as rough.
+- The game cuts a ~2 m square hole in the model under the cup. Ground surfaces within `greenRadius` of the cup become green.
 
 ## Tools
 

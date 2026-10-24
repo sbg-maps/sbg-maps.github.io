@@ -36,6 +36,11 @@ namespace SbgMaps
             var def = pack.Manifest.holes[holeIndex];
             Plugin.Log.LogInfo($"MapBuilder: building '{pack.Manifest.name}' hole {holeIndex + 1} '{def.name}' in '{scene.name}'");
             var grids = pack.LoadGrids(holeIndex);
+            var model = pack.LoadModel();
+
+            // The donor's own surfaces tell us which physics layer the ball treats as ground.
+            var donorSurface = Object.FindObjectsByType<TerrainAddition>(FindObjectsInactive.Include, FindObjectsSortMode.None).FirstOrDefault();
+            int groundLayer = donorSurface ? donorSurface.gameObject.layer : 8;
 
             Terrain terrain = null;
             foreach (var root in scene.GetRootGameObjects())
@@ -63,43 +68,74 @@ namespace SbgMaps
             // Centre the map on the donor terrain.
             var tSize = terrain.terrainData.size;
             var origin = new Vector2(terrain.transform.position.x + (tSize.x - def.size[0]) / 2f, terrain.transform.position.z + (tSize.z - def.size[1]) / 2f);
-            Vector3 World(float x, float z) => new Vector3(origin.x + x, grids.HeightAt(x, z), origin.y + z);
-            Vector3 WorldOf(PointDef p) => World(p.x, p.z);
             var area = new Rect(origin, def.Size);
+            int groundMask = 1 << groundLayer;
+
+            // Ground height at a map point: the heightmap, else the level model below `fromY`, else the water.
+            float GroundY(float x, float z, float fromY = 2000f)
+            {
+                if (grids != null)
+                    return grids.HeightAt(x, z);
+                if (Physics.Raycast(new Vector3(origin.x + x, fromY + 5f, origin.y + z), Vector3.down, out var hit, fromY + 1000f, groundMask, QueryTriggerInteraction.Ignore))
+                    return hit.point.y;
+                return def.water;
+            }
+            Vector3 WorldOf(PointDef p) => new Vector3(origin.x + p.x, p.y ?? GroundY(p.x, p.z), origin.y + p.z);
 
             var cup = Object.FindObjectsByType<GolfHole>(FindObjectsInactive.Include, FindObjectsSortMode.None).FirstOrDefault(h => h.IsMainHole);
             var builder = new TerrainBuilder(terrain);
             // Copy the cutout vanilla made for its own cup before the cup moves, then stamp it under ours.
-            bool[,] cupCutout = cup != null ? builder.ReadHoles(cup.transform.position, 3f) : null;
+            bool[,] cupCutout = cup != null && grids != null ? builder.ReadHoles(cup.transform.position, 3f) : null;
 
-            var cupPos = WorldOf(def.cup);
             builder.SculptAll(SeaFloorHeight);
-            builder.Sculpt(area, BeachWidth, (wx, wz) => grids.HeightAt(wx - origin.x, wz - origin.y), SeaFloorHeight);
-            builder.Paint(area, BeachWidth, (wx, wz) =>
+            if (model != null)
             {
-                if (!area.Contains(new Vector2(wx, wz)))
-                    return TerrainLayer.Sand;
-                // The shot preview uses the terrain paint right around the cup, so it is always green there.
-                if ((new Vector2(wx, wz) - new Vector2(cupPos.x, cupPos.z)).sqrMagnitude < 9f)
-                    return TerrainLayer.Green;
-                return grids.SurfaceAt(wx - origin.x, wz - origin.y).ToTerrainLayer();
-            });
-            if (cupCutout != null)
-                builder.StampHoles(cupPos, cupCutout);
+                var parent = new GameObject("SbgMaps map");
+                SceneManager.MoveGameObjectToScene(parent, scene);
+                // The cup cut and green zone need the cup height; the editor always saves it for model maps.
+                float cupY = def.cup.y ?? def.water;
+                LevelBuilder.Build(model, new Vector3(origin.x, 0f, origin.y), new Vector3(origin.x + def.cup.x, cupY, origin.y + def.cup.z),
+                    def.greenRadius, groundLayer, parent.transform);
+                Plugin.Log.LogInfo($"MapBuilder: built level model with {model.Primitives.Count} parts");
+            }
+            var cupPos = WorldOf(def.cup);
+
+            if (grids != null)
+            {
+                builder.Sculpt(area, BeachWidth, (wx, wz) => grids.HeightAt(wx - origin.x, wz - origin.y), SeaFloorHeight);
+                builder.Paint(area, BeachWidth, (wx, wz) =>
+                {
+                    if (!area.Contains(new Vector2(wx, wz)))
+                        return TerrainLayer.Sand;
+                    // The shot preview uses the terrain paint right around the cup, so it is always green there.
+                    if ((new Vector2(wx, wz) - new Vector2(cupPos.x, cupPos.z)).sqrMagnitude < 9f)
+                        return TerrainLayer.Green;
+                    return grids.SurfaceAt(wx - origin.x, wz - origin.y).ToTerrainLayer();
+                });
+                if (cupCutout != null)
+                    builder.StampHoles(cupPos, cupCutout);
+            }
+            else
+            {
+                // Model maps: the terrain is only sea floor, but the shot preview still reads its paint at the cup.
+                builder.Paint(new Rect(cupPos.x, cupPos.z, 0f, 0f), 4f, (wx, wz) => TerrainLayer.Green);
+            }
 
             if (cup != null)
                 cup.transform.position = cupPos;
 
-            var teePos = World(def.tee.x, def.tee.z);
+            var teePos = new Vector3(origin.x + def.tee.x, def.tee.y ?? GroundY(def.tee.x, def.tee.z), origin.y + def.tee.z);
             var toCup = Vector3.ProjectOnPlane(cupPos - teePos, Vector3.up);
             var facing = def.tee.yaw.HasValue ? Quaternion.Euler(0f, def.tee.yaw.Value, 0f) : Quaternion.LookRotation(toCup);
             var tees = Object.FindObjectsByType<GolfTeeingPlatform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             for (int i = 0; i < tees.Length; i++)
             {
-                // Platforms side by side, across the direction of play.
-                var offset = facing * Vector3.right * ((i % 2 == 0 ? -1f : 1f) * 6f);
-                var p = teePos + offset;
-                tees[i].transform.SetPositionAndRotation(World(p.x - origin.x, p.z - origin.y), facing);
+                // Platforms side by side, across the direction of play, each sitting on the ground below it.
+                var p = teePos + facing * Vector3.right * ((i % 2 == 0 ? -1f : 1f) * 6f);
+                float y = GroundY(p.x - origin.x, p.z - origin.y, teePos.y + 3f);
+                if (Mathf.Abs(y - teePos.y) > 4f)
+                    y = teePos.y; // nothing sensible below (edge of a cliff); keep the tee height
+                tees[i].transform.SetPositionAndRotation(new Vector3(p.x, y, p.z), facing);
             }
 
             var spawners = Object.FindObjectsByType<ItemSpawner>(FindObjectsInactive.Include, FindObjectsSortMode.None);

@@ -56,11 +56,16 @@ namespace SbgMaps
             return mem.ToArray();
         }
 
+        /// <summary>The hole's heightmap grids, or null for holes without a heightmap.</summary>
         public HoleGrids LoadGrids(int holeIndex)
         {
             var hole = Manifest.holes[holeIndex];
+            if (hole.heightmap == null)
+                return null;
             return new HoleGrids(hole, ReadFile(hole.heightmap.file), hole.paintmap != null ? ReadFile(hole.paintmap.file) : null);
         }
+
+        public GlbReader.Model LoadModel() => Manifest.model?.file != null ? GlbReader.Read(ReadFile(Manifest.model.file)) : null;
 
         private string ComputeHash()
         {
@@ -83,8 +88,8 @@ namespace SbgMaps
         {
             if (m == null)
                 throw new InvalidDataException("map.json is empty");
-            if (m.format != 1)
-                throw new InvalidDataException($"unsupported map format {m.format} (this mod reads format 1)");
+            if (m.format != 1 && m.format != 2)
+                throw new InvalidDataException($"unsupported map format {m.format} (this mod reads formats 1 and 2)");
             if (string.IsNullOrWhiteSpace(m.id))
                 throw new InvalidDataException("map.json has no id");
             if (m.holes == null || m.holes.Count == 0)
@@ -93,11 +98,15 @@ namespace SbgMaps
             {
                 var h = m.holes[i];
                 string where = $"hole {i + 1}";
+                // Format 2 holes share the map's area unless they give their own.
+                h.size ??= m.size;
                 if (h.size == null || h.size.Length != 2 || h.size[0] <= 0 || h.size[1] <= 0)
                     throw new InvalidDataException($"{where}: size must be [x, z] in metres");
                 if (h.size[0] > MapBuilder.MaxMapSize || h.size[1] > MapBuilder.MaxMapSize)
                     throw new InvalidDataException($"{where}: size {h.size[0]}x{h.size[1]} is larger than the {MapBuilder.MaxMapSize} m limit");
-                if (h.heightmap == null || h.heightmap.width < 2 || h.heightmap.depth < 2)
+                if (h.heightmap == null && m.model == null)
+                    throw new InvalidDataException($"{where}: needs a heightmap, or the map needs a model");
+                if (h.heightmap != null && (h.heightmap.width < 2 || h.heightmap.depth < 2))
                     throw new InvalidDataException($"{where}: heightmap needs at least 2x2 samples");
                 if (h.tee == null)
                     throw new InvalidDataException($"{where}: no tee");

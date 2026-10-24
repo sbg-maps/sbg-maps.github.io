@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace SbgMaps
 {
-    // JSON model of map.json, format 1. See FORMAT.md in the repo root.
+    // JSON model of map.json, formats 1 and 2. See FORMAT.md in the repo root.
 
     public class MapManifest
     {
@@ -13,8 +13,18 @@ namespace SbgMaps
         public string id;
         public string name;
         public string author;
+        public string credits;
         public string version;
+        /// <summary>Format 2: area shared by all holes, in metres [x, z]. Holes may still give their own.</summary>
+        public float[] size;
+        /// <summary>Format 2: a level model (.glb) shared by all holes, in map coordinates.</summary>
+        public ModelDef model;
         public List<HoleDef> holes = new List<HoleDef>();
+    }
+
+    public class ModelDef
+    {
+        public string file;
     }
 
     public class HoleDef
@@ -28,6 +38,8 @@ namespace SbgMaps
         public GridDef heightmap;
         public GridDef paintmap;
         public float water = 5f;
+        /// <summary>Model maps: ground within this distance of the cup plays as green.</summary>
+        public float greenRadius = 10f;
         public TeeDef tee;
         public PointDef cup;
         public List<PointDef> itemBoxes = new List<PointDef>();
@@ -54,6 +66,7 @@ namespace SbgMaps
     public class TeeDef
     {
         public float x;
+        public float? y;
         public float z;
         /// <summary>Degrees clockwise from +z. When missing, the tee faces the cup.</summary>
         public float? yaw;
@@ -62,6 +75,8 @@ namespace SbgMaps
     public class PointDef
     {
         public float x;
+        /// <summary>World height. Optional: when missing it comes from the ground below.</summary>
+        public float? y;
         public float z;
     }
 

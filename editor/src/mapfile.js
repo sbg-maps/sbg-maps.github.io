@@ -17,15 +17,14 @@ export async function loadZip(file) {
   return fromFiles(files);
 }
 
-/** Loads a map from the FileList of a folder picker (webkitdirectory). */
-export async function loadFolder(fileList) {
-  const all = [...fileList];
-  const manifestFile = all.find((f) => f.webkitRelativePath.split("/").pop() === "map.json");
-  if (!manifestFile) throw new Error("No map.json in that folder");
-  const root = manifestFile.webkitRelativePath.slice(0, -"map.json".length);
+/** Loads a map from a picked or dropped folder, given as [{ file, path }] with paths relative to the pick. */
+export async function loadFolder(entries) {
+  const manifest = entries.find((e) => e.path.split("/").pop() === "map.json");
+  if (!manifest) throw new Error("No map.json in that folder");
+  const root = manifest.path.slice(0, -"map.json".length);
   const files = new Map();
-  for (const f of all) {
-    if (f.webkitRelativePath.startsWith(root)) files.set(f.webkitRelativePath.slice(root.length), new Uint8Array(await f.arrayBuffer()));
+  for (const e of entries) {
+    if (e.path.startsWith(root)) files.set(e.path.slice(root.length), new Uint8Array(await e.file.arrayBuffer()));
   }
   return fromFiles(files);
 }
@@ -34,7 +33,7 @@ function fromFiles(files) {
   const raw = files.get("map.json");
   if (!raw) throw new Error("No map.json at the root of the map");
   const manifest = JSON.parse(new TextDecoder().decode(raw));
-  if (manifest.format !== 1) throw new Error(`Unsupported map format ${manifest.format}`);
+  if (manifest.format !== 1 && manifest.format !== 2) throw new Error(`Unsupported map format ${manifest.format}`);
   return { manifest, files };
 }
 

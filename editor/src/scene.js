@@ -1,0 +1,74 @@
+// Shared three.js scene, camera and picking.
+// Map coordinates (x right, z forward, Unity-style) are shown as three.js (x, y, -z).
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+export const viewport = document.getElementById("viewport");
+
+// Transparent canvas so the CSS sky gradient shows behind the course.
+export const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+viewport.appendChild(renderer.domElement);
+
+export const scene = new THREE.Scene();
+scene.add(new THREE.HemisphereLight(0xeaf6ff, 0x6a7a4a, 1.8));
+const sun = new THREE.DirectionalLight(0xfff6e0, 2.2);
+sun.position.set(-200, 400, 150);
+scene.add(sun);
+
+export const camera = new THREE.PerspectiveCamera(50, 1, 0.5, 20000);
+camera.position.set(0, 300, 300);
+export const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+function resize() {
+  const { clientWidth: w, clientHeight: h } = viewport;
+  renderer.setSize(w, h);
+  camera.aspect = w / Math.max(h, 1);
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(viewport);
+
+const frameCallbacks = new Set();
+export const onFrame = (fn) => frameCallbacks.add(fn);
+
+renderer.setAnimationLoop((t) => {
+  controls.update();
+  for (const fn of frameCallbacks) fn(t);
+  renderer.render(scene, camera);
+});
+
+export const toMap = (v) => ({ x: v.x, y: v.y, z: -v.z });
+export const fromMap = (p, y = p.y ?? 0) => new THREE.Vector3(p.x, y, -p.z);
+
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+
+/** First hit of a pointer event against the given objects (recursive), or null. */
+export function pick(event, objects) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
+  raycaster.setFromCamera(pointer, camera);
+  return raycaster.intersectObjects(objects, true)[0] ?? null;
+}
+
+/** Point the camera at a box from a pleasant 3/4 angle. */
+export function frameBox(box) {
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3()).length();
+  controls.target.copy(center);
+  camera.position.copy(center).add(new THREE.Vector3(size * 0.15, size * 0.55, size * 0.7));
+  camera.far = Math.max(20000, size * 10);
+  camera.updateProjectionMatrix();
+}
+
+export function disposeObject(root) {
+  root.traverse((o) => {
+    o.geometry?.dispose();
+    const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+    for (const m of mats) {
+      m.map?.dispose();
+      m.dispose();
+    }
+  });
+}
