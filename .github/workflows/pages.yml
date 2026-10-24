@@ -32,7 +32,9 @@ jobs:
           cache: npm
           cache-dependency-path: editor/package-lock.json
       - run: npm ci
-      - run: npm run build
+      # The editor's end-to-end tests must pass before anything is deployed.
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

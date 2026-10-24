@@ -6,6 +6,8 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { scene, fromMap, toMap, disposeObject } from "./scene.js";
 import { materialsOf } from "./importer.js";
 import { makeGolfer, yawToRotation } from "./golfer.js";
+import { Terrain } from "./terrain.js";
+import { holeGrids } from "./mapfile.js";
 
 /** Surfaces a model material can have, grouped for the picker. `id` is what goes into the map file. */
 export const MODEL_SURFACES = [
@@ -47,8 +49,10 @@ export const DEFAULT_WATER = 15;
 export const MAX_SIZE = 900;
 
 export class Project {
-  constructor(root, info = {}) {
+  /** @param {{terrain?: Terrain}} [options] a sculptable terrain for levels built from scratch */
+  constructor(root, info = {}, { terrain = null } = {}) {
     this.info = { id: "", name: root.name || "My map", author: "", credits: "", ...info };
+    this.terrain = terrain;
     this.pivot = new THREE.Group();
     this.pivot.add(root);
     this.root = root;
@@ -62,14 +66,38 @@ export class Project {
     this.golfers = []; // editor-only scale references, in map coordinates
     this.collectMaterials();
     scene.add(this.pivot, this.markersGroup);
+    if (terrain) scene.add(terrain.mesh);
     this.applyTransform();
     this.addHole();
+  }
+
+  /** A new level from scratch: an island of sculptable terrain and no model. */
+  static newLevel(sizeX, sizeZ, info = {}) {
+    const root = new THREE.Group();
+    root.name = info.name || "My level";
+    return new Project(root, info, { terrain: Terrain.island(sizeX, sizeZ) });
   }
 
   dispose() {
     scene.remove(this.pivot, this.markersGroup);
     disposeObject(this.pivot);
     disposeObject(this.markersGroup);
+    if (this.terrain) {
+      scene.remove(this.terrain.mesh);
+      this.terrain.dispose();
+    }
+  }
+
+  /** Everything markers and tools can be placed on. */
+  get pickTargets() {
+    return this.terrain ? [this.root, this.terrain.mesh] : [this.root];
+  }
+
+  /** Does the level have any model geometry (imported level, props, objects)? */
+  get hasModel() {
+    let found = false;
+    this.root.traverse((o) => (found ||= o.isMesh));
+    return found;
   }
 
   collectMaterials() {
@@ -140,34 +168,58 @@ export class Project {
     return out;
   }
 
-  /** Adds an imported model as a static prop near a world point, sized to roughly `size` metres. */
-  addProp(model, worldPoint, size = 10) {
-    const prop = new THREE.Group();
-    prop.name = model.name || "prop";
-    prop.userData.object = "static";
-    prop.add(model);
+  /**
+   * Adds an object (shape, picture or imported model) standing at a world point. Built-in shapes and pictures are
+   * in metres; pass `size` to fit an imported model to roughly that many metres instead.
+   */
+  addObject(model, worldPoint, { size = null, billboard = false } = {}) {
+    const obj = new THREE.Group();
+    obj.name = model.name || "object";
+    obj.userData.object = "static";
+    if (billboard) obj.userData.billboard = true;
+    obj.add(model);
     const box = new THREE.Box3().setFromObject(model);
-    const dims = box.getSize(new THREE.Vector3());
-    // Centre on the footprint, bottom on the ground.
-    model.position.sub(new THREE.Vector3((box.min.x + box.max.x) / 2, box.min.y, (box.min.z + box.max.z) / 2));
-    this.root.add(prop);
+    if (size != null) {
+      // Imported models: centre on the footprint, bottom on the ground.
+      model.position.sub(new THREE.Vector3((box.min.x + box.max.x) / 2, box.min.y, (box.min.z + box.max.z) / 2));
+    }
+    this.root.add(obj);
     this.pivot.updateMatrixWorld(true);
-    const worldScale = this.pivot.getWorldScale(new THREE.Vector3()).x;
-    prop.scale.setScalar(size / Math.max(dims.x, dims.y, dims.z, 0.001) / worldScale);
-    prop.position.copy(this.root.worldToLocal(worldPoint.clone()));
-    prop.updateMatrixWorld(true);
+    // Objects live inside the (possibly scaled) level; undo that scale so metres stay metres.
+    const levelScale = this.root.getWorldScale(new THREE.Vector3()).x || 1;
+    const dims = box.getSize(new THREE.Vector3());
+    const fit = size != null ? size / Math.max(dims.x, dims.y, dims.z, 0.001) : 1;
+    obj.scale.setScalar(fit / levelScale);
+    obj.position.copy(this.root.worldToLocal(worldPoint.clone()));
+    obj.updateMatrixWorld(true);
     this.collectMaterials();
-    return prop;
+    this.rebuildMarkers();
+    return obj;
   }
 
+  /** Kept for older callers: an imported model as a static prop. */
+  addProp(model, worldPoint, size = 10) {
+    return this.addObject(model, worldPoint, { size });
+  }
+
+  /** Takes an object out of the level. Not disposed, so undo can put it back. */
   removeObject(object) {
     object.removeFromParent();
-    disposeObject(object);
     this.collectMaterials();
   }
 
   /** Scale and rotate the model, then place it so its footprint starts at (PAD, PAD) in map coordinates. */
   applyTransform() {
+    if (this.terrain) {
+      // Terrain levels are built in map coordinates already; props and objects are placed directly.
+      this.pivot.position.set(0, 0, 0);
+      this.pivot.scale.setScalar(1);
+      this.pivot.rotation.set(0, 0, 0);
+      this.pivot.updateMatrixWorld(true);
+      this.box = new THREE.Box3().setFromObject(this.terrain.mesh).union(new THREE.Box3().setFromObject(this.root));
+      this.rebuildMarkers();
+      return;
+    }
     // Remember markers relative to the model so they follow scaling and rotation.
     const local = this.holes.map((h) => this.markerPoints(h).map(([, p]) => (p ? this.pivot.worldToLocal(fromMap(p)) : null)));
 
@@ -194,6 +246,7 @@ export class Project {
 
   /** Map area size in metres [x, z]. */
   get size() {
+    if (this.terrain) return [this.terrain.sizeX, this.terrain.sizeZ];
     const s = this.box.getSize(new THREE.Vector3());
     return [Math.ceil(s.x + PAD * 2), Math.ceil(s.z + PAD * 2)];
   }
@@ -204,7 +257,7 @@ export class Project {
       name: `Hole ${n}`,
       par: 4,
       difficulty: "none",
-      water: DEFAULT_WATER,
+      water: this.terrain ? 5 : DEFAULT_WATER,
       greenRadius: 10,
       tee: null,
       cup: null,
@@ -335,8 +388,19 @@ export class Project {
       if (!path?.length || !obj.visible) continue;
       obj.updateMatrixWorld(true);
       const pts = path.map((p) => new THREE.Vector3(...p).applyMatrix4(obj.matrixWorld));
-      if (obj.userData.loop) pts.push(pts[0]);
-      this.markersGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0xff8a00 })));
+      // Dots at the points (sized to the level so they stay visible), joined by a line.
+      const dot = new THREE.SphereGeometry(Math.max(0.5, Math.max(...this.size) / 400), 12, 8);
+      const dotMat = new THREE.MeshBasicMaterial({ color: 0xff8a00, depthTest: false });
+      for (const p of pts) {
+        const d = new THREE.Mesh(dot, dotMat);
+        d.position.copy(p);
+        d.renderOrder = 5;
+        this.markersGroup.add(d);
+      }
+      if (obj.userData.loop !== false && obj.userData.object === "mover") pts.push(pts[0]);
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0xff8a00, depthTest: false }));
+      line.renderOrder = 5;
+      this.markersGroup.add(line);
     }
     // Water plane for the active hole.
     const h = this.hole;
@@ -370,9 +434,13 @@ export class Project {
     return out;
   }
 
-  /** Builds the .sbgmap (zip) bytes: map.json plus level.glb. */
+  /** Builds the .sbgmap (zip) bytes: map.json plus level.glb and/or the terrain grids. */
   async exportSbgmap() {
-    const glb = await this.exportGlb();
+    const files = {};
+    const withModel = !this.terrain || this.hasModel;
+    if (withModel) files["level.glb"] = new Uint8Array(await this.exportGlb());
+    const grids = this.terrain?.exportGrids("terrain");
+    if (grids) Object.assign(files, grids.files);
     const id = this.info.id || `${slug(this.info.author || "anon")}.${slug(this.info.name)}`;
     const round = (p) => Object.fromEntries(Object.entries(p).map(([k, v]) => [k, Math.round(v * 100) / 100]));
     const manifest = {
@@ -383,12 +451,14 @@ export class Project {
       credits: this.info.credits || undefined,
       version: "1.0.0",
       size: this.size,
-      model: { file: "level.glb" },
+      model: withModel ? { file: "level.glb" } : undefined,
       holes: this.holes.map((h) => ({
         name: h.name,
         par: h.par,
         difficulty: h.difficulty,
         theme: "coast",
+        heightmap: grids?.heightmap,
+        paintmap: grids?.paintmap,
         water: h.water,
         greenRadius: h.greenRadius,
         tee: round(h.tee),
@@ -397,7 +467,7 @@ export class Project {
         checkpoints: h.checkpoints.map(round),
       })),
     };
-    return zipSync({ "map.json": strToU8(JSON.stringify(manifest, null, 2)), "level.glb": new Uint8Array(glb) }, { level: 6 });
+    return zipSync({ "map.json": strToU8(JSON.stringify(manifest, null, 2)), ...files }, { level: 6 });
   }
 
   /**
@@ -451,21 +521,30 @@ export class Project {
     }
   }
 
-  /** Re-opens a format 2 map for editing. Vertices are already baked, so scale starts at 1. */
+  /**
+   * Re-opens a map for editing: its model (if any) at its saved place, and its terrain when every hole shares one.
+   * Returns null for heightmap maps whose holes each have their own terrain (those open in the viewer).
+   */
   static async fromMap(map) {
-    const bytes = map.files.get(map.manifest.model.file);
-    if (!bytes) throw new Error(`Missing ${map.manifest.model.file}`);
-    const gltf = await new GLTFLoader().parseAsync(bytes.slice().buffer, "");
-    const root = gltf.scene;
-    root.name = map.manifest.name;
-    root.traverse((o) => {
-      for (const m of materialsOf(o)) {
-        m.side = THREE.DoubleSide;
-        m.userData.surface ??= "rough";
-      }
-    });
     const m = map.manifest;
-    const project = new Project(root, { id: m.id, name: m.name, author: m.author, credits: m.credits });
+    const heightFiles = new Set(m.holes.map((h) => h.heightmap?.file).filter(Boolean));
+    if (heightFiles.size > 1) return null;
+    let root = new THREE.Group();
+    if (m.model?.file) {
+      const bytes = map.files.get(m.model.file);
+      if (!bytes) throw new Error(`Missing ${m.model.file}`);
+      root = (await new GLTFLoader().parseAsync(bytes.slice().buffer, "")).scene;
+      root.traverse((o) => {
+        for (const mat of materialsOf(o)) {
+          mat.side = THREE.DoubleSide;
+          mat.userData.surface ??= "rough";
+        }
+      });
+    }
+    root.name = m.name;
+    const terrainHole = m.holes.find((h) => h.heightmap);
+    const terrain = terrainHole ? Terrain.fromHole({ ...terrainHole, size: terrainHole.size ?? m.size }, holeGrids(map, { ...terrainHole, size: terrainHole.size ?? m.size })) : null;
+    const project = new Project(root, { id: m.id, name: m.name, author: m.author, credits: m.credits }, { terrain });
     project.holes = m.holes.map((h) => ({
       name: h.name,
       par: h.par,
@@ -477,11 +556,17 @@ export class Project {
       itemBoxes: h.itemBoxes ?? [],
       checkpoints: h.checkpoints ?? [],
     }));
+    // Points saved without a height (format 1) take it from the terrain.
+    if (terrain) {
+      for (const h of project.holes) for (const [set, p] of project.markerPoints(h)) if (p && p.y == null) set({ ...p, y: terrain.heightAt(p.x, p.z) });
+    }
     project.activeHole = 0;
-    // The baked model already sits at its saved place; keep it there instead of re-padding.
-    project.pivot.position.set(0, 0, 0);
-    project.pivot.updateMatrixWorld(true);
-    project.box = new THREE.Box3().setFromObject(project.root);
+    if (!terrain) {
+      // The baked model already sits at its saved place; keep it there instead of re-padding.
+      project.pivot.position.set(0, 0, 0);
+      project.pivot.updateMatrixWorld(true);
+      project.box = new THREE.Box3().setFromObject(project.root);
+    }
     project.rebuildMarkers();
     return project;
   }

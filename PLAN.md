@@ -129,13 +129,13 @@ fixed base height + water default.
 Next, roughly in order:
 1. In-game test of decomp levels (objects, rollers, see-saw, collision mesh, slide layer). Fix what breaks.
 2. Map transfer host->players in the lobby (no manual copying). Then the in-game community browser (Thunderstore).
-3. Undo/redo, autosave of the editor project in the browser, keyboard shortcuts.
+3. ~~Undo/redo~~ (done), autosave of the editor project in the browser, more keyboard shortcuts.
 4. Per-face surface painting (brush) on top of per-material surfaces, so greens/bunkers can be drawn on any model.
 5. Bounds polygon, green polygon and return path drawing; intro camera path editing.
 6. Hole settings: night, music, sky/ambience, wind; theme donor selection (forest/desert/snow/city donors).
-7. Heightmap terrain editing in the editor (sculpt + paint) for from-scratch maps, mixable with models.
+7. ~~Heightmap terrain editing (sculpt + paint), New level~~ (done). Next: terrain under imported models, more paint surfaces per theme.
 8. Walk/fly preview at golfer height and a shot-distance ring at the Start (needs club distances from the game).
-9. More object types: moving platforms on paths, rotating platforms, elevators, boost pads; more than 16 item boxes / several checkpoints (clone with deterministic sceneIds).
+9. ~~Object palette, pictures, paths, knocking movers~~ (done). More object types: moving platforms on paths, rotating platforms, elevators, boost pads; more than 16 item boxes / several checkpoints (clone with deterministic sceneIds).
 10. Converters for other sources (more SM64 levels via the same tool; generic glTF scene import keeps object nodes).
 
 ## Backlog: objects ripped levels leave out (2026-10-24)

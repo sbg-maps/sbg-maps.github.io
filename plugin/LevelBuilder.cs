@@ -45,6 +45,7 @@ namespace SbgMaps
                 go.transform.localRotation = new Quaternion(obj.Rotation[0], obj.Rotation[1], obj.Rotation[2], obj.Rotation[3]);
                 go.transform.localScale = new Vector3(obj.Scale[0], obj.Scale[1], obj.Scale[2]);
                 string behaviour = (string)obj.Extras?["object"] ?? "static";
+                bool billboard = (bool?)obj.Extras?["billboard"] ?? false;
                 switch (behaviour)
                 {
                     case "seesaw":
@@ -73,8 +74,17 @@ namespace SbgMaps
                         break;
                     default:
                         BuildParts(ctx, go.transform, obj.Primitives, obj.Name, null);
+                        if ((bool?)obj.Extras?["knocks"] ?? false)
+                        {
+                            Movers.EnsureCollider(go, groundLayer);
+                            go.AddComponent<KnockbackOnTouch>();
+                        }
                         break;
                 }
+                if (billboard)
+                    foreach (var r in go.GetComponentsInChildren<MeshRenderer>(true))
+                        if (r.GetComponent<Billboard>() == null)
+                            r.gameObject.AddComponent<Billboard>();
             }
             Plugin.Log.LogInfo($"LevelBuilder: {model.Objects.Count} objects ({seesaws} see-saws, {rollers} rollers, {movers} movers, {chomps} chomps)");
             root.AddComponent<SlideController>();

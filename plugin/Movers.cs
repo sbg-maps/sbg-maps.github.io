@@ -305,6 +305,44 @@ namespace SbgMaps
 
 namespace SbgMaps
 {
+    internal static class Movers
+    {
+        /// <summary>Gives a visual-only object (a picture, a decoration) a simple solid shape, so it can hit players.</summary>
+        public static void EnsureCollider(GameObject go, int layer)
+        {
+            if (go.GetComponentInChildren<Collider>() != null)
+                return;
+            var renderers = go.GetComponentsInChildren<Renderer>();
+            if (renderers.Length == 0)
+                return;
+            var bounds = renderers[0].bounds;
+            foreach (var r in renderers)
+                bounds.Encapsulate(r.bounds);
+            var box = go.AddComponent<BoxCollider>();
+            var scale = go.transform.lossyScale;
+            box.center = go.transform.InverseTransformPoint(bounds.center);
+            // Pictures are flat; give them some depth so they can't be walked through.
+            var size = new Vector3(bounds.size.x / scale.x, bounds.size.y / scale.y, bounds.size.z / scale.z);
+            float depth = Mathf.Max(size.x, size.z) * 0.3f;
+            box.size = new Vector3(Mathf.Max(size.x, depth), size.y, Mathf.Max(size.z, depth));
+            go.layer = layer;
+        }
+    }
+
+    /// <summary>Turns an object's look to face the camera around the vertical axis (for pictures).</summary>
+    internal class Billboard : MonoBehaviour
+    {
+        private void LateUpdate()
+        {
+            var cam = Camera.main;
+            if (cam == null)
+                return;
+            var to = Vector3.ProjectOnPlane(cam.transform.position - transform.position, Vector3.up);
+            if (to.sqrMagnitude > 1e-4f)
+                transform.rotation = Quaternion.LookRotation(-to.normalized, Vector3.up);
+        }
+    }
+
     /// <summary>
     /// Platforms that ride a path, looping or back and forth, like SM64's checkerboard elevators. Positions come
     /// from the shared network clock so every machine agrees; their velocity is set so players ride along.
@@ -337,6 +375,9 @@ namespace SbgMaps
             m.length = m.distances[m.distances.Length - 1];
             m.speed = (float?)extras["speed"] ?? 300f;
             int count = Mathf.Clamp((int?)extras["count"] ?? 1, 1, 16);
+            bool knocks = (bool?)extras["knocks"] ?? false;
+            if (knocks)
+                Movers.EnsureCollider(template, groundLayer);
             for (int i = 0; i < count; i++)
             {
                 var platform = i == 0 ? template : Instantiate(template, go.transform);
@@ -344,6 +385,8 @@ namespace SbgMaps
                 var body = platform.AddComponent<Rigidbody>();
                 body.isKinematic = true;
                 body.interpolation = RigidbodyInterpolation.Interpolate;
+                if (knocks)
+                    platform.AddComponent<KnockbackOnTouch>();
                 m.platforms.Add(body);
             }
             Plugin.Log.LogInfo($"Mover '{go.name}': {count} platform(s), path {m.length * go.transform.lossyScale.x:F1} m, {(m.loop ? "loop" : "back and forth")}");

@@ -7,7 +7,7 @@ The plugin re-reads a map's files every time one of its holes loads. Editing a m
 New maps, or a different number of holes, need a game restart because the course list is built at startup.
 
 - **Format 1:** heightmap holes (sculpted terrain plus painted surfaces).
-- **Format 2:** adds a level **model** (`.glb`) shared by all holes, for imported levels. The map editor at https://sbg-maps.github.io/ produces this format.
+- **Format 2:** adds a level **model**; holes may also share a heightmap terrain (levels built from scratch in the editor use a terrain plus a model holding their objects) (`.glb`) shared by all holes, for imported levels. The map editor at https://sbg-maps.github.io/ produces this format.
 
 ## map.json
 
@@ -109,8 +109,10 @@ A node with `extras.object` is an object. It is built separately, with its own t
 | `static` | a prop: built like the level |
 | `seesaw` | tilts toward players standing on it (around its local x axis; its length runs along local z). Host-simulated, synced. |
 | `roller` | rolls copies of its model along `extras.path`, knocking players over. Positions come from the network clock, so they match on every machine. |
-| `mover` | platforms riding `extras.path` (`loop: true` to go round, otherwise back and forth), `count` evenly spaced copies at `speed` units/s. Clock-synced; players ride along. |
+| `mover` | platforms riding `extras.path` (`loop: true` to go round, otherwise back and forth), `count` evenly spaced copies at `speed` units/s. Clock-synced; players ride along. With `knocks: true` they knock players over instead. |
 | `chomp` | hops around its origin (the post) and lunges up to `reach` in a clock-chosen direction (`radius`, `idleReach`, `lungeSpeed`); touching it knocks players over. |
+
+Any object may set `billboard: true` (its look turns to face the camera, for pictures) and a static object may set `knocks: true`.
 
 Roller extras, all in the node's local units (scaled by the node's transform):
 - `path`: [[x, y, z], ...] points on the ground.
