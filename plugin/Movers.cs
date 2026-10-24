@@ -441,6 +441,7 @@ namespace SbgMaps
         private Rigidbody body;
         private readonly List<Transform> links = new List<Transform>();
         private float radius, reach, idleReach, lungeSpeed;
+        private float halfHeight = 80f;
         private int id;
 
         public static void Attach(GameObject go, GameObject look, JObject extras, int id, int groundLayer)
@@ -456,18 +457,28 @@ namespace SbgMaps
             var mover = new GameObject("chomp");
             mover.layer = groundLayer;
             mover.transform.SetParent(go.transform, false);
-            // Centre the look on the moving part.
+            // Centre the look on the moving part, and size things from the model itself.
             var bounds = new Bounds(look.transform.position, Vector3.zero);
+            bool any = false;
             foreach (var r in look.GetComponentsInChildren<Renderer>())
-                bounds.Encapsulate(r.bounds);
+            {
+                if (!any)
+                    bounds = r.bounds;
+                else
+                    bounds.Encapsulate(r.bounds);
+                any = true;
+            }
             look.transform.SetParent(mover.transform, true);
             look.transform.position -= bounds.center - go.transform.position;
+            float unit = Mathf.Max(0.0001f, go.transform.lossyScale.y);
+            c.halfHeight = bounds.extents.y / unit;
             c.look = mover.transform;
             c.body = mover.AddComponent<Rigidbody>();
             c.body.isKinematic = true;
             c.body.interpolation = RigidbodyInterpolation.Interpolate;
             var sphere = mover.AddComponent<SphereCollider>();
-            sphere.radius = c.radius;
+            sphere.radius = Mathf.Max(bounds.extents.x, bounds.extents.z) / unit * 0.85f;
+            c.radius = sphere.radius;
             mover.AddComponent<KnockbackOnTouch>();
 
             // Chain: dark iron balls from the post to the chomp.
@@ -531,16 +542,18 @@ namespace SbgMaps
                 local = Vector3.Lerp(Flat(lungeAngle, reach), Flat(idleAngle, idleReach * 0.6f), back);
                 hop = 0f;
             }
-            local.y = radius + hop;
+            // Stand on the ground (the model's own half height), plus the hop.
+            local.y = halfHeight + hop;
 
             var world = transform.TransformPoint(local);
             body.MovePosition(world);
             var heading = Vector3.ProjectOnPlane(world - transform.position, Vector3.up);
+            // Face away from the post, the way it is pulling. Models face local -z here (SM64's +z, mirrored).
             if (heading.sqrMagnitude > 0.01f)
-                body.MoveRotation(Quaternion.LookRotation(heading.normalized));
+                body.MoveRotation(Quaternion.LookRotation(-heading.normalized));
 
             // Chain sags between the post top and the chomp.
-            var postTop = transform.TransformPoint(new Vector3(0f, radius * 0.9f, 0f));
+            var postTop = transform.TransformPoint(new Vector3(0f, halfHeight * 0.75f, 0f));
             for (int i = 0; i < links.Count; i++)
             {
                 float f = (i + 1f) / (links.Count + 1f);

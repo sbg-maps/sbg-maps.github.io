@@ -64,6 +64,8 @@ export class Project {
     this.holes = [];
     this.materials = [];
     this.golfers = []; // editor-only scale references, in map coordinates
+    /** Real rotations of camera-facing objects, which the editor turns toward the camera while showing them. */
+    this.billboardBase = new WeakMap();
     this.collectMaterials();
     scene.add(this.pivot, this.markersGroup);
     if (terrain) scene.add(terrain.mesh);
@@ -91,6 +93,12 @@ export class Project {
   /** Everything markers and tools can be placed on. */
   get pickTargets() {
     return this.terrain ? [this.root, this.terrain.mesh] : [this.root];
+  }
+
+  /** Can a tee, cup or item box stand where this ray hit? Not on pictures (trees) or moving things, only on the level and static props. */
+  isGround(hit) {
+    const owner = this.objects.find((o) => { for (let x = hit.object; x; x = x.parent) if (x === o) return true; return false; });
+    return !owner || (owner.userData.object === "static" && !owner.userData.billboard);
   }
 
   /** Does the level have any model geometry (imported level, props, objects)? */
@@ -484,6 +492,11 @@ export class Project {
     for (const [m, data] of savedUserData) {
       m.userData = Object.fromEntries(KEEP.filter((k) => data[k] !== undefined).map((k) => [k, data[k]]));
       m.visible = true;
+    }
+    // Camera-facing objects are exported with their real rotation, not the one they show right now.
+    for (const o of this.objects) {
+      const base = this.billboardBase.get(o);
+      if (base) o.quaternion.copy(base);
     }
     this.pivot.updateMatrixWorld(true);
     const objects = new Set(this.objects.filter((o) => o.visible));

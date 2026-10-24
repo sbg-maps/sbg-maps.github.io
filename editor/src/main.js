@@ -385,12 +385,30 @@ onFrame((now) => {
   project.terrain.brush(tool, hit.point.x, -hit.point.z, { radius: brush.radius, strength: brush.strength, surface: brush.surface, target: stroke.target, dt });
 });
 
+// Pictures marked "face the camera" turn toward it (around the vertical axis), as they will in the game.
+const tmpQ = new THREE.Quaternion();
+const tmpV = new THREE.Vector3();
+onFrame(() => {
+  if (!project) return;
+  for (const o of project.objects) {
+    if (!o.userData.billboard || gizmo.object === o) {
+      project.billboardBase.delete(o);
+      continue;
+    }
+    if (!project.billboardBase.has(o)) project.billboardBase.set(o, o.quaternion.clone());
+    o.getWorldPosition(tmpV);
+    const yaw = Math.atan2(camera.position.x - tmpV.x, camera.position.z - tmpV.z);
+    o.parent.getWorldQuaternion(tmpQ);
+    o.quaternion.copy(tmpQ.invert().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw)));
+  }
+});
+
 // A click is a pointer press that did not move (so orbiting never places markers).
 let downAt = null;
 renderer.domElement.addEventListener("pointerup", (e) => {
   if (!project || !downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 5 || e.button !== 0) return;
   if (BRUSH_TOOLS.has(tool)) return;
-  const hit = pick(e, project.pickTargets);
+  const hit = pick(e, project.pickTargets, (h) => tool === "look" || project.isGround(h));
   if (!hit) return;
   if (tool === "look") {
     const owner = project.objects.find((o) => isInside(o, hit.object));
@@ -939,4 +957,4 @@ async function offerRestore() {
 offerRestore();
 
 // Test hook: lets the automated browser tests reach editor state.
-window.__sbg = { get project() { return project; }, history, autosave, THREE };
+window.__sbg = { get project() { return project; }, history, autosave, THREE, frameBox, camera, controls };

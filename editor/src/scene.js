@@ -56,11 +56,11 @@ export function hitMaterial(hit) {
 }
 
 /** First hit of a pointer event against the given objects (recursive) that is actually visible, or null. */
-export function pick(event, objects) {
+export function pick(event, objects, accept = () => true) {
   const rect = renderer.domElement.getBoundingClientRect();
   pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
   raycaster.setFromCamera(pointer, camera);
-  return raycaster.intersectObjects(objects, true).find((h) => isShown(h.object) && hitMaterial(h)?.visible !== false) ?? null;
+  return raycaster.intersectObjects(objects, true).find((h) => isShown(h.object) && hitMaterial(h)?.visible !== false && accept(h)) ?? null;
 }
 
 /** Hit at the centre of the view (for placing new things where the user is looking). */

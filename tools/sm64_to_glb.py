@@ -67,6 +67,9 @@ class Decomp:
         self.trajectories = {}  # name -> list of (x, y, z)
         self.collision = {} # name -> list of (macro, args)
         self.lights = {}    # Lights1 name -> diffuse (r, g, b) 0..1
+        self.anim_arrays = {}  # animvalue/animindex name -> list of ints
+        self.anims = {}        # Animation name -> (values name, index name, yDivisor)
+        self.anim_tables = {}  # animation table name -> [Animation names]
 
     def load_file(self, path):
         try:
@@ -77,6 +80,15 @@ class Decomp:
         for m in re.finditer(r"const\s+Texture\s+(\w+)\s*\[\s*\]\s*=\s*\{\s*#include\s+\"([^\"]+)\"", text):
             png = m.group(2).replace(".inc.c", ".png")
             self.textures[m.group(1)] = os.path.join(self.root, png)
+        for m in re.finditer(r"const\s+(?:s16|u16)\s+(\w+)\s*\[\s*\]\s*=\s*\{(.*?)\};", text, flags=re.S):
+            vals = [int(x, 0) for x in re.findall(r"-?0x[0-9A-Fa-f]+|-?\d+", m.group(2))]
+            self.anim_arrays[m.group(1)] = [v - 65536 if v > 32767 else v for v in vals] if "value" in m.group(1) else vals
+        for m in re.finditer(r"const\s+struct\s+Animation\s+(\w+)\s*=\s*\{(.*?)\};", text, flags=re.S):
+            a = split_args(m.group(2))
+            if len(a) >= 8:
+                self.anims[m.group(1)] = (a[6], a[7], num(a[1]))
+        for m in re.finditer(r"const\s+struct\s+Animation\s*\*\s*const\s+(\w+)\s*\[\s*\]\s*=\s*\{(.*?)\};", text, flags=re.S):
+            self.anim_tables[m.group(1)] = [x.strip().lstrip("&") for x in m.group(2).split(",") if x.strip() and x.strip() != "NULL"]
         for m in re.finditer(r"const\s+Lights1\s+(\w+)\s*=\s*gdSPDefLights1\s*\(([^)]*)\)", text):
             v = [num(x) for x in split_args(m.group(2))]
             # Lit colour ~ ambient + diffuse; the diffuse colour carries the tint (e.g. the purple switch).
@@ -131,11 +143,46 @@ def rot_z(deg):
     return [[c, -s, 0, 0], [s, c, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
 
 
+def sm64_rotate_translate(t, rot):
+    """SM64's mtxf_rotate_xyz_and_translate (row vectors), transposed to our column-vector matrices."""
+    sx, cx = math.sin(rot[0]), math.cos(rot[0])
+    sy, cy = math.sin(rot[1]), math.cos(rot[1])
+    sz, cz = math.sin(rot[2]), math.cos(rot[2])
+    d = [[cy * cz, cy * sz, -sy], [sx * sy * cz - cx * sz, sx * sy * sz + cx * cz, sx * cy], [cx * sy * cz + sx * sz, cx * sy * sz - sx * cz, cx * cy]]
+    return [[d[0][0], d[1][0], d[2][0], t[0]], [d[0][1], d[1][1], d[2][1], t[1]], [d[0][2], d[1][2], d[2][2], t[2]], [0, 0, 0, 1]]
+
+
+class AnimPose:
+    """Frame 0 of an SM64 animation: per-bone rotation, plus the root bone's translation."""
+
+    def __init__(self, dec, anim_name, frame=0):
+        values_name, index_name, ydiv = dec.anims[anim_name]
+        self.values = dec.anim_arrays.get(values_name, [])
+        self.index = dec.anim_arrays.get(index_name, [])
+        self.frame = frame
+        self.ydiv = ydiv or 1
+
+    def _attr(self, k):
+        if 2 * k + 1 >= len(self.index):
+            return 0
+        count, offset = self.index[2 * k], self.index[2 * k + 1]
+        i = offset + (self.frame if self.frame < count else count - 1)
+        return self.values[i] if 0 <= i < len(self.values) else 0
+
+    def root_translation(self):
+        return (self._attr(0), self._attr(1) / self.ydiv, self._attr(2))
+
+    def rotation(self, bone):
+        to_rad = lambda v: v * 2 * math.pi / 65536
+        return tuple(to_rad(self._attr(3 + bone * 3 + a)) for a in range(3))
+
+
 def scale_m(f):
     return [[f, 0, 0, 0], [0, f, 0, 0], [0, 0, f, 0], [0, 0, 0, 1]]
 
 
 IDENTITY = translate(0, 0, 0)
+DECAL_LIFT = 2.0  # SM64 units
 
 
 def apply(m, p, w=1.0):
@@ -222,11 +269,7 @@ def emit_triangles(dec, state, tris, matrix, layer, out, billboard):
     # Lit geometry takes its tint from the light colour; unlit geometry from vertex colours.
     tint = tuple(round(c, 3) for c in state["light"]) if state["lit"] else (1.0, 1.0, 1.0)
     key = (tex, state["lit"], layer, tint, state["wrap"] if tex else None)
-    copies = [matrix]
-    if billboard:
-        # Sprites face the camera in SM64; as a static model, cross two copies so they read from every side.
-        copies = [matrix, mat_mul(matrix, rot_y(90))]
-    for m in copies:
+    for m in [matrix]:
         for tri in tris:
             verts = [state["verts"][i] for i in tri]
             if any(v is None for v in verts):
@@ -249,6 +292,11 @@ def emit_triangles(dec, state, tris, matrix, layer, out, billboard):
             for v in built:
                 if v["nrm"] is None:
                     v["nrm"] = fn
+            if "DECAL" in layer:
+                # Decals (tree shadows, path edges) sit exactly on the ground; the N64 draws them with a depth bias.
+                # Lift them slightly along the surface normal so they don't flicker against it.
+                for v in built:
+                    v["pos"] = tuple(v["pos"][k] + fn[k] * DECAL_LIFT for k in range(3))
             out.add(key, built)
 
 
@@ -271,8 +319,9 @@ def face_normal(p):
     return tuple(q / ln for q in n)
 
 
-def run_geo(dec, name, matrix, out, depth=0):
-    """Walks a geo layout, running its display lists with node transforms."""
+def run_geo(dec, name, matrix, out, depth=0, pose=None, bones=None):
+    """Walks a geo layout, running its display lists with node transforms (and an animation pose, if given)."""
+    bones = bones if bones is not None else [0]
     stack = []
     current = matrix
     last = matrix
@@ -292,6 +341,16 @@ def run_geo(dec, name, matrix, out, depth=0):
         elif macro == "GEO_DISPLAY_LIST":
             run_display_list(dec, args[1], current, args[0], out, billboard_level is not None)
             last = current
+        elif macro == "GEO_ANIMATED_PART" and pose is not None:
+            # GEO_ANIMATED_PART(layer, x, y, z, dl): bones are numbered in the order they appear.
+            b = bones[0]
+            bones[0] += 1
+            t = [num(a) for a in args[1:4]]
+            if b == 0:
+                t = [t[k] + pose.root_translation()[k] for k in range(3)]
+            last = mat_mul(current, sm64_rotate_translate(t, pose.rotation(b)))
+            if len(args) > 4 and args[4] not in ("NULL", "0"):
+                run_display_list(dec, args[4], last, args[0], out, billboard_level is not None)
         elif macro in ("GEO_TRANSLATE_NODE", "GEO_TRANSLATE_NODE_WITH_DL", "GEO_ANIMATED_PART", "GEO_TRANSLATE"):
             # GEO_TRANSLATE_NODE(layer, x, y, z[, dl]); GEO_ANIMATED_PART(layer, x, y, z, dl)
             x, y, z = (num(a) for a in args[1:4])
@@ -306,7 +365,7 @@ def run_geo(dec, name, matrix, out, depth=0):
             billboard_level = level + 1
             last = current
         elif macro == "GEO_BRANCH" and depth < 8:
-            run_geo(dec, args[1], current, out, depth + 1)
+            run_geo(dec, args[1], current, out, depth + 1, pose, bones)
         elif macro in ("GEO_RETURN", "GEO_END"):
             break
 
@@ -355,7 +414,9 @@ def classify(kind, normal):
     if normal[1] < 0.1:
         return "rough"  # walls: nobody stands on them
     cls = "very" if kind in VERY_SLIPPERY else "slippery" if kind in SLIPPERY else "not" if kind in NOT_SLIPPERY else "default"
-    if normal[1] < STAND_LIMIT[cls]:
+    # Mario runs up normal ground at any angle (he only slides there when he stops), so only slippery
+    # surfaces become Slide beyond his limit; the game's own steepness limit still stops near-vertical walls.
+    if cls in ("very", "slippery") and normal[1] < STAND_LIMIT[cls]:
         return "slide"
     return "ice" if cls == "very" else "rough"
 
@@ -407,7 +468,7 @@ ROLLER_DEFAULTS = {"radius": 100, "speed": 750, "interval": 3.5}
 
 # Characters, enemies and collectibles are not level pieces; left out unless --all-objects is given.
 NOT_SCENERY = re.compile(r"bhv(KingBobomb|Koopa|Star|HiddenStar|HiddenRedCoinStar|PitBowlingBall|BobombBuddy\w*|Bobomb|Goomba\w*|"
-                         r"Mario|RecoveryHeart|1Up\w*|Hidden1Up\w*|WaterBombCannon|Cannon$|CannonBarrel\w*|\w*Coin\w*|RedCoin\w*|OneUp\w*|Butterfly|Bird\w*|Fish\w*|Bubba|Piranha\w*)")
+                         r"Mario|MessagePanel|ExclamationBox|BreakableBox\w*|RecoveryHeart|1Up\w*|Hidden1Up\w*|WaterBombCannon|Cannon$|CannonBarrel\w*|\w*Coin\w*|RedCoin\w*|OneUp\w*|Butterfly|Bird\w*|Fish\w*|Bubba|Piranha\w*)")
 
 
 def level_objects(dec, script_path, area, special_presets):
@@ -485,6 +546,30 @@ def loop_path(height, r, steps=12):
     pts += [(0, height + r * math.cos(f), r * math.sin(f)) for f in (math.radians(-90 + 180 * k / steps) for k in range(steps + 1))]
     pts += [(0, r * math.cos(f), r * math.sin(f)) for f in (math.radians(90 + 180 * k / steps) for k in range(steps + 1))]
     return [list(q) for q in pts]
+
+
+def load_behaviours(root):
+    """Per behaviour: whether it is a billboard (always faces the camera) and its hitbox (radius, height)."""
+    text = strip_comments(open(os.path.join(root, "data", "behavior_data.c")).read())
+    out = {}
+    for m in re.finditer(r"const\s+BehaviorScript\s+(\w+)\s*\[\s*\]\s*=\s*\{(.*?)\};", text, flags=re.S):
+        body = m.group(2)
+        info = {"billboard": "BILLBOARD()" in body}
+        sc = re.search(r"SCALE\s*\(\s*[^,]*,\s*(\d+)\s*\)", body)
+        if sc:
+            info["scale"] = int(sc.group(1)) / 100.0
+        gy = re.search(r"SET_FLOAT\s*\(\s*oGraphYOffset\s*,\s*(-?\d+)\s*\)", body)
+        if gy:
+            info["graphY"] = int(gy.group(1))
+        an = re.search(r"LOAD_ANIMATIONS\s*\(\s*\w+\s*,\s*(\w+)\s*\)", body)
+        if an:
+            which = re.search(r"ANIMATE\s*\(\s*(\d+)\s*\)", body)
+            info["animations"] = (an.group(1), int(which.group(1)) if which else 0)
+        hb = re.search(r"SET_HITBOX(?:_WITH_OFFSET)?\s*\(\s*([-\d]+)\s*,\s*([-\d]+)", body)
+        if hb:
+            info["hitbox"] = {"radius": int(hb.group(1)), "height": int(hb.group(2))}
+        out[m.group(1)] = info
+    return out
 
 
 def load_special_presets(root):
@@ -673,6 +758,7 @@ def main():
 
     # Objects.
     presets = load_special_presets(root)
+    behaviours = load_behaviours(root)
     objs = level_objects(dec, script, area, presets) + special_objects(dec, collision_name, presets) + macro_objects(dec, root, level, area)
     # The chain chomp stands on its own post.
     objs += [{**o, "model": "MODEL_WOODEN_POST", "behavior": "bhvWoodenPost", "rot": [0, 0, 0]} for o in objs if o["behavior"] == "bhvChainChomp"]
@@ -707,16 +793,31 @@ def main():
             continue
         seen.add(key)
         mesh = mesh_override or MeshBuilder()
+        info = behaviours.get(o["behavior"], {})
+        # The behaviour script scales the model and may lift its visual (oGraphYOffset, in world units).
+        obj_matrix = mat_mul(translate(0, info.get("graphY", 0), 0), scale_m(info.get("scale", 1.0)))
+        pose = None
+        if "animations" in info:
+            table, which = info["animations"]
+            names = dec.anim_tables.get(table, [])
+            if which < len(names) and names[which] in dec.anims:
+                pose = AnimPose(dec, names[which])
         if mesh_override:
             pass
         elif o["model"] in dec.models:
-            run_geo(dec, dec.models[o["model"]], IDENTITY, mesh)
+            run_geo(dec, dec.models[o["model"]], obj_matrix, mesh, pose=pose)
         elif o["model"] in dec.models_dl:
             dl, layer = dec.models_dl[o["model"]]
-            run_display_list(dec, dl, IDENTITY, layer, mesh)
+            run_display_list(dec, dl, obj_matrix, layer, mesh)
         if not mesh.parts:
             continue
         behaviour = extras.get("object") or BEHAVIOUR.get(o["behavior"], "static")
+        bhv_info = behaviours.get(o["behavior"], {})
+        if bhv_info.get("billboard") and behaviour == "static":
+            # Flat pictures that always turn to the camera (trees); collide with SM64's own cylinder hitbox.
+            extras["billboard"] = True
+            if "hitbox" in bhv_info:
+                extras["hitbox"] = bhv_info["hitbox"]
         surface = {"seesaw": "bridge", "roller": "none", "chomp": "none", "mover": "rough"}.get(behaviour, "solid")
         prims = []
         if mesh_override is not None and ("ball",) in mesh.parts:

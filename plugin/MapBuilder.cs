@@ -128,19 +128,32 @@ namespace SbgMaps
             var toCup = Vector3.ProjectOnPlane(cupPos - teePos, Vector3.up);
             var facing = def.tee.yaw.HasValue ? Quaternion.Euler(0f, def.tee.yaw.Value, 0f) : Quaternion.LookRotation(toCup);
             var tees = Object.FindObjectsByType<GolfTeeingPlatform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-            for (int i = 0; i < tees.Length; i++)
+            if (tees.Length > 0)
             {
-                // Platforms side by side, across the direction of play. With a saved start height they all sit at it
-                // (the editor lets mappers raise or lower the start); otherwise each sits on the ground below it.
-                var p = teePos + facing * Vector3.right * ((i % 2 == 0 ? -1f : 1f) * 6f);
-                float y = teePos.y;
-                if (!def.tee.y.HasValue)
+                // Keep the donor's own arrangement of its platforms (side by side, stair variants behind), turned to
+                // face our way. Overlapping them makes their surfaces flicker against each other.
+                var donorCentre = Vector3.zero;
+                foreach (var t in tees)
+                    donorCentre += t.transform.position;
+                donorCentre /= tees.Length;
+                var donorRotation = Quaternion.Euler(0f, tees[0].transform.eulerAngles.y, 0f);
+                foreach (var t in tees)
                 {
-                    y = GroundY(p.x - origin.x, p.z - origin.y, teePos.y + 3f);
-                    if (Mathf.Abs(y - teePos.y) > 4f)
-                        y = teePos.y; // nothing sensible below (edge of a cliff); keep the tee height
+                    var rel = Quaternion.Inverse(donorRotation) * (t.transform.position - donorCentre);
+                    var p = teePos + facing * new Vector3(rel.x, 0f, rel.z);
+                    var bounds = PlatformBounds(t);
+                    // Sit on the highest ground under the platform, so slopes never poke through its surface.
+                    float y = teePos.y;
+                    float hx = Mathf.Max(1f, bounds.extents.x), hz = Mathf.Max(1f, bounds.extents.z);
+                    foreach (var corner in new[] { Vector3.zero, new Vector3(hx, 0, hz), new Vector3(-hx, 0, hz), new Vector3(hx, 0, -hz), new Vector3(-hx, 0, -hz) })
+                    {
+                        var c = p + facing * corner;
+                        float g = GroundY(c.x - origin.x, c.z - origin.y, teePos.y + 3f);
+                        if (g <= teePos.y + 3f)
+                            y = Mathf.Max(y, g);
+                    }
+                    t.transform.SetPositionAndRotation(new Vector3(p.x, y, p.z), facing);
                 }
-                tees[i].transform.SetPositionAndRotation(new Vector3(p.x, y, p.z), facing);
             }
 
             var spawners = Object.FindObjectsByType<ItemSpawner>(FindObjectsInactive.Include, FindObjectsSortMode.None);
@@ -160,6 +173,17 @@ namespace SbgMaps
             ForceTerrainDataRegeneration();
 
             Plugin.Log.LogInfo($"MapBuilder: done (tee {teePos}, cup {cupPos}, {def.itemBoxes.Count} item boxes, water {def.water})");
+        }
+
+        private static Bounds PlatformBounds(Component platform)
+        {
+            var rot = platform.transform.rotation;
+            platform.transform.rotation = Quaternion.identity;
+            var b = new Bounds(platform.transform.position, Vector3.zero);
+            foreach (var r in platform.GetComponentsInChildren<Renderer>(true))
+                b.Encapsulate(r.bounds);
+            platform.transform.rotation = rot;
+            return b;
         }
 
         /// <summary>

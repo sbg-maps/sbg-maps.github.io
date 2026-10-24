@@ -92,6 +92,19 @@ namespace SbgMaps
                         Chomp.Attach(go, look, obj.Extras, chomps++, groundLayer);
                         break;
                     default:
+                        if (billboard && obj.Extras?["hitbox"] is Newtonsoft.Json.Linq.JObject hitbox)
+                        {
+                            // A picture that turns to the camera (an SM64 tree): its look must not collide (each player
+                            // sees it turned differently), so it gets the game object's own cylinder hitbox instead.
+                            BuildParts(ctx, go.transform, obj.Primitives, obj.Name, null, forceSurface: "none");
+                            float radius = (float?)hitbox["radius"] ?? 80f, height = (float?)hitbox["height"] ?? 400f;
+                            var trunk = go.AddComponent<CapsuleCollider>();
+                            trunk.radius = radius;
+                            trunk.height = Mathf.Max(height, radius * 2f);
+                            trunk.center = new Vector3(0f, height / 2f, 0f);
+                            go.layer = groundLayer;
+                            break;
+                        }
                         BuildParts(ctx, go.transform, obj.Primitives, obj.Name, null);
                         if ((bool?)obj.Extras?["knocks"] ?? false)
                         {
