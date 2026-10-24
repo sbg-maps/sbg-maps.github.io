@@ -1,6 +1,6 @@
 import { defineConfig } from "vite";
 
-// Served from https://<user>.github.io/sbg-maps/ on GitHub Pages.
+// Served from https://sbg-maps.github.io/ on GitHub Pages; relative base also works for local previews.
 export default defineConfig({
   base: "./",
 });

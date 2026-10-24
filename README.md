@@ -2,7 +2,7 @@
 
 Custom map support for Super Battle Golf: a BepInEx mod that loads custom holes, and a browser-based map editor.
 
-- **Editor:** https://loffah.github.io/sbg-maps/ runs in your browser. Map files never leave your computer.
+- **Editor:** https://sbg-maps.github.io/ runs in your browser. Map files never leave your computer.
 - **Map format:** [FORMAT.md](FORMAT.md)
 - **Status and design notes:** [PLAN.md](PLAN.md)
 
