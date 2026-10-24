@@ -69,6 +69,23 @@
 - *Move* the existing networked tees/cup/item spawners/checkpoint to the map's markers. Their Mirror sceneIds are already valid on every client.
 - Later: clone extras with deterministic sceneIds when a map needs more than the donor has.
 
+## Findings from the first playtests (2026-10-24)
+
+- The shot preview (swing power bar) ignores physics. It reads a terrain data grid (heights, paint weights, plus "overrides" raycast from TerrainAddition meshes).
+  - That grid is baked into each scene. Disposing it before `TerrainManager.Start` makes the game regenerate it from the live scene.
+- The 3 m around the cup always use the terrain's own paint, so the terrain must be painted green there.
+- Vanilla cups sit in a terrain hole cutout (`TerrainData.SetHoles`). The cup's own MeshCollider has no real shape.
+- Mesh surfaces that sit at different heights create steps that break the putt preview.
+- **So maps are terrain-first:** heightmap + surface paint + cup cutout. Meshes are optional extras (bridges, ramps).
+- The editor's core is therefore sculpt + paint + place markers.
+
+## Dev loop
+
+- Plugin builds into `BepInEx/scripts`. `SbgMaps.DevReloader` (in `plugins/`) polls for new builds and triggers ScriptEngine, since its file watcher does not work under Proton.
+- Host hotkeys: F5 restart hole, F7 skip hole, F8 dump objects to log, F9 toggle test hole. Feedback shows in the text chat.
+- The game's own console: enable the "Console commands" lobby rule (disables achievements for that match), then press backquote.
+  - Built-ins include `skipHole`, `finishHole`, `giveItem <ItemType>`.
+
 ## Phases
 
 0. Setup: BepInEx in game, plugin skeleton, dump a vanilla hole scene's hierarchy (AssetRipper/UnityPy) to get the exact required component list.
