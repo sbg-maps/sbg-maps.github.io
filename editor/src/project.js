@@ -72,10 +72,10 @@ export class Project {
   }
 
   /** A new level from scratch: an island of sculptable terrain and no model. */
-  static newLevel(sizeX, sizeZ, info = {}) {
+  static newLevel(sizeX, sizeZ, info = {}, shape = "island", seed = 1) {
     const root = new THREE.Group();
     root.name = info.name || "My level";
-    return new Project(root, info, { terrain: Terrain.island(sizeX, sizeZ) });
+    return new Project(root, info, { terrain: Terrain.generate(shape, sizeX, sizeZ, seed) });
   }
 
   dispose() {

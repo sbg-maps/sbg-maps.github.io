@@ -7,6 +7,11 @@ import { SURFACES } from "./mapfile.js";
 export const TERRAIN_STEP = 1;
 const H_MIN = 0;
 const H_MAX = 120;
+/** Default water level of new levels, the height land is raised to, and the sea floor. */
+export const WATER = 5;
+const LAND_HEIGHT = 20;
+const BEACH_HEIGHT = WATER + 1.5;
+const SEA_FLOOR = 1;
 
 const tmpColor = new THREE.Color();
 
@@ -29,6 +34,71 @@ export class Terrain {
     this.mesh = this.buildMesh();
     this.mesh.name = "terrain";
     this.mesh.userData.isTerrain = true;
+  }
+
+  /**
+   * A level with a natural-looking coastline. Shapes: island, twin, archipelago, long, sea (all water).
+   * Land is about 20 m high with gentle hills, beaches slope into a sea floor below the water.
+   */
+  static generate(shape, sizeX, sizeZ, seed = 1) {
+    const t = new Terrain(sizeX, sizeZ);
+    const cx = sizeX / 2;
+    const cz = sizeZ / 2;
+    const r = Math.min(sizeX, sizeZ) / 2;
+    // Each shape is a set of blobs; land is wherever the (noisy) blob field is high enough.
+    const rnd = mulberry(seed);
+    const blobs = {
+      island: [[cx, cz, sizeX * 0.44, sizeZ * 0.44]],
+      long: [[cx, cz, sizeX * 0.3, sizeZ * 0.47]],
+      twin: [
+        [cx - sizeX * 0.17, cz - sizeZ * 0.2, sizeX * 0.3, sizeZ * 0.27],
+        [cx + sizeX * 0.17, cz + sizeZ * 0.2, sizeX * 0.3, sizeZ * 0.27],
+      ],
+      // Islands on a loose grid, each nudged, so they spread over the whole level.
+      archipelago: [
+        [0.27, 0.25], [0.7, 0.22], [0.5, 0.5], [0.25, 0.75], [0.74, 0.74],
+      ].map(([u, v]) => [sizeX * (u + (rnd() - 0.5) * 0.12), sizeZ * (v + (rnd() - 0.5) * 0.12), sizeX * (0.16 + rnd() * 0.08), sizeZ * (0.14 + rnd() * 0.08)]),
+      sea: [],
+    }[shape] ?? [[cx, cz, sizeX * 0.44, sizeZ * 0.44]];
+    const scale = 1 / Math.max(60, r * 0.6);
+    for (let j = 0; j < t.nz; j++) {
+      for (let i = 0; i < t.nx; i++) {
+        const x = i * TERRAIN_STEP;
+        const z = j * TERRAIN_STEP;
+        // Distance-based field: 1 at a blob's centre, 0 on its rim, negative (sea) outside every blob.
+        let field = -1;
+        for (const [bx, bz, rx, rz] of blobs) field = Math.max(field, 1 - Math.hypot((x - bx) / rx, (z - bz) / rz));
+        // Wobble the coastline (open sea has none) and stay clear of the level's edge.
+        field = blobs.length ? field + (noise2(x * scale, z * scale, seed) - 0.5) * 0.7 : -1;
+        // Fade out well before the border so islands never end in a straight cliff.
+        const border = Math.min(x, z, sizeX - x, sizeZ - z) / Math.max(60, r * 0.35) - 0.15 + (noise2(x * scale * 2 + 90, z * scale * 2 + 90, seed + 3) - 0.5) * 0.3;
+        field = Math.min(field, border);
+        // Sea floor, a short slope up to a narrow sandy beach just above the water, then rolling land.
+        const shelf = smoothstep(-0.03, 0.015, field);
+        const land = smoothstep(0.02, 0.2, field);
+        const hills = (noise2(x * scale * 1.7 + 50, z * scale * 1.7 + 50, seed + 7) - 0.5) * 10 * smoothstep(0.2, 0.45, field);
+        t.heights[j * t.nx + i] = SEA_FLOOR + (BEACH_HEIGHT - SEA_FLOOR) * shelf + (LAND_HEIGHT - BEACH_HEIGHT) * land + hills;
+      }
+    }
+    t.autoBeaches();
+    t.refresh();
+    return t;
+  }
+
+  /**
+   * Paints sand along the shore and on the sea floor. Ground that was shore or sea before (per `before` heights)
+   * and is now dry land becomes rough; paint on land that was already land (bunkers, fairways) is kept.
+   */
+  autoBeaches(i0 = 0, j0 = 0, i1 = this.cx - 1, j1 = this.cz - 1, before = null) {
+    const avg = (hs, i, j) => (hs[j * this.nx + i] + hs[j * this.nx + i + 1] + hs[(j + 1) * this.nx + i] + hs[(j + 1) * this.nx + i + 1]) / 4;
+    const shore = WATER + 3;
+    for (let j = Math.max(0, j0); j <= Math.min(this.cz - 1, j1); j++) {
+      for (let i = Math.max(0, i0); i <= Math.min(this.cx - 1, i1); i++) {
+        const k = j * this.cx + i;
+        if (avg(this.heights, i, j) < shore) this.paint[k] = 3;
+        else if (before && avg(before, i, j) < shore) this.paint[k] = 0;
+      }
+    }
   }
 
   /** A gently rounded island: flat in the middle, sloping into the sea at the edges. */
@@ -80,7 +150,7 @@ export class Terrain {
     geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     geometry.setIndex(indices);
-    const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, side: THREE.DoubleSide }));
+    const mesh = new THREE.Mesh(geometry, contourMaterial());
     this.geometry = geometry;
     this.refreshArea(0, 0, this.nx - 1, this.nz - 1);
     return mesh;
@@ -138,7 +208,7 @@ export class Terrain {
 
   /**
    * Applies a brush at map point (x, z).
-   * @param {"raise"|"lower"|"smooth"|"flatten"|"paint"} op
+   * @param {"land"|"sea"|"raise"|"lower"|"smooth"|"flatten"|"paint"} op
    * @param {{radius:number, strength:number, surface?:number, target?:number, dt?:number}} opts
    */
   brush(op, x, z, { radius, strength, surface = 0, target = 0, dt = 1 / 60 }) {
@@ -158,7 +228,7 @@ export class Terrain {
       this.refreshArea(i0 - 1, j0 - 1, i1 + 1, j1 + 1);
       return;
     }
-    const before = op === "smooth" ? this.heights.slice() : null;
+    const before = op === "smooth" || op === "land" || op === "sea" ? this.heights.slice() : null;
     // strength is metres per second at the brush centre
     const amount = strength * dt;
     for (let j = Math.max(0, j0); j <= Math.min(this.nz - 1, j1); j++) {
@@ -168,7 +238,9 @@ export class Terrain {
         const w = 1 - smoothstep(0, 1, d);
         const k = j * this.nx + i;
         let h = this.heights[k];
-        if (op === "raise") h += amount * w;
+        if (op === "land" && h < LAND_HEIGHT) h = Math.min(LAND_HEIGHT, h + amount * 1.5 * w);
+        else if (op === "sea" && h > SEA_FLOOR) h = Math.max(SEA_FLOOR, h - amount * 1.5 * w);
+        else if (op === "raise") h += amount * w;
         else if (op === "lower") h -= amount * w;
         else if (op === "flatten") h += (target - h) * Math.min(1, w * strength * dt * 0.5);
         else if (op === "smooth") {
@@ -188,6 +260,7 @@ export class Terrain {
         this.heights[k] = Math.min(H_MAX, Math.max(H_MIN, h));
       }
     }
+    if (op === "land" || op === "sea") this.autoBeaches(i0 - 1, j0 - 1, i1 + 1, j1 + 1, before);
     this.refreshArea(i0 - 1, j0 - 1, i1 + 1, j1 + 1);
   }
 
@@ -209,6 +282,60 @@ export class Terrain {
     this.geometry.dispose();
     this.mesh.material.dispose();
   }
+}
+
+/**
+ * Terrain material with height contour lines (thin every 2 m, strong every 10 m), so sculpting is easy to see.
+ */
+function contourMaterial() {
+  const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, side: THREE.DoubleSide });
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying float vWorldY;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvWorldY = (modelMatrix * vec4(transformed, 1.0)).y;");
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", "#include <common>\nvarying float vWorldY;")
+      .replace(
+        "#include <color_fragment>",
+        `#include <color_fragment>
+        float minor = abs(fract(vWorldY / 2.0 + 0.5) - 0.5) / fwidth(vWorldY / 2.0);
+        float major = abs(fract(vWorldY / 10.0 + 0.5) - 0.5) / fwidth(vWorldY / 10.0);
+        diffuseColor.rgb *= mix(0.82, 1.0, clamp(minor, 0.0, 1.0));
+        diffuseColor.rgb *= mix(0.62, 1.0, clamp(major * 0.7, 0.0, 1.0));`,
+      );
+  };
+  return material;
+}
+
+/** Smooth 2D value noise in [0, 1], with a few octaves. */
+function noise2(x, z, seed) {
+  const hash = (i, j) => {
+    let h = (i * 374761393 + j * 668265263 + seed * 2246822519) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+  };
+  const one = (x, z) => {
+    const i = Math.floor(x);
+    const j = Math.floor(z);
+    const fx = x - i;
+    const fz = z - j;
+    const u = fx * fx * (3 - 2 * fx);
+    const v = fz * fz * (3 - 2 * fz);
+    const a = hash(i, j) + (hash(i + 1, j) - hash(i, j)) * u;
+    const b = hash(i, j + 1) + (hash(i + 1, j + 1) - hash(i, j + 1)) * u;
+    return a + (b - a) * v;
+  };
+  return one(x, z) * 0.55 + one(x * 2.1 + 17, z * 2.1 + 31) * 0.3 + one(x * 4.3 + 7, z * 4.3 + 11) * 0.15;
+}
+
+function mulberry(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
 function smoothstep(e0, e1, x) {

@@ -163,8 +163,13 @@ let terrainMap;
 await test("new level: sculpt, paint, undo/redo, objects, paths, export", async () => {
   const page = await freshPage(browser, url);
   await page.click("#new-level-btn");
-  await page.click('[data-size="160x240"] small'); // clicking the inner text must work too
-  await page.waitForTimeout(800);
+  await page.click('[data-shape="twin"]');
+  await page.click('[data-size="320x320"] small'); // clicking the inner text must work too
+  await page.click('[data-act="create"]');
+  await page.waitForFunction(() => window.__sbg.project?.terrain, null, { timeout: 20000 });
+  const size = await page.evaluate(() => window.__sbg.project.size);
+  assert(size[0] === 320 && size[1] === 320, `wrong level size ${size}`);
+  await page.click('button[data-tool="raise"]');
   const t = () => page.evaluate(() => Array.from(window.__sbg.project.terrain.heights).reduce((a, b) => a + b, 0));
   const before = await t();
   await dragView(page, [[0.45, 0.5], [0.5, 0.52], [0.55, 0.5]]);
@@ -202,7 +207,7 @@ await test("new level: sculpt, paint, undo/redo, objects, paths, export", async 
   const pic = path.join(tmp, "star.png");
   fs.writeFileSync(pic, png(16, 16, [255, 210, 0, 255]));
   await page.setInputFiles("#add-sprite", pic);
-  await page.waitForTimeout(500);
+  await page.waitForFunction(() => window.__sbg.project.objects.length === 2, null, { timeout: 15000 }).catch(() => {});
   assert((await page.evaluate(() => window.__sbg.project.objects.length)) === 2, "picture was not added");
 
   // Undo removes the picture again, redo brings it back.
@@ -226,10 +231,36 @@ await test("new level: sculpt, paint, undo/redo, objects, paths, export", async 
   await page.close();
 });
 
+await test("open sea: Land brush makes land with beaches; New shape is undoable", async () => {
+  const page = await freshPage(browser, url);
+  await page.click("#new-level-btn");
+  await page.click('[data-shape="sea"]');
+  await page.click('[data-act="create"]');
+  await page.waitForFunction(() => window.__sbg.project?.terrain, null, { timeout: 20000 });
+  const landCells = () => page.evaluate(() => Array.from(window.__sbg.project.terrain.heights).filter((h) => h > 8).length);
+  assert((await landCells()) === 0, "open sea should start without land");
+  assert((await page.evaluate(() => document.querySelector(".tool.active")?.dataset.tool)) === "land", "Land brush should be picked for open sea");
+  for (let k = 0; k < 3; k++) await dragView(page, [[0.4, 0.5], [0.5, 0.5], [0.6, 0.5]]);
+  const land = await landCells();
+  assert(land > 50, `Land brush made ${land} land samples`);
+  const sand = await page.evaluate(() => window.__sbg.project.terrain.paint.filter((v) => v === 3).length);
+  assert(sand > 0, "no beaches were painted");
+  await page.click('.tab[data-tab="terrain"]');
+  await page.selectOption("#shape-kind", "archipelago");
+  await page.click("#reshape");
+  const reshaped = await landCells();
+  assert(reshaped !== land, "New shape did not change the terrain");
+  await page.keyboard.press("Control+z");
+  assert((await landCells()) === land, "undo did not bring back the hand-made land");
+  assert(page.errors.length === 0, page.errors.join("; "));
+  await page.close();
+});
+
 await test("reopen the exported terrain level", async () => {
   const page = await freshPage(browser, url);
+  assert(terrainMap, "no exported terrain map to reopen (the previous test failed)");
   await page.setInputFiles("#open-file", terrainMap);
-  await page.waitForTimeout(1500);
+  await page.waitForFunction(() => window.__sbg.project?.terrain, null, { timeout: 20000 }).catch(() => {});
   const state = await page.evaluate(() => {
     const p = window.__sbg.project;
     return { terrain: !!p.terrain, objects: p.objects.length, tee: !!p.hole.tee, cup: !!p.hole.cup, mover: p.objects.find((o) => o.userData.object === "mover")?.userData };
@@ -245,7 +276,7 @@ await test("import an OBJ with MTL and texture, export, reopen", async () => {
   const files = fs.readdirSync(dir).filter((f) => !f.endsWith(".txt")).map((f) => path.join(dir, f));
   const page = await freshPage(browser, url);
   await page.setInputFiles("#import-files", files);
-  await page.waitForTimeout(3000);
+  await page.waitForFunction(() => document.querySelector("#status").textContent.startsWith("Imported"), null, { timeout: 30000 }).catch(() => {});
   const status = await page.textContent("#status");
   assert(status.startsWith("Imported") && !status.includes("missing"), `import status: ${status}`);
   const textured = await page.evaluate(() => window.__sbg.project.materials.filter((m) => m.material.map).length);
@@ -257,7 +288,7 @@ await test("import an OBJ with MTL and texture, export, reopen", async () => {
   await page.close();
   const again = await freshPage(browser, url);
   await again.setInputFiles("#open-file", file);
-  await again.waitForTimeout(1500);
+  await again.waitForFunction(() => window.__sbg.project?.hole.cup, null, { timeout: 20000 }).catch(() => {});
   assert(await again.evaluate(() => !!window.__sbg.project?.hole.cup), "reopened OBJ map lost its flag");
   assert(again.errors.length === 0, again.errors.join("; "));
   await again.close();
@@ -267,7 +298,7 @@ if (fs.existsSync(OPTIONAL.sm64Glb)) {
   await test("SM64 decomp level keeps collision mesh, objects and wrap modes", async () => {
     const page = await freshPage(browser, url);
     await page.setInputFiles("#import-files", OPTIONAL.sm64Glb);
-    await page.waitForTimeout(4000);
+    await page.waitForFunction(() => window.__sbg.project?.objects.length > 0, null, { timeout: 30000 }).catch(() => {});
     const s = await page.evaluate(() => {
       const p = window.__sbg.project;
       return { collision: p.hasCollisionMesh, objects: p.objects.map((o) => o.userData.object) };
@@ -291,9 +322,9 @@ await test("heightmap map: view, then edit a hole as a level", async () => {
   fs.writeFileSync(zip, zipSync(Object.fromEntries(fs.readdirSync(sampleDir).map((f) => [f, new Uint8Array(fs.readFileSync(path.join(sampleDir, f)))]))));
   const page = await freshPage(browser, url);
   await page.setInputFiles("#open-file", zip);
-  await page.waitForTimeout(1500);
+  await page.waitForSelector("#edit-hole", { timeout: 20000 });
   await page.click("#edit-hole");
-  await page.waitForTimeout(800);
+  await page.waitForFunction(() => window.__sbg.project?.terrain, null, { timeout: 20000 }).catch(() => {});
   const s = await page.evaluate(() => ({ terrain: !!window.__sbg.project?.terrain, cup: window.__sbg.project?.hole.cup }));
   assert(s.terrain && s.cup && typeof s.cup.y === "number", `edit hole failed: ${JSON.stringify(s)}`);
   assert(page.errors.length === 0, page.errors.join("; "));

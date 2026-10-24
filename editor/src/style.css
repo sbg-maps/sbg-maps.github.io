@@ -829,3 +829,37 @@ button.btn {
   flex-direction: column;
   line-height: 1.3;
 }
+
+.choice-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.choice {
+  flex: 1 1 auto;
+  padding: 8px 12px;
+  border: 3px solid var(--card-edge);
+  border-radius: 14px;
+  background: var(--white);
+  color: #24401f;
+  font: 600 14px/1.3 var(--ui-font);
+  cursor: pointer;
+}
+
+.choice small {
+  font-weight: 500;
+  color: #6b8064;
+}
+
+.choice.active {
+  border-color: var(--grass-deep);
+  background: #e5f6dc;
+  box-shadow: 0 3px 0 var(--grass-deep);
+}
+
+.small-select {
+  padding: 6px 32px 6px 12px;
+  font-size: 14px;
+}

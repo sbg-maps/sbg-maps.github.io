@@ -45,13 +45,23 @@
       <div id="new-level" class="dialog-backdrop" hidden>
         <div class="dialog">
           <h2>New level</h2>
-          <p>Start from a flat island and shape it with the brushes. Pick a size (you can place several holes on one level):</p>
-          <div class="size-choices">
-            <button class="btn btn-secondary" data-size="160x240">Small<br /><small>160 x 240 m</small></button>
-            <button class="btn btn-primary" data-size="240x400">Medium<br /><small>240 x 400 m</small></button>
-            <button class="btn btn-secondary" data-size="400x600">Large<br /><small>400 x 600 m</small></button>
+          <p>Pick a starting shape and a size. You can reshape everything afterwards with the Land and Sea brushes.</p>
+          <div class="choice-group" data-group="shape">
+            <button class="choice active" data-shape="island">Island</button>
+            <button class="choice" data-shape="twin">Twin islands</button>
+            <button class="choice" data-shape="archipelago">Archipelago</button>
+            <button class="choice" data-shape="long">Long island</button>
+            <button class="choice" data-shape="sea">Open sea</button>
           </div>
-          <button class="btn btn-secondary small" data-act="cancel">Cancel</button>
+          <div class="choice-group" data-group="size">
+            <button class="choice" data-size="320x320">Small<br /><small>320 x 320 m</small></button>
+            <button class="choice active" data-size="500x600">Medium<br /><small>500 x 600 m</small></button>
+            <button class="choice" data-size="800x800">Large<br /><small>800 x 800 m</small></button>
+          </div>
+          <div class="row">
+            <button class="btn btn-primary" data-act="create">Create level</button>
+            <button class="btn btn-secondary small" data-act="cancel">Cancel</button>
+          </div>
         </div>
       </div>
     </main>

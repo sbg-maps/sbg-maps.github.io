@@ -27,7 +27,8 @@ let tab = "model";
 let tool = "look";
 let selectedMaterial = null;
 let selectedObject = null;
-const brush = { radius: 8, strength: 6, surface: 1 };
+const brush = { radius: 14, strength: 12, surface: 1 };
+const newLevelChoice = { shape: "island", size: "500x600" };
 
 const history = new History(
   () => project,
@@ -129,14 +130,17 @@ async function openModel(files) {
   setStatus(missing.length ? `Imported, but these files were missing: ${missing.join(", ")}` : `Imported ${root.name}`, missing.length > 0);
 }
 
-function newLevel(sizeX, sizeZ) {
+function newLevel(sizeX, sizeZ, shape) {
   clear();
   empty.hidden = true;
-  project = Project.newLevel(sizeX, sizeZ, { name: "My level" });
+  project = Project.newLevel(sizeX, sizeZ, { name: "My level" }, shape, newSeed());
+  project.levelShape = shape;
   startEditing("terrain");
-  setTool("raise");
-  setStatus("New level: sculpt with the brush tools, then place the Start and Flag");
+  setTool(shape === "sea" ? "land" : "raise");
+  setStatus(shape === "sea" ? "Paint land out of the sea with the Land brush" : "Shape the land with the brushes, then place the Start and Flag");
 }
+
+const newSeed = () => (Math.random() * 1e9) | 0;
 
 /** Decides what a set of picked or dropped files is: a map folder, a .sbgmap, or a model. */
 async function openFiles(entries) {
@@ -157,11 +161,17 @@ const newDialog = document.getElementById("new-level");
 document.getElementById("new-level-btn").addEventListener("click", () => (newDialog.hidden = false));
 newDialog.addEventListener("click", (e) => {
   if (e.target === newDialog || e.target.closest("[data-act=cancel]")) newDialog.hidden = true;
-  const size = e.target.closest("[data-size]")?.dataset.size;
-  if (size) {
+  const choice = e.target.closest(".choice");
+  if (choice) {
+    const group = choice.closest(".choice-group");
+    group.querySelectorAll(".choice").forEach((c) => c.classList.toggle("active", c === choice));
+    if (choice.dataset.shape) newLevelChoice.shape = choice.dataset.shape;
+    if (choice.dataset.size) newLevelChoice.size = choice.dataset.size;
+  }
+  if (e.target.closest("[data-act=create]")) {
     newDialog.hidden = true;
-    const [x, z] = size.split("x").map(Number);
-    newLevel(x, z);
+    const [x, z] = newLevelChoice.size.split("x").map(Number);
+    newLevel(x, z, newLevelChoice.shape);
   }
 });
 
@@ -286,6 +296,8 @@ const PLACE_TOOLS = [
   { id: "erase", name: "Erase", tip: "Click a marker or golfer to remove it." },
 ];
 const TERRAIN_TOOLS = [
+  { id: "land", name: "Land", tip: "Drag to make land out of the sea (beaches appear by themselves). Right-drag to look around." },
+  { id: "sea", name: "Sea", tip: "Drag to sink land into the sea. Right-drag to look around." },
   { id: "raise", name: "Raise", tip: "Drag to raise the ground. Right-drag to look around." },
   { id: "lower", name: "Lower", tip: "Drag to lower the ground (below the water level it becomes water). Right-drag to look around." },
   { id: "smooth", name: "Smooth", tip: "Drag to smooth bumps. Right-drag to look around." },
@@ -360,11 +372,14 @@ window.addEventListener("pointerup", () => {
   stroke = null;
   project.rebuildMarkers();
 });
-onFrame(() => {
+onFrame((now) => {
   if (!stroke || !project?.terrain) return;
+  // Real elapsed time, so brushes work at the same speed on slow and fast computers.
+  const dt = Math.min(0.1, stroke.time ? (now - stroke.time) / 1000 : 1 / 60);
+  stroke.time = now;
   const hit = pick(stroke.last, [project.terrain.mesh]);
   if (!hit) return;
-  project.terrain.brush(tool, hit.point.x, -hit.point.z, { radius: brush.radius, strength: brush.strength, surface: brush.surface, target: stroke.target, dt: 1 / 60 });
+  project.terrain.brush(tool, hit.point.x, -hit.point.z, { radius: brush.radius, strength: brush.strength, surface: brush.surface, target: stroke.target, dt });
 });
 
 // A click is a pointer press that did not move (so orbiting never places markers).
@@ -451,7 +466,16 @@ function terrainPanel() {
   return `
     <p class="hint">Pick a brush in the toolbar and drag over the ground. <b>Right-drag</b> looks around, the wheel zooms. Ctrl+Z undoes.</p>
     <div class="field"><label for="brush-radius">Brush size: ${brush.radius} m</label><input id="brush-radius" type="range" min="2" max="40" value="${brush.radius}" /></div>
-    <div class="field"><label for="brush-strength">Strength: ${brush.strength}</label><input id="brush-strength" type="range" min="1" max="20" value="${brush.strength}" /></div>
+    <div class="field"><label for="brush-strength">Strength: ${brush.strength}</label><input id="brush-strength" type="range" min="2" max="40" value="${brush.strength}" /></div>
+    <p class="hint">The lines on the ground mark every 2 m of height (stronger every 10 m).</p>
+    <h3>Shape</h3>
+    <div class="row">
+      <select id="shape-kind" class="pill-select small-select">${[["island", "Island"], ["twin", "Twin islands"], ["archipelago", "Archipelago"], ["long", "Long island"], ["sea", "Open sea"]]
+        .map(([id, name]) => `<option value="${id}" ${id === (project.levelShape ?? "island") ? "selected" : ""}>${name}</option>`)
+        .join("")}</select>
+      <button class="btn btn-secondary small" id="reshape">New shape</button>
+    </div>
+    <p class="hint">Rolls a new coastline and hills (paint and sculpting are replaced; Ctrl+Z brings them back).</p>
     <h3>Paint</h3>
     <div class="swatches">${PAINTABLE.map((id) => `<button class="swatch ${brush.surface === id ? "active" : ""}" data-surface="${id}"><i style="background:rgb(${SURFACES[id].color})"></i>${SURFACES[id].name}</button>`).join("")}</div>
     <p class="hint">Painted terrain uses the game's own ground textures and grass. Anything lowered below the water level (${project.hole.water} m) becomes water.</p>
@@ -459,6 +483,19 @@ function terrainPanel() {
 }
 
 function wireTerrain() {
+  info.querySelector("#reshape").addEventListener("click", () => {
+    const shape = info.querySelector("#shape-kind").value;
+    history.record(() => {
+      const fresh = Terrain.generate(shape, project.terrain.sizeX, project.terrain.sizeZ, newSeed());
+      project.terrain.restore({ heights: fresh.heights, paint: fresh.paint });
+      fresh.dispose();
+      project.levelShape = shape;
+      // Markers follow the new ground.
+      for (const h of project.holes) for (const [set, p] of project.markerPoints(h)) if (p) set({ ...p, y: project.terrain.heightAt(p.x, p.z) });
+    }, { terrain: true });
+    project.rebuildMarkers();
+    renderPanel();
+  });
   info.querySelector("#brush-radius").addEventListener("input", (e) => {
     brush.radius = Number(e.target.value);
     e.target.previousElementSibling.textContent = `Brush size: ${brush.radius} m`;
