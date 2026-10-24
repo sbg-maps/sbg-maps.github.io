@@ -939,4 +939,4 @@ async function offerRestore() {
 offerRestore();
 
 // Test hook: lets the automated browser tests reach editor state.
-window.__sbg = { get project() { return project; }, history, autosave };
+window.__sbg = { get project() { return project; }, history, autosave, THREE };
