@@ -1,0 +1,8 @@
+.venv/
+decomp/
+extracted/
+downloads/
+scratch*
+scene_*.txt
+plugin/bin/
+plugin/obj/

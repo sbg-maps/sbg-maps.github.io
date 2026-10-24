@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>SbgMaps</AssemblyName>
+    <RootNamespace>SbgMaps</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <GameDir>/media/G/SteamLibrary/steamapps/common/Super Battle Golf</GameDir>
+    <Managed>$(GameDir)/Super Battle Golf_Data/Managed</Managed>
+    <BepInExCore>$(GameDir)/BepInEx/core</BepInExCore>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="$(BepInExCore)/BepInEx.dll" Private="false" />
+    <Reference Include="$(BepInExCore)/0Harmony.dll" Private="false" />
+    <Reference Include="$(Managed)/GameAssembly.dll" Private="false" />
+    <Reference Include="$(Managed)/Mirror.dll" Private="false" />
+    <Reference Include="$(Managed)/SharedAssembly.dll" Private="false" />
+    <Reference Include="$(Managed)/Eflatun.SceneReference.dll" Private="false" />
+    <Reference Include="$(Managed)/Unity.Localization.dll" Private="false" />
+    <Reference Include="$(Managed)/UnityEngine.dll" Private="false" />
+    <Reference Include="$(Managed)/UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="$(Managed)/UnityEngine.PhysicsModule.dll" Private="false" />
+    <Reference Include="$(Managed)/Unity.InputSystem.dll" Private="false" />
+    <Reference Include="$(Managed)/UnityEngine.AssetBundleModule.dll" Private="false" />
+  </ItemGroup>
+
+  <!-- Copy the built plugin straight into the game's BepInEx/plugins folder. -->
+  <Target Name="DeployToGame" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)/BepInEx/plugins/SbgMaps" />
+  </Target>
+
+</Project>
