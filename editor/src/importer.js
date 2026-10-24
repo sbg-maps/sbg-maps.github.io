@@ -57,7 +57,8 @@ export async function importModel(fileList) {
     setTimeout(() => urls.forEach((u) => URL.revokeObjectURL(u)), 5000);
   }
   root.name = modelFile.name.replace(/\.[^.]+$/, "");
-  normalizeMaterials(root);
+  // glTF stores each texture's wrap mode; other formats assume repeating textures.
+  normalizeMaterials(root, { keepWrap: [".glb", ".gltf"].includes(ext(modelFile.name)) });
   return { root, missing: [...missing] };
 }
 
@@ -100,7 +101,7 @@ export function materialsOf(object) {
  * Converts every material to MeshStandardMaterial so it previews consistently and exports cleanly to glTF.
  * Ripped game models often have a dark diffuse colour multiplied with the texture; with a texture we use white.
  */
-function normalizeMaterials(root) {
+function normalizeMaterials(root, { keepWrap = false } = {}) {
   const converted = new Map();
   root.traverse((o) => {
     if (!o.isMesh) return;
@@ -125,7 +126,7 @@ function normalizeMaterials(root) {
       out.userData = { ...m.userData };
       if (out.map) {
         out.map.colorSpace = THREE.SRGBColorSpace;
-        out.map.wrapS = out.map.wrapT = THREE.RepeatWrapping;
+        if (!keepWrap) out.map.wrapS = out.map.wrapT = THREE.RepeatWrapping;
       }
       converted.set(m, out);
       return out;
