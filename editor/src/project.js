@@ -39,6 +39,7 @@ export const MARKERS = {
   cup: { name: "Flag", color: 0xe8443a },
   itemBoxes: { name: "Item box", color: 0xf5c400 },
   checkpoints: { name: "Checkpoint", color: 0xb400dc },
+  bounds: { name: "Play area corner", color: 0x3aa0ff },
 };
 
 /** Space around the model inside the map area, so tees and bounds are never at the very edge. */
@@ -299,6 +300,7 @@ export class Project {
     out.push([(p) => (h.cup = p), h.cup]);
     h.itemBoxes.forEach((b, i) => out.push([(p) => (h.itemBoxes[i] = p), b]));
     h.checkpoints.forEach((c, i) => out.push([(p) => (h.checkpoints[i] = p), c]));
+    (h.bounds ?? []).forEach((c, i) => out.push([(p) => (h.bounds[i] = p), c]));
     return out;
   }
 
@@ -308,7 +310,7 @@ export class Project {
     if (kind === "golfer") this.golfers.push(p);
     else if (kind === "tee") h.tee = p;
     else if (kind === "cup") h.cup = p;
-    else h[kind].push(p);
+    else (h[kind] ??= []).push(p);
     this.rebuildMarkers();
   }
 
@@ -325,10 +327,60 @@ export class Project {
     consider(h.cup, () => (h.cup = null));
     h.itemBoxes.forEach((b, i) => consider(b, () => h.itemBoxes.splice(i, 1)));
     h.checkpoints.forEach((c, i) => consider(c, () => h.checkpoints.splice(i, 1)));
+    (h.bounds ?? []).forEach((c, i) => consider(c, () => h.bounds.splice(i, 1)));
     this.golfers.forEach((g, i) => consider(g, () => this.golfers.splice(i, 1)));
     best?.remove();
     this.rebuildMarkers();
     return !!best;
+  }
+
+  /** The active hole's play area: corner posts and a see-through fence along its edges (closed once it has 3 corners). */
+  addPlayArea(points) {
+    const color = MARKERS.bounds.color;
+    const post = new THREE.CylinderGeometry(0.5, 0.5, 8, 8);
+    for (const p of points) {
+      const m = new THREE.Mesh(post, new THREE.MeshBasicMaterial({ color }));
+      m.position.copy(fromMap(p)).y += 4;
+      this.markersGroup.add(m);
+    }
+    if (points.length < 2) return;
+    const ring = points.length >= 3 ? [...points, points[0]] : points;
+    const fence = [];
+    for (let i = 0; i + 1 < ring.length; i++) {
+      const a = fromMap(ring[i]);
+      const b = fromMap(ring[i + 1]);
+      fence.push(a.x, a.y - 2, a.z, b.x, b.y - 2, b.z, b.x, b.y + 6, b.z, a.x, a.y - 2, a.z, b.x, b.y + 6, b.z, a.x, a.y + 6, a.z);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(fence, 3));
+    const wall = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false }));
+    this.markersGroup.add(wall);
+  }
+
+  /** A rounded play area around the start and the flag, with room to miss. */
+  fitPlayArea() {
+    const { tee, cup } = this.hole;
+    if (!tee || !cup) return false;
+    const dx = cup.x - tee.x;
+    const dz = cup.z - tee.z;
+    const length = Math.hypot(dx, dz);
+    const margin = Math.max(25, length * 0.3);
+    const angle = Math.atan2(dz, dx);
+    const points = [];
+    // Half circles around both ends, joined by straight sides.
+    for (const [end, from] of [[cup, angle - Math.PI / 2], [tee, angle + Math.PI / 2]]) {
+      for (let k = 0; k <= 8; k++) {
+        const a = from + (k / 8) * Math.PI;
+        const x = end.x + Math.cos(a) * margin;
+        const z = end.z + Math.sin(a) * margin;
+        const y = this.terrain ? this.terrain.heightAt(x, z) : end.y;
+        points.push({ x, y, z });
+      }
+    }
+    const [sx, sz] = this.size;
+    this.hole.bounds = points.map((p) => ({ ...p, x: Math.min(sx, Math.max(0, p.x)), z: Math.min(sz, Math.max(0, p.z)) }));
+    this.rebuildMarkers();
+    return true;
   }
 
   rebuildMarkers() {
@@ -366,6 +418,7 @@ export class Project {
         const arrow = new THREE.ArrowHelper(dir, fromMap(h.tee).setY(h.tee.y + 1.2), 8, 0xffffff, 3, 2);
         this.markersGroup.add(arrow);
       }
+      if (active && h.bounds?.length) this.addPlayArea(h.bounds);
       if (h.cup) {
         add(new THREE.CylinderGeometry(0.15, 0.15, 6, 8), 0xeeeeee, h.cup, 3);
         add(new THREE.ConeGeometry(1, 2, 3), MARKERS.cup.color, h.cup, 5.5);
@@ -479,6 +532,7 @@ export class Project {
         cup: h.cup ? round(h.cup) : undefined,
         itemBoxes: h.itemBoxes.map(round),
         checkpoints: h.checkpoints.map(round),
+        bounds: h.bounds?.length >= 3 ? h.bounds.map((p) => [Math.round(p.x * 100) / 100, Math.round(p.z * 100) / 100]) : undefined,
         music: h.music ?? undefined,
       })),
     };
@@ -600,6 +654,8 @@ export class Project {
       cup: h.cup,
       itemBoxes: h.itemBoxes ?? [],
       checkpoints: h.checkpoints ?? [],
+      // Play area corners carry a height only for drawing; the game uses x and z.
+      ...(h.bounds?.length >= 3 ? { bounds: h.bounds.map(([x, z]) => ({ x, y: terrain ? terrain.heightAt(x, z) : (h.cup?.y ?? h.tee?.y ?? BASE_Y), z })) } : {}),
       ...(h.music ? { music: h.music } : {}),
     }));
     for (const name of [m.music, ...m.holes.map((h) => h.music)]) {

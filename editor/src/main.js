@@ -11,6 +11,7 @@ import { Terrain } from "./terrain.js";
 import { History } from "./history.js";
 import { SHAPES, spriteFromImage, circlePath, linePath } from "./shapes.js";
 import { put as storePut, get as storeGet } from "./storage.js";
+import { CHANGES } from "./changes.js";
 
 const status = document.getElementById("status");
 const holeSelect = document.getElementById("hole-select");
@@ -278,6 +279,7 @@ function editViewHole(index) {
       cup: withY(h.cup),
       itemBoxes: (h.itemBoxes ?? []).map(withY),
       checkpoints: (h.checkpoints ?? []).map(withY),
+      ...(h.bounds?.length >= 3 ? { bounds: h.bounds.map(([x, z]) => withY({ x, z })) } : {}),
     },
   ];
   project.activeHole = 0;
@@ -293,6 +295,7 @@ const PLACE_TOOLS = [
   { id: "cup", name: "Flag", tip: "Click to place the Flag: the hole (cup) players are aiming for." },
   { id: "itemBoxes", name: "Item box", tip: "Click to add item boxes." },
   { id: "checkpoints", name: "Checkpoint", tip: "Click to add a checkpoint." },
+  { id: "bounds", name: "Play area", tip: "Click corners around the hole: balls that leave this area are out of bounds. Erase removes a corner." },
   { id: "pov", name: "Player view", tip: "Click to stand there and see what a player sees (in the Player view window)." },
   { id: "golfer", name: "Golfer", tip: "Click to drop a golfer (player-sized) anywhere, to judge the scale. Not saved into the map." },
   { id: "erase", name: "Erase", tip: "Click a marker or golfer to remove it." },
@@ -816,6 +819,14 @@ function holesPanel() {
       ${stat(MARKERS.itemBoxes.name + "es", `${h.itemBoxes.length} / 16`)}
       ${stat(MARKERS.checkpoints.name + "s", `${h.checkpoints.length} / 1`)}
     </div>
+    <h3>Play area</h3>
+    <p class="hint">Balls that leave it are out of bounds, so shots can't fly off to other parts of the map. ${
+      h.bounds?.length >= 3 ? `${h.bounds.length} corners.` : h.bounds?.length ? `${h.bounds.length} corner${h.bounds.length === 1 ? "" : "s"}: needs at least 3.` : "None yet: the whole map counts."
+    } Click corners with <b>Play area</b> in the toolbar, or fit one around the start and flag.</p>
+    <div class="row">
+      <button class="btn btn-secondary small" id="fit-bounds" ${h.tee && h.cup ? "" : "disabled"}>Fit around start and flag</button>
+      <button class="btn btn-secondary small" id="clear-bounds" ${h.bounds?.length ? "" : "disabled"}>Clear</button>
+    </div>
     <p class="hint">Use the toolbar over the 3D view to place things. <b>Start</b> is where players tee off, <b>Flag</b> is the hole they aim for. ${
       project.terrain ? "Paint a green around the flag in the Terrain tab." : "Ground within the green radius of the flag plays as a putting green."
     }</p>`;
@@ -849,6 +860,15 @@ function wireHoles() {
     });
   }
   bind("#green", (v) => (project.hole.greenRadius = Math.max(3, Number(v) || 10)));
+  info.querySelector("#fit-bounds").addEventListener("click", () => {
+    history.record(() => project.fitPlayArea());
+    renderPanel();
+  });
+  info.querySelector("#clear-bounds").addEventListener("click", () => {
+    history.record(() => delete project.hole.bounds);
+    project.rebuildMarkers();
+    renderPanel();
+  });
   info.querySelector("#add-hole").addEventListener("click", () => {
     history.record(() => project.addHole());
     fillHoleSelect(project.holes, project.activeHole);
@@ -1049,6 +1069,40 @@ async function offerRestore() {
   );
 }
 offerRestore();
+
+// What's new: returning visitors see what changed since their last visit, in a card that never blocks the editor.
+const SEEN_KEY = "sbg-maps-seen-changes";
+async function showWhatsNew() {
+  const latest = CHANGES[0]?.id ?? 0;
+  let seen = null;
+  try {
+    seen = localStorage.getItem(SEEN_KEY);
+    localStorage.setItem(SEEN_KEY, String(latest));
+  } catch {
+    return; // storage blocked: nothing to compare with
+  }
+  if (seen === null) {
+    // No mark yet: a first visit, unless an autosave shows they were here before this card existed.
+    let saved = null;
+    try {
+      saved = await storeGet(AUTOSAVE_KEY);
+    } catch {
+      // treat as a first visit
+    }
+    if (!saved) return;
+    seen = "0";
+  }
+  const fresh = CHANGES.filter((c) => c.id > Number(seen));
+  if (!fresh.length) return;
+  const card = document.createElement("div");
+  card.className = "whats-new";
+  card.innerHTML = `<h2>What's new</h2>
+    ${fresh.map((c) => `<h3>${esc(c.date)}</h3><ul>${c.items.map((i) => `<li>${i}</li>`).join("")}</ul>`).join("")}
+    <button class="btn btn-primary small" id="whats-new-ok">Got it</button>`;
+  document.body.append(card);
+  card.querySelector("#whats-new-ok").addEventListener("click", () => card.remove());
+}
+showWhatsNew();
 
 // Test hook: lets the automated browser tests reach editor state.
 window.__sbg = { get project() { return project; }, history, autosave, THREE, frameBox, camera, controls };

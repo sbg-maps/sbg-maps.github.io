@@ -340,7 +340,7 @@ if (fs.existsSync(OPTIONAL.sm64Glb)) {
   });
 } else results.push("  skip SM64 decomp level (imports/sm64/bob.glb not present)");
 
-await test("music: add a song, export, reopen", async () => {
+await test("music and play area: add, export, reopen", async () => {
   // A quarter second of silence as a WAV file.
   const rate = 8000, samples = 2000, wav = Buffer.alloc(44 + samples * 2);
   wav.write("RIFF", 0); wav.writeUInt32LE(36 + samples * 2, 4); wav.write("WAVEfmt ", 8); wav.writeUInt32LE(16, 16);
@@ -353,6 +353,8 @@ await test("music: add a song, export, reopen", async () => {
   await page.click('[data-act="create"]');
   await page.waitForFunction(() => window.__sbg.project?.terrain, null, { timeout: 20000 });
   await placeStartAndFlag(page);
+  await page.click('.tab[data-tab="holes"]');
+  await page.click("#fit-bounds");
   await page.click('.tab[data-tab="export"]');
   await page.setInputFiles("#song-file", song);
   await page.waitForSelector(".song", { timeout: 10000 });
@@ -360,13 +362,31 @@ await test("music: add a song, export, reopen", async () => {
   const { manifest, files } = readSbgmap(file);
   assert(manifest.music === "music/Main_Theme.wav", `map song: ${manifest.music}`);
   assert(files["music/Main_Theme.wav"]?.length === wav.length, "song file missing from the map");
+  assert(manifest.holes[0].bounds?.length >= 3 && manifest.holes[0].bounds.every((p) => p.length === 2), `play area: ${JSON.stringify(manifest.holes[0].bounds)}`);
   await page.close();
   const again = await freshPage(browser, url);
   await again.setInputFiles("#open-file", file);
   await again.waitForFunction(() => window.__sbg.project?.music, null, { timeout: 20000 }).catch(() => {});
   assert(await again.evaluate(() => window.__sbg.project?.music === "music/Main_Theme.wav"), "reopened map lost its song");
+  assert(await again.evaluate(() => window.__sbg.project?.hole.bounds?.length >= 3), "reopened map lost its play area");
   assert(again.errors.length === 0, again.errors.join("; "));
   await again.close();
+});
+
+await test("what's new: first visit quiet, returning visit shows changes", async () => {
+  const page = await freshPage(browser, url);
+  await page.waitForTimeout(300);
+  assert((await page.$(".whats-new")) === null, "card shown on a first visit");
+  await page.evaluate(() => localStorage.setItem("sbg-maps-seen-changes", "0"));
+  await page.reload();
+  await page.waitForSelector(".whats-new", { timeout: 5000 });
+  await page.click("#whats-new-ok");
+  assert((await page.$(".whats-new")) === null, "card did not close");
+  await page.reload();
+  await page.waitForTimeout(300);
+  assert((await page.$(".whats-new")) === null, "card shown again after Got it");
+  assert(page.errors.length === 0, page.errors.join("; "));
+  await page.close();
 });
 
 await test("heightmap map: view, then edit a hole as a level", async () => {
