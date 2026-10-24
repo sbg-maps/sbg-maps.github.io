@@ -45,6 +45,7 @@ namespace SbgMaps
                 {
                     // Managers need a terrain, so keep it but sink it under the water: it becomes the sea around our island.
                     FlattenTerrain(terrain, SeaFloorHeight);
+                    PaintTerrainPatch(terrain, CupPos, 8f, TerrainLayer.Green);
                     continue;
                 }
                 if (root.GetComponentInChildren<NetworkIdentity>(true) != null)
@@ -143,6 +144,36 @@ namespace SbgMaps
                     heights[y, x] = h;
             data.SetHeights(0, 0, heights);
             Plugin.Log.LogInfo($"TestHole: flattened terrain at y={terrain.transform.position.y + h * data.size.y} (res {res}, size {data.size})");
+        }
+
+        /// <summary>
+        /// Around the cup the shot preview ignores meshes and uses the terrain's own paint at cup height,
+        /// so the terrain must be painted green under the cup like vanilla holes are.
+        /// </summary>
+        private static void PaintTerrainPatch(Terrain terrain, Vector3 worldCenter, float radius, TerrainLayer layer)
+        {
+            var data = terrain.terrainData;
+            int index = System.Array.FindIndex(data.terrainLayers,
+                asset => asset != null && TerrainManager.Settings.LayersPerLayerAsset.TryGetValue(asset, out var l) && l == layer);
+            if (index < 0)
+            {
+                Plugin.Log.LogWarning($"TestHole: donor terrain has no {layer} paint layer");
+                return;
+            }
+
+            Vector3 local = worldCenter - terrain.transform.position;
+            float perX = data.alphamapWidth / data.size.x, perZ = data.alphamapHeight / data.size.z;
+            int x0 = Mathf.Clamp(Mathf.FloorToInt((local.x - radius) * perX), 0, data.alphamapWidth - 1);
+            int z0 = Mathf.Clamp(Mathf.FloorToInt((local.z - radius) * perZ), 0, data.alphamapHeight - 1);
+            int w = Mathf.Clamp(Mathf.CeilToInt(radius * 2f * perX), 1, data.alphamapWidth - x0);
+            int h = Mathf.Clamp(Mathf.CeilToInt(radius * 2f * perZ), 1, data.alphamapHeight - z0);
+
+            var weights = new float[h, w, data.alphamapLayers];
+            for (int z = 0; z < h; z++)
+                for (int x = 0; x < w; x++)
+                    weights[z, x, index] = 1f;
+            data.SetAlphamaps(x0, z0, weights);
+            Plugin.Log.LogInfo($"TestHole: painted {w}x{h} alphamap texels as {layer} (layer index {index})");
         }
 
         /// <summary>
