@@ -16,3 +16,10 @@ Early work in progress. The mod is not packaged for install yet.
 - `tools/` Python scripts: game data inspection, sample map generator, map previews
 
 This repo contains no game code or game assets. Decompiled and extracted game data stay local and are gitignored.
+
+## Level converters
+
+`tools/` also holds converters that turn other games' levels into a `.glb` the editor imports. They read your own local game files; the converted levels stay on your computer and are never committed.
+
+- `tools/sm64_to_glb.py`: a Super Mario 64 decomp level area.
+- `tools/wow_to_glb.py`: an area of a World of Warcraft 1.12.1 map, read straight from the client's MPQ archives (needs `pip install pillow mpyq`). Terrain with baked texture blends, WMO buildings (outdoor parts; `--interiors` keeps the rooms), M2 doodads and water, in metres, centred on the area. Example: `python tools/wow_to_glb.py <WoW>/Data Azeroth stormwind.glb --preset stormwind`. Pick other areas with `--tiles X,Y[,X2,Y2]` or `--box` in world yards; `--chunk-px`, `--max-tex` and `--min-doodad` trade detail for file size.
