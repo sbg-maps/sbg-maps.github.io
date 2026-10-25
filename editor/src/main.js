@@ -377,6 +377,7 @@ const PLACE_TOOLS = [
   { id: "checkpoints", name: "Checkpoint", tip: "Click to add checkpoints, in order from the Start to the Flag: players come back to the furthest one they reached." },
   { id: "bounds", name: "Play area", tip: "Click corners around the hole: balls that leave this area are out of bounds. Erase removes a corner." },
   { id: "pov", name: "Player view", tip: "Click to stand there and see what a player sees (in the Player view window)." },
+  { id: "piece", name: "Cut piece", tip: "Click a floating island (or any separate piece of an imported level) to cut it out as an object you can move, turn and resize. Ctrl+Z puts it back." },
   { id: "golfer", name: "Golfer", tip: "Click to drop a golfer (player-sized) anywhere, to judge the scale. Not saved into the map." },
   { id: "erase", name: "Erase", tip: "Click a marker or golfer to remove it. With any tool, right-click an object or marker to erase it." },
 ];
@@ -529,6 +530,15 @@ renderer.domElement.addEventListener("pointerup", (e) => {
     renderPanel();
   } else if (tool === "pov") {
     playerView.standAt(hit.point);
+  } else if (tool === "piece") {
+    const piece = project.findPiece(hit);
+    if (!piece) return setStatus("That is not a separate piece: it is joined to most of the level (or is an object already)", true);
+    let obj;
+    history.record(() => (obj = project.cutPiece(piece)), { meshes: [...piece.take.keys()] });
+    setTool("look");
+    tab = "objects";
+    selectObject(obj);
+    setStatus(`Cut out a piece (${piece.taken} triangles). Move, turn or resize it with the handles; Ctrl+Z puts it back.`);
   } else if (tool === "erase") {
     history.record(() => {
       if (!project.erase(hit.point)) setStatus("No marker there");

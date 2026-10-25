@@ -17,7 +17,7 @@ export class History {
   }
 
   /** Captures everything an edit could change. Terrain is only captured when asked (it is large). */
-  capture({ terrain = false } = {}) {
+  capture({ terrain = false, meshes = null } = {}) {
     const p = this.getProject();
     if (!p) return null;
     return {
@@ -26,20 +26,22 @@ export class History {
       golfers: structuredClone(p.golfers),
       objects: p.objects.map((o) => ({ object: o, parent: o.parent, matrix: o.matrix.clone(), userData: structuredClone(o.userData), visible: o.visible })),
       terrain: terrain && p.terrain ? p.terrain.snapshot() : null,
+      // Level meshes an edit replaces the geometry of (cutting out a piece); geometries are swapped, never changed.
+      meshes: meshes ? meshes.map((mesh) => ({ mesh, geometry: mesh.geometry })) : null,
     };
   }
 
   /** Runs an edit and records it, so it can be undone. */
-  record(edit, { terrain = false } = {}) {
-    const before = this.capture({ terrain });
+  record(edit, { terrain = false, meshes = null } = {}) {
+    const before = this.capture({ terrain, meshes });
     edit();
-    this.commit(before, { terrain });
+    this.commit(before, { terrain, meshes });
   }
 
   /** Records an edit whose "before" was captured earlier (e.g. at the start of a brush stroke or drag). */
-  commit(before, { terrain = false } = {}) {
+  commit(before, { terrain = false, meshes = null } = {}) {
     if (!before) return;
-    const after = this.capture({ terrain });
+    const after = this.capture({ terrain, meshes });
     this.undoStack.push({ before, after });
     if (this.undoStack.length > LIMIT) this.undoStack.shift();
     this.redoStack = [];
@@ -80,6 +82,7 @@ export class History {
       s.object.visible = s.visible;
     }
     if (state.terrain && p.terrain) p.terrain.restore(state.terrain);
+    for (const { mesh, geometry } of state.meshes ?? []) mesh.geometry = geometry;
     p.collectMaterials();
     p.rebuildMarkers();
     this.onChange?.();

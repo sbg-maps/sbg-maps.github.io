@@ -258,6 +258,99 @@ export class Project {
     return this.addObject(model, worldPoint, { size });
   }
 
+  /**
+   * The connected piece of the level around a clicked triangle (a floating island with its sides and underside):
+   * every triangle reachable through shared corners, across all level meshes. Null if the click was not on the level,
+   * or the piece is most of the level (it is joined to everything else).
+   */
+  findPiece(hit) {
+    if (!hit?.object?.isMesh || hit.object.userData.isTerrain || this.objects.some((o) => isAncestor(o, hit.object))) return null;
+    this.root.updateMatrixWorld(true);
+    const meshes = [];
+    this.root.traverse((m) => {
+      if (m.isMesh && m.visible && !this.objects.some((o) => isAncestor(o, m))) meshes.push(m);
+    });
+    // Corner positions in world space, welded to 1 cm, give every triangle its neighbours across meshes.
+    const key = (v) => `${Math.round(v.x * 100)},${Math.round(v.y * 100)},${Math.round(v.z * 100)}`;
+    const tris = []; // [meshIndex, triangleIndex, key, key, key]
+    const byCorner = new Map();
+    const v = new THREE.Vector3();
+    let total = 0;
+    meshes.forEach((m, mi) => {
+      const pos = m.geometry.attributes.position;
+      const index = m.geometry.index;
+      const count = (index ? index.count : pos.count) / 3;
+      total += count;
+      for (let t = 0; t < count; t++) {
+        const keys = [0, 1, 2].map((k) => key(v.fromBufferAttribute(pos, index ? index.getX(t * 3 + k) : t * 3 + k).applyMatrix4(m.matrixWorld)));
+        const id = tris.length;
+        tris.push([mi, t, ...keys]);
+        for (const k of keys) {
+          let list = byCorner.get(k);
+          if (!list) byCorner.set(k, (list = []));
+          list.push(id);
+        }
+      }
+    });
+    const start = tris.findIndex((tr) => meshes[tr[0]] === hit.object && tr[1] === hit.faceIndex);
+    if (start < 0) return null;
+    const seen = new Uint8Array(tris.length);
+    const queue = [start];
+    seen[start] = 1;
+    while (queue.length) {
+      const tr = tris[queue.pop()];
+      for (const k of [tr[2], tr[3], tr[4]])
+        for (const other of byCorner.get(k))
+          if (!seen[other]) {
+            seen[other] = 1;
+            queue.push(other);
+          }
+    }
+    const take = new Map(); // mesh -> Set of triangle indices
+    let taken = 0;
+    tris.forEach((tr, i) => {
+      if (!seen[i]) return;
+      taken++;
+      const m = meshes[tr[0]];
+      if (!take.has(m)) take.set(m, new Set());
+      take.get(m).add(tr[1]);
+    });
+    if (taken > total * 0.6) return null;
+    return { take, taken };
+  }
+
+  /** Cuts a piece found by findPiece out of the level meshes into a new object, placed where it was. */
+  cutPiece(piece) {
+    const obj = new THREE.Group();
+    obj.name = "Level piece";
+    obj.userData.object = "static";
+    const box = new THREE.Box3();
+    const parts = [];
+    for (const [mesh, triangles] of piece.take) {
+      const [kept, taken] = splitGeometry(mesh.geometry, triangles);
+      mesh.geometry = kept;
+      const part = new THREE.Mesh(taken, mesh.material);
+      part.name = mesh.name;
+      // Same place in the world: the part keeps the mesh's transform relative to the level root.
+      part.matrix.copy(this.root.matrixWorld.clone().invert().multiply(mesh.matrixWorld));
+      part.matrix.decompose(part.position, part.quaternion, part.scale);
+      parts.push(part);
+      taken.computeBoundingBox();
+      box.union(taken.boundingBox.clone().applyMatrix4(part.matrix));
+    }
+    // The object's origin sits under the middle of the piece, so it moves and turns around itself.
+    const origin = new THREE.Vector3((box.min.x + box.max.x) / 2, box.min.y, (box.min.z + box.max.z) / 2);
+    obj.position.copy(origin);
+    for (const part of parts) {
+      part.position.sub(origin);
+      obj.add(part);
+    }
+    this.root.add(obj);
+    this.collectMaterials();
+    this.rebuildMarkers();
+    return obj;
+  }
+
   /** Takes an object out of the level. Not disposed, so undo can put it back. */
   removeObject(object) {
     object.removeFromParent();
@@ -1079,4 +1172,40 @@ function itemWeights(weights) {
   if (!weights) return undefined;
   const out = Object.fromEntries(Object.entries(weights).filter(([, w]) => w > 0));
   return Object.keys(out).length ? out : undefined;
+}
+
+/**
+ * Splits a geometry into the triangles not listed and the ones listed (by triangle index), both unindexed, keeping
+ * every attribute and the material groups.
+ */
+function splitGeometry(geometry, take) {
+  const flat = geometry.index ? geometry.toNonIndexed() : geometry;
+  const count = flat.attributes.position.count / 3;
+  const groups = flat.groups.length ? flat.groups : [{ start: 0, count: count * 3, materialIndex: 0 }];
+  const build = (wanted) => {
+    const out = new THREE.BufferGeometry();
+    const order = [];
+    const newGroups = [];
+    for (const g of groups) {
+      const first = order.length;
+      for (let t = g.start / 3; t < (g.start + g.count) / 3; t++) if (wanted(t)) order.push(t);
+      if (order.length > first) newGroups.push({ start: first * 3, count: (order.length - first) * 3, materialIndex: g.materialIndex });
+    }
+    for (const [name, attr] of Object.entries(flat.attributes)) {
+      const size = attr.itemSize;
+      const source = attr.isInterleavedBufferAttribute ? attr.data.array : attr.array;
+      const array = new source.constructor(order.length * 3 * size);
+      // Raw values, also from interleaved data (so normalized colours stay as they are).
+      const stride = attr.isInterleavedBufferAttribute ? attr.data.stride : size;
+      const offset = attr.isInterleavedBufferAttribute ? attr.offset : 0;
+      order.forEach((t, i) => {
+        for (let k = 0; k < 3; k++) for (let c = 0; c < size; c++) array[(i * 3 + k) * size + c] = source[(t * 3 + k) * stride + offset + c];
+      });
+      out.setAttribute(name, new THREE.BufferAttribute(array, size, attr.normalized));
+    }
+    if (flat.groups.length) for (const g of newGroups) out.addGroup(g.start, g.count, g.materialIndex);
+    out.computeBoundingSphere();
+    return out;
+  };
+  return [build((t) => !take.has(t)), build((t) => take.has(t))];
 }

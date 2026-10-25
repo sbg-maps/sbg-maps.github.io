@@ -351,7 +351,9 @@ await test("zipped game rip: pick the model, drop stacked layers, glow panels ad
   // Like a GameCube/Wii rip: the ground plus a stacked shadow copy of it, a glow panel (grey, no alpha), and a smaller extra model.
   const quad = (y, first) => [`v -50 ${y} -50`, `v 50 ${y} -50`, `v 50 ${y} 50`, `v -50 ${y} 50`, `f ${first}/1 ${first + 1}/2 ${first + 2}/3`, `f ${first}/1 ${first + 2}/3 ${first + 3}/4`];
   const big = ["mtllib rip.mtl", "vt 0 0", "vt 1 0", "vt 1 1", "vt 0 1", "o ground", "usemtl grass", ...quad(0, 1), "o ground_uv2", "usemtl shadow", ...quad(0, 5),
-    "o shaft", "usemtl glow", "v 0 0 0", "v 5 0 0", "v 5 30 0", "v 0 30 0", "f 9/1 10/2 11/3", "f 9/1 11/3 12/4"].join("\n");
+    "o shaft", "usemtl glow", "v 0 0 0", "v 5 0 0", "v 5 30 0", "v 0 30 0", "f 9/1 10/2 11/3", "f 9/1 11/3 12/4",
+    // A floating island over the ground, separate from it.
+    "o island", "usemtl grass", "v 10 20 10", "v 20 20 10", "v 20 20 20", "v 10 20 20", "f 13/1 15/3 14/2", "f 13/1 16/4 15/3"].join("\n");
   const enc = (text) => new TextEncoder().encode(text);
   const { zipSync } = await import("fflate");
   const zip = path.join(tmp, "rip.zip");
@@ -380,6 +382,22 @@ await test("zipped game rip: pick the model, drop stacked layers, glow panels ad
   assert(s.status.includes("left out 1"), `status: ${s.status}`);
   assert(s.glow?.alphaMode === "add" && s.glow?.renderOnly, `glow panel not drawn as a glow: ${JSON.stringify(s.glow)}`);
   assert(!s.collision, "glow panel mistaken for a collision mesh");
+  // Cut piece: the island comes out as its own object, the ground stays; undo puts it back.
+  const cut = await page.evaluate(() => {
+    const { project: p, THREE, history } = window.__sbg;
+    p.root.updateMatrixWorld(true);
+    const islandMesh = p.root.getObjectByName("island");
+    const centre = new THREE.Box3().setFromObject(islandMesh).getCenter(new THREE.Vector3());
+    const hit = new THREE.Raycaster(centre.clone().setY(centre.y + 50), new THREE.Vector3(0, -1, 0)).intersectObject(islandMesh, true)[0];
+    const piece = p.findPiece(hit);
+    if (!piece) return { error: "no piece" };
+    const before = p.objects.length;
+    history.record(() => p.cutPiece(piece), { meshes: [...piece.take.keys()] });
+    const after = p.objects.length;
+    history.undo();
+    return { taken: piece.taken, before, after, undone: p.objects.length, islandTris: islandMesh.geometry.attributes.position.count / 3 };
+  });
+  assert(cut.taken === 2 && cut.after === cut.before + 1 && cut.undone === cut.before && cut.islandTris === 2, `cut piece: ${JSON.stringify(cut)}`);
   // Shift+click picks several materials; a change to one applies to all of them.
   await page.click('.tab[data-tab="model"]');
   const rows = await page.$$(".material .thumb");
