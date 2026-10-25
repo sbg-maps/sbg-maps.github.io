@@ -3,7 +3,7 @@ import { MOD_VERSIONS, MOD_VERSION, downloadUrl } from "./mod.js";
 const download = document.getElementById("download");
 download.href = downloadUrl(MOD_VERSION);
 download.textContent = `Download mod ${MOD_VERSION}`;
-document.getElementById("download-note").textContent = `Released ${MOD_VERSIONS[0].date}. Windows, Linux and Steam Deck.`;
+document.getElementById("download-note").textContent = `Released ${MOD_VERSIONS[0].date}.`;
 
 const versions = document.getElementById("versions");
 for (const entry of MOD_VERSIONS) {
