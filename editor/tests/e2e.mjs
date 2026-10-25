@@ -429,6 +429,11 @@ await test("music, volume, play area and hole picture: add, export, reopen", asy
   await placeStartAndFlag(page);
   await page.click('.tab[data-tab="holes"]');
   await page.click("#fit-bounds");
+  // Choose the items in the boxes: start from the game's own, then set one.
+  await page.check('.items-own[data-key="items"]');
+  await page.fill('.item-weight input[data-key="items"][data-item="Coffee"]', "40");
+  await page.dispatchEvent('.item-weight input[data-key="items"][data-item="Coffee"]', "change");
+  await page.check('.items-own[data-key="redItems"]');
   await page.click('.tab[data-tab="export"]');
   await page.setInputFiles("#song-file", song);
   await page.waitForSelector(".song", { timeout: 10000 });
@@ -441,6 +446,8 @@ await test("music, volume, play area and hole picture: add, export, reopen", asy
   const { manifest, files } = readSbgmap(file);
   assert(manifest.music === "music/Main_Theme.wav", `map song: ${manifest.music}`);
   assert(files["music/Main_Theme.wav"]?.length === wav.length, "song file missing from the map");
+  assert(manifest.holes[0].items?.Coffee === 40 && manifest.holes[0].items?.SpringBoots === 20, `box items: ${JSON.stringify(manifest.holes[0].items)}`);
+  assert(manifest.holes[0].redItems?.SpringBoots === 50 && manifest.holes[0].redItems?.RocketDriver === 50, `red box items: ${JSON.stringify(manifest.holes[0].redItems)}`);
   assert(manifest.songs?.["music/Main_Theme.wav"]?.volume === 0.6, `song volume: ${JSON.stringify(manifest.songs)}`);
   const picture = files[manifest.holes[0].preview ?? ""];
   assert(picture?.length > 2000 && picture[0] === 0xff && picture[1] === 0xd8, `hole picture: ${manifest.holes[0].preview} ${picture?.length}`);

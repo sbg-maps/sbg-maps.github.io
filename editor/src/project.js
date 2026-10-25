@@ -754,6 +754,8 @@ export class Project {
         cup: h.cup ? round(h.cup) : undefined,
         itemBoxes: h.itemBoxes.map(round),
         redItemBoxes: h.redItemBoxes?.length ? h.redItemBoxes.map(round) : undefined,
+        items: itemWeights(h.items),
+        redItems: itemWeights(h.redItems),
         checkpoints: h.checkpoints.map(round),
         bounds: h.bounds?.length >= 3 ? h.bounds.map((p) => [Math.round(p.x * 100) / 100, Math.round(p.z * 100) / 100]) : undefined,
         music: h.music ?? undefined,
@@ -947,6 +949,8 @@ export class Project {
       cup: h.cup,
       itemBoxes: h.itemBoxes ?? [],
       redItemBoxes: h.redItemBoxes ?? [],
+      ...(h.items ? { items: { ...h.items } } : {}),
+      ...(h.redItems ? { redItems: { ...h.redItems } } : {}),
       checkpoints: h.checkpoints ?? [],
       // Play area corners carry a height only for drawing; the game uses x and z.
       ...(h.bounds?.length >= 3 ? { bounds: h.bounds.map(([x, z]) => ({ x, y: terrain ? terrain.heightAt(x, z) : (h.cup?.y ?? h.tee?.y ?? BASE_Y), z })) } : {}),
@@ -1044,4 +1048,35 @@ function fadesOut(geometry) {
   if (c && c.itemSize === 4) for (let i = 0; i < c.count && !fades; i++) fades = c.getW(i) < 0.99;
   fadeCache.set(geometry, fades);
   return fades;
+}
+
+/**
+ * Items the game's boxes can hold, by the name the game uses, with the name players know. `close` and `red` are the
+ * game's own weights for a player near the leader and for red boxes, used as the starting point when a mapper chooses.
+ */
+export const ITEMS = [
+  { id: "Coffee", name: "Coffee", close: 0, red: 0 },
+  { id: "SpringBoots", name: "Spring boots", close: 20, red: 50 },
+  { id: "RocketDriver", name: "Fire club", close: 5, red: 50 },
+  { id: "GolfCart", name: "Golf cart", close: 5, red: 0 },
+  { id: "Landmine", name: "Landmine", close: 15, red: 0 },
+  { id: "DuelingPistol", name: "Dueling pistol", close: 20, red: 0 },
+  { id: "ElephantGun", name: "Elephant gun", close: 5, red: 0 },
+  { id: "Airhorn", name: "Airhorn", close: 5, red: 0 },
+  { id: "Electromagnet", name: "Electromagnet", close: 10, red: 0 },
+  { id: "RocketLauncher", name: "Rocket launcher", close: 5, red: 0 },
+  { id: "FreezeBomb", name: "Freeze bomb", close: 5, red: 0 },
+  { id: "SmokeBomb", name: "Smoke bomb", close: 0, red: 0 },
+  { id: "FlashCamera", name: "Flash camera", close: 5, red: 0 },
+  { id: "Thunderstorm", name: "Thunderstorm", close: 0, red: 0 },
+  { id: "Railgun", name: "Railgun", close: 0, red: 0 },
+  { id: "OrbitalLaser", name: "Orbital laser", close: 0, red: 0 },
+  { id: "JumboBurger", name: "Jumbo burger", close: 0, red: 0 },
+];
+
+/** Item weights for map.json: only items that can appear, or nothing (the game's own choice). */
+function itemWeights(weights) {
+  if (!weights) return undefined;
+  const out = Object.fromEntries(Object.entries(weights).filter(([, w]) => w > 0));
+  return Object.keys(out).length ? out : undefined;
 }

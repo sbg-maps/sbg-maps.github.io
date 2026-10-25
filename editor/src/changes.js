@@ -5,6 +5,8 @@ export const CHANGES = [
     id: 3,
     date: "2026-10-25",
     items: [
+      "<b>Choose the items</b> in a hole's boxes (Holes tab): which items can come up and how often, for normal boxes and for red boxes. Needs mod 0.4.0.",
+      "Red boxes in the game now look like the game's own red boxes. Needs mod 0.4.0.",
       "<b>Shift+click</b> materials (in the view with Look, or in the Model list) to pick several and change their surface, Climb, transparency or Walk through all at once.",
       "<b>Controls</b> button at the top lists every mouse and keyboard shortcut.",
       "<b>Close</b> button at the top: back to the start screen. Your work stays in the autosave (Continue where you left off).",

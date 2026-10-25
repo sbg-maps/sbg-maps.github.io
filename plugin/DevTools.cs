@@ -117,6 +117,39 @@ namespace SbgMaps
                     bounds.Encapsulate(r.bounds);
                 sb.AppendLine($"  JumpPad '{pad.name}' pos={pad.transform.position} rot={pad.transform.eulerAngles} size={bounds.size} {Jump("playerJump")} {Jump("divingPlayerJump")} {Jump("knockedOutPlayerJump")} {Jump("ballJump")} {Jump("defaultJump")}");
             }
+            // How each kind of item box is built (looking for the red box's own look).
+            var seenKinds = new System.Collections.Generic.HashSet<string>();
+            foreach (var spawner in Object.FindObjectsByType<ItemSpawner>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                var settings = Traverse.Create(spawner).Field("settings").GetValue<ItemSpawnerSettings>();
+                string kind = settings != null ? settings.name : "?";
+                if (!seenKinds.Add(kind))
+                    continue;
+                sb.AppendLine($"  Box '{spawner.name}' settings='{kind}':");
+                foreach (var t in spawner.GetComponentsInChildren<Transform>(true))
+                {
+                    var parts = new System.Collections.Generic.List<string>();
+                    foreach (var c in t.GetComponents<Component>())
+                        if (!(c is Transform))
+                            parts.Add(c.GetType().Name);
+                    if (t.TryGetComponent<MeshFilter>(out var mf) && mf.sharedMesh != null)
+                        parts.Add($"mesh='{mf.sharedMesh.name}'");
+                    if (t.TryGetComponent<Renderer>(out var r))
+                        foreach (var m in r.sharedMaterials)
+                            if (m != null)
+                                parts.Add($"material='{m.name}' shader='{m.shader.name}'" + (m.HasProperty("_BaseColor") ? $" base={m.GetColor("_BaseColor")}" : "") + (m.HasProperty("_Color") ? $" color={m.GetColor("_Color")}" : ""));
+                    int depth = 0;
+                    for (var p = t; p != spawner.transform && p != null; p = p.parent)
+                        depth++;
+                    sb.AppendLine($"    {new string(' ', depth * 2)}{t.name} [{string.Join(", ", parts)}] active={t.gameObject.activeSelf}");
+                }
+                foreach (var f in AccessTools.GetDeclaredFields(typeof(ItemSpawner)))
+                    if (typeof(Object).IsAssignableFrom(f.FieldType))
+                        sb.AppendLine($"    field {f.Name} = {f.GetValue(spawner)}");
+                foreach (var f in AccessTools.GetDeclaredFields(typeof(ItemSpawnerSettings)))
+                    if (typeof(Object).IsAssignableFrom(f.FieldType))
+                        sb.AppendLine($"    settings field {f.Name} = {f.GetValue(settings)}");
+            }
             return sb.ToString();
         }
 
@@ -129,6 +162,7 @@ namespace SbgMaps
                 yield break;
             yield return new WaitForSeconds(3f);
             Plugin.Log.LogInfo($"Game facts in '{sceneName}':\n{GameFacts()}");
+            RedItemBoxes.CaptureLookIfHere();
             if (sceneName != "Driving range")
                 MapPicker.OnFactsLogged();
         }

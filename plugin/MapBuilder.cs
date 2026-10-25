@@ -166,8 +166,13 @@ namespace SbgMaps
             var boxPoints = def.itemBoxes.Concat(def.redItemBoxes ?? new List<PointDef>()).ToList();
             var boxes = WithCopies(spawners, boxPoints.Count, 1);
             PlaceOrRemove(boxes, boxPoints, WorldOf, "item boxes");
-            for (int i = def.itemBoxes.Count; i < boxPoints.Count && i < boxes.Length; i++)
-                RedItemBoxes.MakeRed(boxes[i]);
+            for (int i = 0; i < boxPoints.Count && i < boxes.Length; i++)
+            {
+                if (i >= def.itemBoxes.Count)
+                    RedItemBoxes.MakeRed(boxes[i], def.redItems);
+                else if (def.items != null && def.items.Count > 0)
+                    RedItemBoxes.UseItems(boxes[i], def.items);
+            }
             var checkpoints = WithCopies(Object.FindObjectsByType<Checkpoint>(FindObjectsInactive.Include, FindObjectsSortMode.None), def.checkpoints.Count, 2);
             // Players keep the furthest checkpoint they touched: the map lists them from start to flag.
             for (int i = 0; i < checkpoints.Length; i++)

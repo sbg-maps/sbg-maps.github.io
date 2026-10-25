@@ -61,6 +61,10 @@ namespace SbgMaps
         public List<PointDef> itemBoxes = new List<PointDef>();
         /// <summary>Red item boxes: the better movement items (the game's "mobility" boxes).</summary>
         public List<PointDef> redItemBoxes = new List<PointDef>();
+        /// <summary>Optional: what normal boxes give, item name to weight (default: the game's own pools by distance).</summary>
+        public Dictionary<string, float> items;
+        /// <summary>Optional: what red boxes give, item name to weight (default: spring boots and the rocket driver).</summary>
+        public Dictionary<string, float> redItems;
         public List<PointDef> checkpoints = new List<PointDef>();
         /// <summary>Optional polygons/paths in map-local [x, z] pairs; sensible defaults are derived when missing.</summary>
         public List<float[]> bounds;

@@ -4,7 +4,7 @@ import { importModel, findModels, unpackZips } from "./importer.js";
 import { renderer, pick, pickCenter, hitMaterial, frameBox, scene, camera, controls, onFrame } from "./scene.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { HeightmapView } from "./viewer.js";
-import { Project, MODEL_SURFACES, MARKERS, BASE_Y, MAX_PER_HOLE } from "./project.js";
+import { Project, MODEL_SURFACES, MARKERS, BASE_Y, MAX_PER_HOLE, ITEMS } from "./project.js";
 import { golferInfo, loadGolferFile, restoreGolfer, onGolferChange } from "./golfer.js";
 import { PlayerView } from "./pov.js";
 import { Terrain } from "./terrain.js";
@@ -1001,6 +1001,9 @@ function holesPanel() {
       ${stat(MARKERS.itemBoxes.name + "es", `${h.itemBoxes.length + (h.redItemBoxes?.length ?? 0)} / ${MAX_PER_HOLE}${h.redItemBoxes?.length ? ` (${h.redItemBoxes.length} red)` : ""}`)}
       ${stat(MARKERS.checkpoints.name + "s", `${h.checkpoints.length} / ${MAX_PER_HOLE}`)}
     </div>
+    <h3>Items in the boxes</h3>
+    ${itemChoice("items", h.items, "Normal boxes", "Normal boxes give the game's usual items: better ones the further a player is behind the leader.")}
+    ${itemChoice("redItems", h.redItems, "Red boxes", "Red boxes give spring boots or the fire club, like in the game.")}
     <h3>Play area</h3>
     <p class="hint">Balls that leave it are out of bounds, so shots can't fly off to other parts of the map. ${
       h.bounds?.length >= 3 ? `${h.bounds.length} corners.` : h.bounds?.length ? `${h.bounds.length} corner${h.bounds.length === 1 ? "" : "s"}: needs at least 3.` : "None yet: the whole map counts."
@@ -1012,6 +1015,19 @@ function holesPanel() {
     <p class="hint">Use the toolbar over the 3D view to place things. <b>Start</b> is where players tee off, <b>Flag</b> is the hole they aim for. ${
       project.terrain ? "Paint a green around the flag in the Terrain tab." : "Ground within the green radius of the flag plays as a putting green."
     }</p>`;
+}
+
+/** Choose-the-items section for one kind of box: the game's own choice, or a weight per item (chance = weight / total). */
+function itemChoice(key, weights, label, usual) {
+  const total = weights ? Object.values(weights).reduce((a, b) => a + (b > 0 ? b : 0), 0) : 0;
+  return `<label class="check"><input type="checkbox" class="items-own" data-key="${key}" ${weights ? "checked" : ""} /> ${label}: choose the items</label>
+    ${weights
+      ? `<div class="item-weights">${ITEMS.map((it) => {
+          const w = weights[it.id] ?? 0;
+          return `<label class="item-weight ${w > 0 ? "on" : ""}"><span>${it.name}</span><input type="number" min="0" max="100" step="5" data-key="${key}" data-item="${it.id}" value="${w}" /><small>${total > 0 && w > 0 ? Math.round((w / total) * 100) + "%" : ""}</small></label>`;
+        }).join("")}</div>
+        <p class="hint">Each number is how often that item comes up compared to the others (0 = never). ${total > 0 ? "" : "<b class=\"bad\">Pick at least one item.</b>"}</p>`
+      : `<p class="hint">${usual}</p>`}`;
 }
 
 /** Lowest and highest point of the level (map metres). */
@@ -1066,6 +1082,27 @@ function wireHoles() {
     });
   }
   bind("#green", (v) => (project.hole.greenRadius = Math.max(3, Number(v) || 10)));
+  info.querySelectorAll(".items-own").forEach((c) =>
+    c.addEventListener("change", () => {
+      const key = c.dataset.key;
+      history.record(() => {
+        if (c.checked) project.hole[key] = Object.fromEntries(ITEMS.map((it) => [it.id, key === "redItems" ? it.red : it.close]).filter(([, w]) => w > 0));
+        else delete project.hole[key];
+      });
+      renderPanel();
+    }),
+  );
+  info.querySelectorAll(".item-weight input").forEach((input) =>
+    input.addEventListener("change", () => {
+      const v = Math.max(0, Math.min(100, Number(input.value) || 0));
+      history.record(() => {
+        const weights = project.hole[input.dataset.key];
+        if (v > 0) weights[input.dataset.item] = v;
+        else delete weights[input.dataset.item];
+      });
+      renderPanel();
+    }),
+  );
   info.querySelector("#fit-bounds").addEventListener("click", () => {
     history.record(() => project.fitPlayArea());
     renderPanel();

@@ -1059,3 +1059,33 @@ button.btn {
 .controls td {
   padding: 5px 0;
 }
+
+.item-weights {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 10px;
+  margin: 6px 0;
+}
+
+.item-weight {
+  display: grid;
+  grid-template-columns: 1fr 3.6em 2.6em;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.item-weight.on {
+  color: #24401f;
+  font-weight: 600;
+}
+
+.item-weight input {
+  padding: 2px 4px;
+  font-size: 13px;
+}
+
+.item-weight small {
+  color: var(--muted);
+}
