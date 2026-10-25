@@ -53,8 +53,15 @@ namespace SbgMaps
                 else
                     objects.Add(obj);
             }
+            // Already flat around the cup (a platform, a floor): only the opening is cut, and everything else stays as
+            // it is. Otherwise the ground around the cup is rebuilt as a flattened apron that eases into the slope.
+            bool flat = IsFlatAroundCup(model, ground, zone);
+            if (flat)
+                zone = new CupZone(localCup, greenRadius, openingHalf, cutHalf: openingHalf);
+            Plugin.Log.LogInfo(flat ? "LevelBuilder: flat around the cup, only the opening is cut" : "LevelBuilder: sloped around the cup, building an apron");
             BuildParts(ctx, root.transform, ground, "level", zone);
-            BuildCupApron(ctx, root.transform, ground, zone, props);
+            if (!flat)
+                BuildCupApron(ctx, root.transform, ground, zone, props);
 
             int seesaws = 0, rollers = 0, movers = 0, chomps = 0;
             foreach (var obj in objects)
@@ -217,11 +224,15 @@ namespace SbgMaps
             public readonly List<Edge> Cut;
             public readonly List<Edge> Green;
 
-            public CupZone(Vector3 cup, float greenRadius, float openingHalf)
+            /// <summary>Half the width of the square cut out of the level around the cup.</summary>
+            public readonly float CutHalf;
+
+            public CupZone(Vector3 cup, float greenRadius, float openingHalf, float cutHalf = ApronHalf)
             {
                 Cup = cup;
                 OpeningHalf = openingHalf;
-                Cut = Square(cup.x, cup.z, ApronHalf);
+                CutHalf = cutHalf;
+                Cut = Square(cup.x, cup.z, cutHalf);
                 Green = Circle(cup.x, cup.z, greenRadius, GreenZoneSides);
             }
         }
@@ -303,6 +314,37 @@ namespace SbgMaps
                 BuildApronMesh(ctx, parent, zone, collision, drawn: false, collides: true);
         }
 
+        /// <summary>
+        /// Is the drawn ground within the apron square level with the cup and unbroken? Then the cup needs no apron.
+        /// </summary>
+        private static bool IsFlatAroundCup(GlbReader.Model model, List<GlbReader.Primitive> prims, CupZone zone)
+        {
+            var sampler = VisualSampler(model, prims, zone);
+            const float step = 0.5f, tolerance = 0.12f;
+            for (float dx = -ApronHalf; dx <= ApronHalf + 0.01f; dx += step)
+                for (float dz = -ApronHalf; dz <= ApronHalf + 0.01f; dz += step)
+                {
+                    var hit = sampler.Sample(zone.Cup.x + dx, zone.Cup.z + dz);
+                    if (hit == null || Mathf.Abs(hit.Value.Vertex.Pos.y - zone.Cup.y) > tolerance || hit.Value.Vertex.Normal.y < 0.97f)
+                        return false;
+                }
+            return true;
+        }
+
+        /// <summary>Drawn ground near the cup, where stacked layers prefer solid opaque ground (see Sampler).</summary>
+        private static Sampler VisualSampler(GlbReader.Model model, IEnumerable<GlbReader.Primitive> prims, CupZone zone)
+        {
+            GlbReader.Material MatOf(GlbReader.Primitive p) => p.Material >= 0 && p.Material < model.Materials.Count ? model.Materials[p.Material] : null;
+            int Rank(int index)
+            {
+                var m = index >= 0 && index < model.Materials.Count ? model.Materials[index] : null;
+                if (m == null)
+                    return 0;
+                return (m.AlphaBlend || m.Additive ? 3 : m.AlphaMask ? 2 : 0) + (m.RenderOnly ? 1 : 0);
+            }
+            return new Sampler(prims.Where(p => !(MatOf(p)?.Invisible ?? false) && ((MatOf(p)?.RenderOnly ?? false) || Surfaces.ContainsKey(MatOf(p)?.Surface ?? "rough") && (MatOf(p)?.Surface ?? "rough") != "none")), zone, Rank);
+        }
+
         private static void BuildApronMesh(Context ctx, Transform parent, CupZone zone, Sampler sampler, bool drawn, bool collides)
         {
             int n = Mathf.RoundToInt(ApronHalf * 2 / ApronStep);
@@ -365,8 +407,11 @@ namespace SbgMaps
             foreach (var kv in byMaterial)
             {
                 var src = kv.Key >= 0 && kv.Key < ctx.Model.Materials.Count ? ctx.Model.Materials[kv.Key] : null;
-                string surface = GreenFor(src?.Surface ?? "rough") ?? "green";
-                var material = drawn ? MaterialFor(ctx.GreenMaterials, ctx.Model, kv.Key, true, kv.Value) : null;
+                // Golf ground turns green around the cup; anything else (stone, a roof, a road) keeps its look and surface.
+                string own = src?.Surface ?? "rough";
+                string green = GreenFor(own);
+                string surface = green ?? (Surfaces.ContainsKey(own) && own != "none" ? own : "green");
+                var material = drawn ? MaterialFor(green != null ? ctx.GreenMaterials : ctx.Materials, ctx.Model, kv.Key, green != null, kv.Value) : null;
                 CreatePart(parent, $"cup apron {(drawn ? "visual" : "collision")} {src?.Name}", kv.Value, material, collides ? surface : "none", ctx.GroundLayer);
             }
         }
