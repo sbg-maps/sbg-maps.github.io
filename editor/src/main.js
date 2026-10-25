@@ -19,6 +19,7 @@ const holeSelect = document.getElementById("hole-select");
 const info = document.getElementById("info");
 const empty = document.getElementById("empty");
 const flyBtn = document.getElementById("fly-btn");
+const closeBtn = document.getElementById("close-btn");
 const flyHint = document.getElementById("fly-hint");
 const toolbar = document.getElementById("toolbar");
 const dropOverlay = document.getElementById("drop");
@@ -118,6 +119,7 @@ async function openMap(map) {
   clear();
   empty.hidden = true;
   flyBtn.hidden = false;
+  closeBtn.hidden = false;
   if (opened) {
     project = opened;
     startEditing();
@@ -139,6 +141,7 @@ async function openModel(picked) {
   clear();
   empty.hidden = true;
   flyBtn.hidden = false;
+  closeBtn.hidden = false;
   project = new Project(root);
   const size = project.box.getSize(new THREE.Vector3());
   project.scale = niceScale(DEFAULT_LEVEL_SIZE / Math.max(size.x, size.z));
@@ -176,6 +179,7 @@ function newLevel(sizeX, sizeZ, shape) {
   clear();
   empty.hidden = true;
   flyBtn.hidden = false;
+  closeBtn.hidden = false;
   project = Project.newLevel(sizeX, sizeZ, { name: "My level" }, shape, newSeed());
   project.levelShape = shape;
   startEditing("terrain");
@@ -1303,6 +1307,26 @@ async function offerRestore() {
   );
 }
 offerRestore();
+
+// Close: back to the start screen. The work is autosaved first, so "Continue where you left off" brings it back.
+closeBtn.addEventListener("click", () =>
+  run("Closing", async () => {
+    const name = project?.info.name || "this map";
+    if (project && !confirm(`Close ${name}? It stays in the autosave: "Continue where you left off" brings it back until you start something new.`)) return;
+    if (project) await autosave();
+    setFlying(false);
+    clear();
+    empty.hidden = false;
+    flyBtn.hidden = true;
+    closeBtn.hidden = true;
+    info.innerHTML = `<p class="hint">Hole details show up here.</p>`;
+    holeSelect.innerHTML = "";
+    holeSelect.disabled = true;
+    empty.querySelector(".restore")?.remove();
+    await offerRestore();
+    setStatus("Closed");
+  }),
+);
 
 // What's new: returning visitors see what changed since their last visit, in a card that never blocks the editor.
 const SEEN_KEY = "sbg-maps-seen-changes";

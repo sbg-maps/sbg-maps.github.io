@@ -7,6 +7,7 @@ export const CHANGES = [
     items: [
       "<b>Fly</b> button (top right of the view): fly around the map with WASD, look by dragging, Shift or F to go faster, the wheel sets the speed. Tools keep working while you fly. In Firefox, use F to go faster: Shift + right-click opens the browser's menu.",
       "Up to 64 item boxes and 64 checkpoints per hole (was 16 and 1). Checkpoints count in the order you place them, from the Start to the Flag. Needs mod 0.3.0.",
+      "<b>Close</b> button at the top: back to the start screen. Your work stays in the autosave (Continue where you left off).",
       "<b>Right-click</b> an object or marker to erase it (Ctrl+Z brings it back). Right-drag still moves the view.",
       "Jump pads launch like the game's own (103 m/s at 35 degrees) and the arc now uses the game's real gravity and air drag.",
       "<b>Red item boxes</b> (Red box in the toolbar): they give the better movement items, like the red boxes in the game. Needs mod 0.3.0.",

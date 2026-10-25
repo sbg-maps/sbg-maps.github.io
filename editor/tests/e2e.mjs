@@ -481,6 +481,23 @@ await test("heightmap map: view, then edit a hole as a level", async () => {
   await page.close();
 });
 
+await test("close: back to the start screen, autosave offered", async () => {
+  const page = await freshPage(browser, url);
+  await page.click("#new-level-btn");
+  await page.click('[data-size="320x320"]');
+  await page.click('[data-act="create"]');
+  await page.waitForFunction(() => window.__sbg.project?.terrain, null, { timeout: 20000 });
+  await page.click('button[data-tool="raise"]');
+  await dragView(page, [[0.45, 0.5], [0.55, 0.5]]);
+  page.once("dialog", (d) => d.accept());
+  await page.click("#close-btn");
+  await page.waitForFunction(() => !window.__sbg.project && !document.querySelector("#empty").hidden, null, { timeout: 10000 });
+  await page.waitForSelector("#restore", { timeout: 10000 });
+  assert(await page.isHidden("#close-btn"), "close button still shown");
+  assert(page.errors.length === 0, page.errors.join("; "));
+  await page.close();
+});
+
 await test("fly view: move, look, place while flying, stop", async () => {
   const page = await freshPage(browser, url);
   await page.click("#new-level-btn");
