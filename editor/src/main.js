@@ -4,7 +4,7 @@ import { importModel, findModels, unpackZips } from "./importer.js";
 import { renderer, pick, pickCenter, hitMaterial, frameBox, scene, camera, controls, onFrame } from "./scene.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { HeightmapView } from "./viewer.js";
-import { Project, MODEL_SURFACES, MARKERS, BASE_Y } from "./project.js";
+import { Project, MODEL_SURFACES, MARKERS, BASE_Y, MAX_PER_HOLE } from "./project.js";
 import { golferInfo, loadGolferFile, restoreGolfer, onGolferChange } from "./golfer.js";
 import { PlayerView } from "./pov.js";
 import { Terrain } from "./terrain.js";
@@ -799,12 +799,12 @@ function selectedObjectPanel(o) {
       </div>
       <div class="field"><label for="obj-kind">Behaviour</label><select id="obj-kind">${BEHAVIOURS.map(([id, name]) => `<option value="${id}" ${id === kind ? "selected" : ""}>${name}</option>`).join("")}</select></div>
       ${pathed ? `
-        <div class="field"><label for="obj-speed">Speed (m/s)</label><input id="obj-speed" type="number" min="0.5" max="60" step="0.5" value="${round2((d.speed ?? DEFAULTS[kind].speed / s) * s)}" /></div>
+        ${slider("obj-speed", "Speed", round2((d.speed ?? DEFAULTS[kind].speed / s) * s), { min: 0.5, max: 60, step: 0.5, unit: "m/s" })}
         ${kind === "mover" ? `
-          <div class="field"><label for="obj-count">Copies on the path</label><input id="obj-count" type="number" min="1" max="16" value="${d.count ?? 1}" /></div>
+          ${slider("obj-count", "Copies on the path", d.count ?? 1, { min: 1, max: 16 })}
           <label class="check"><input type="checkbox" id="obj-loop" ${d.loop ?? true ? "checked" : ""} /> Go round the path (otherwise back and forth)</label>
           <label class="check"><input type="checkbox" id="obj-knocks" ${d.knocks ? "checked" : ""} /> Knocks players over</label>` : `
-          <div class="field"><label for="obj-interval">Seconds between copies</label><input id="obj-interval" type="number" min="0.5" max="30" step="0.5" value="${d.interval ?? DEFAULTS.roller.interval}" /></div>
+          ${slider("obj-interval", "Seconds between copies", d.interval ?? DEFAULTS.roller.interval, { min: 0.5, max: 30, step: 0.5, unit: "s" })}
           <p class="hint">Rolling copies always knock players over.</p>`}
         <h3>Path (${points} point${points === 1 ? "" : "s"})</h3>
         <div class="row">
@@ -817,8 +817,8 @@ function selectedObjectPanel(o) {
       ${kind === "chomp" ? `<p class="hint">Hops around where you place it and lunges every few seconds. Touching it knocks players over.</p>` : ""}
       ${kind === "seesaw" ? `<p class="hint">Tilts toward players standing on it. Its long side should run front to back.</p>` : ""}
       ${kind === "jumppad" ? `
-        <div class="field"><label for="obj-jump-speed">Launch speed (m/s)</label><input id="obj-jump-speed" type="number" min="2" max="80" step="1" value="${d.launchSpeed ?? 22}" /></div>
-        <div class="field"><label for="obj-jump-pitch">Angle up (degrees)</label><input id="obj-jump-pitch" type="number" min="0" max="90" step="5" value="${d.launchPitch ?? 65}" /></div>
+        ${slider("obj-jump-speed", "Launch speed", d.launchSpeed ?? 22, { min: 2, max: 80, step: 1, unit: "m/s" })}
+        ${slider("obj-jump-pitch", "Angle up", d.launchPitch ?? 65, { min: 0, max: 90, step: 1, unit: "&deg;" })}
         <p class="hint">Launches players and balls that touch its top, the way its arrow points (turn it with Rotate). 90 degrees is straight up.</p>` : ""}
       <label class="check"><input type="checkbox" id="obj-billboard" ${d.billboard ? "checked" : ""} /> Always face the camera (for pictures)</label>
     </div>`;
@@ -937,24 +937,23 @@ function holesPanel() {
     <div class="field"><label for="hole-name">Hole name</label><input id="hole-name" value="${esc(h.name)}" /></div>
     <p class="hint">Shown in the game's hole list. The map's own name (and file name) is set in the Export tab.</p>
     ${warningList()}
-    <div class="field"><label for="par">Par</label><input id="par" type="number" min="1" max="9" value="${h.par}" /></div>
+    ${slider("par", "Par", h.par, { min: 1, max: 9 })}
     <div class="field"><label for="difficulty">Difficulty</label><select id="difficulty">${["none", "beginner", "intermediate", "expert"]
       .map((d) => `<option ${d === h.difficulty ? "selected" : ""}>${d}</option>`)
       .join("")}</select></div>
     ${h.tee ? `
-    <div class="field"><label for="tee-y">Start height (m)</label><input id="tee-y" type="number" step="0.25" value="${round2(h.tee.y)}" /></div>
-    <div class="field"><label for="tee-yaw">Start direction</label>
-      <div class="row tight"><label class="check"><input type="checkbox" id="tee-face" ${h.tee.yaw == null ? "checked" : ""} /> Face the flag</label>
-      <input id="tee-yaw" type="number" min="0" max="359" step="15" value="${Math.round(h.tee.yaw ?? 0)}" ${h.tee.yaw == null ? "disabled" : ""} /> &deg;</div></div>` : ""}
-    <div class="field"><label for="water">Water level (m)</label><input id="water" type="number" step="1" value="${h.water}" /></div>
+    ${slider("tee-y", "Start height", round2(h.tee.y), { min: Math.floor(levelLow()), max: Math.ceil(levelHigh() + 10), step: 0.05, unit: "m" })}
+    <label class="check"><input type="checkbox" id="tee-face" ${h.tee.yaw == null ? "checked" : ""} /> Players start facing the flag</label>
+    ${h.tee.yaw == null ? "" : slider("tee-yaw", "Start direction (degrees, 0 = map north)", Math.round(h.tee.yaw), { min: 0, max: 359, step: 1, unit: "&deg;" })}` : ""}
+    ${slider("water", "Water level", h.water, { min: Math.floor(levelLow() - 5), max: Math.ceil(levelHigh()), step: 0.1, unit: "m", note: waterNote(h, h.water) })}
     ${project.terrain ? "" : `<p class="hint">The level's lowest point is at ${BASE_Y} m.</p>`}
-    <div class="field"><label for="green">Green radius around the flag (m)</label><input id="green" type="number" min="3" max="40" step="1" value="${h.greenRadius}" /></div>
+    ${slider("green", "Green radius around the flag", h.greenRadius, { min: 3, max: 40, step: 0.5, unit: "m" })}
     <div class="stats">
       ${stat("Start to flag", length)}
       ${stat("Start (tee)", h.tee ? "placed" : "missing")}
       ${stat("Flag (cup)", h.cup ? "placed" : "missing")}
-      ${stat(MARKERS.itemBoxes.name + "es", `${h.itemBoxes.length} / 16`)}
-      ${stat(MARKERS.checkpoints.name + "s", `${h.checkpoints.length} / 1`)}
+      ${stat(MARKERS.itemBoxes.name + "es", `${h.itemBoxes.length} / ${MAX_PER_HOLE}`)}
+      ${stat(MARKERS.checkpoints.name + "s", `${h.checkpoints.length} / ${MAX_PER_HOLE}`)}
     </div>
     <h3>Play area</h3>
     <p class="hint">Balls that leave it are out of bounds, so shots can't fly off to other parts of the map. ${
@@ -969,10 +968,26 @@ function holesPanel() {
     }</p>`;
 }
 
+/** Lowest and highest point of the level (map metres). */
+const finiteOr = (v, fallback) => (Number.isFinite(v) ? v : fallback);
+const levelLow = () => finiteOr(project.terrain ? project.terrain.yMin : project.box.min.y, 0);
+const levelHigh = () => finiteOr(project.terrain ? project.terrain.yMax : project.box.max.y, 100);
+
+/** How the water sits against the Start and Flag, for the water slider. */
+function waterNote(h, water) {
+  const say = (name, p) => {
+    if (!p) return null;
+    const d = round2(p.y - water);
+    return d < 0 ? `<b class="bad">${name} is ${-d} m under water</b>` : `${name} ${d} m above`;
+  };
+  const parts = [say("Start", h.tee), say("Flag", h.cup)].filter(Boolean);
+  return parts.length ? parts.join(", ") : "Place the Start and Flag to compare.";
+}
+
 function wireHoles() {
   const h = project.hole;
   const bind = (id, fn) =>
-    info.querySelector(id).addEventListener("change", (e) => {
+    info.querySelector(id)?.addEventListener("change", (e) => {
       history.record(() => fn(e.target.value));
       project.rebuildMarkers();
       fillHoleSelect(project.holes, project.activeHole);
@@ -982,6 +997,14 @@ function wireHoles() {
   bind("#par", (v) => (project.hole.par = Math.max(1, Number(v) || 4)));
   bind("#difficulty", (v) => (project.hole.difficulty = v));
   bind("#water", (v) => (project.hole.water = Number(v) || 0));
+  // While dragging: move the water in the view and say where it sits against the Start and Flag.
+  info.querySelector("#water").addEventListener("input", (e) => {
+    const v = Number(e.target.value);
+    const water = project.markersGroup.children.find((o) => o.userData.isWater);
+    if (water) water.position.y = v;
+    const note = info.querySelector("#water-note");
+    if (note) note.innerHTML = waterNote(project.hole, v);
+  });
   if (h.tee) {
     bind("#tee-y", (v) => (project.hole.tee.y = Number(v) || 0));
     bind("#tee-yaw", (v) => (project.hole.tee.yaw = ((Number(v) % 360) + 360) % 360));
@@ -1155,6 +1178,38 @@ function wireMusic() {
 }
 
 // ---------- Helpers ----------
+
+/**
+ * A number setting as a slider with an exact number box next to it. The slider has the id, so handlers listen to its
+ * "change" (released) and "input" (dragging) events; typing in the box moves the slider and fires "change".
+ */
+function slider(id, label, value, { min, max, step = 1, unit = "", note = "" } = {}) {
+  const lo = Math.min(min, value);
+  const hi = Math.max(max, value);
+  return `<div class="field slider-field"><label for="${id}">${label}</label>
+    <div class="slider-row">
+      <input type="range" id="${id}" data-slider min="${lo}" max="${hi}" step="${step}" value="${value}" />
+      <input type="number" class="slider-num" data-for="${id}" step="${step}" value="${value}" aria-label="${label}" />
+      ${unit ? `<span class="slider-unit">${unit}</span>` : ""}
+    </div>${note ? `<p class="hint slider-note" id="${id}-note">${note}</p>` : ""}</div>`;
+}
+
+info.addEventListener("input", (e) => {
+  if (!e.target.matches("input[data-slider]")) return;
+  const box = e.target.parentElement.querySelector(".slider-num");
+  if (box) box.value = e.target.value;
+});
+info.addEventListener("change", (e) => {
+  if (!e.target.matches(".slider-num")) return;
+  const range = document.getElementById(e.target.dataset.for);
+  const v = Number(e.target.value);
+  if (!range || !Number.isFinite(v)) return;
+  // Typed values may go past the slider's ends.
+  if (v < Number(range.min)) range.min = v;
+  if (v > Number(range.max)) range.max = v;
+  range.value = v;
+  range.dispatchEvent(new Event("change", { bubbles: true }));
+});
 
 function materialThumb(material) {
   const url = material.userData.thumb;

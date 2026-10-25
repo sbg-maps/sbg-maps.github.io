@@ -1011,3 +1011,33 @@ button.btn {
   font: 500 13px/1.4 var(--ui-font);
   pointer-events: none;
 }
+
+.slider-row {
+  display: grid;
+  grid-template-columns: 1fr 4.6em auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.slider-row input[type="range"] {
+  width: 100%;
+  accent-color: var(--grass-deep);
+}
+
+.slider-row .slider-num {
+  padding: 4px 6px;
+  font-size: 13px;
+}
+
+.slider-unit {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.slider-note {
+  margin: 2px 0 0;
+}
+
+.slider-note .bad {
+  color: var(--flag-dark);
+}

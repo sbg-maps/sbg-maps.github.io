@@ -7,6 +7,7 @@ export const CHANGES = [
     items: [
       "<b>Fly</b> button (top right of the view): fly around the map with WASD, look by dragging, Shift or F to go faster, the wheel sets the speed. Tools keep working while you fly. In Firefox, use F to go faster: Shift + right-click opens the browser's menu.",
       "Up to 64 item boxes and 64 checkpoints per hole (was 16 and 1). Checkpoints count in the order you place them, from the Start to the Flag. Needs mod 0.3.0.",
+      "Sliders for numbers (water level, start height and direction, par, green size, object speeds, jump pads). Dragging the water level moves the water live and tells you how far the Start and Flag are above it.",
       "<b>Jump pads</b> in Objects: they launch players and balls the way their arrow points, with your own speed and angle. Needs mod 0.3.0.",
       "<b>Start platforms</b> are drawn where the game puts them, in red if a wall, hill or object pokes through.",
       "<b>Transparency</b>: click a material (Model tab) to pick Solid, Cut out (leaves, petals, fences), See-through or Glow, and Two-sided. Textures with see-through parts start as Cut out.",
