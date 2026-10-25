@@ -89,6 +89,7 @@ namespace SbgMaps
         {
             var sb = new StringBuilder();
             sb.AppendLine($"  Physics gravity={Physics.gravity} playerGravityFactor={GameManager.PlayerMovementSettings?.BaseGravityFactor} knockedOutFactor={GameManager.PlayerMovementSettings?.KnockOutGravityFactor} jumpPadCooldown={GameManager.HazardSettings?.JumpPadCooldown}");
+            sb.AppendLine($"  Player drag air={GameManager.PlayerMovementSettings?.AirHorizontalDrag} default={GameManager.PlayerMovementSettings?.DefaultHorizontalDrag} grounded={GameManager.PlayerMovementSettings?.GroundedHorizontalDrag} fixedDeltaTime={Time.fixedDeltaTime} ballAirDrag={GameManager.GolfBallSettings?.LinearAirDragFactor}");
             var ballBody = Object.FindFirstObjectByType<GolfBall>()?.GetComponent<Rigidbody>();
             if (ballBody != null)
                 sb.AppendLine($"  Ball rigidbody drag={ballBody.linearDamping} useGravity={ballBody.useGravity} mass={ballBody.mass}");
@@ -128,6 +129,8 @@ namespace SbgMaps
                 yield break;
             yield return new WaitForSeconds(3f);
             Plugin.Log.LogInfo($"Game facts in '{sceneName}':\n{GameFacts()}");
+            if (sceneName != "Driving range")
+                MapPicker.OnFactsLogged();
         }
 
         public static void DumpGameplayObjects()

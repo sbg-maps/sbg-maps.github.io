@@ -51,11 +51,12 @@ export const MARKERS = {
 export const TEE_PLATFORMS = [-10.7, 10.7].map((x) => ({ x, z: 2.53 }));
 const PLATFORM_SIZE = { w: 15.08, h: 1.72, d: 5.1, top: 0.14 };
 
-/**
- * How fast launched players fall (m/s per second): the game's physics gravity times its player gravity factor.
- * Placeholder until measured in the game.
- */
-const JUMP_GRAVITY = 9.81 * 2;
+/** Players in the air, as the game moves them: gravity 9.81 times its player gravity factor 2.87 (m/s per second). */
+const JUMP_GRAVITY = 9.81 * 2.87;
+/** In the air, players lose this share of their horizontal speed per second (the game's AirHorizontalDrag). */
+const JUMP_AIR_DRAG = 1.2;
+/** The game's physics step (s); the flight is simulated with it, like the game does. */
+const PHYSICS_STEP = 0.02;
 
 /** Space around the model inside the map area, so tees and bounds are never at the very edge. */
 const PAD = 20;
@@ -638,7 +639,7 @@ export class Project {
 
   /**
    * Where a player launched by a jump pad flies (three.js coordinates): the arc and the first spot it meets the level,
-   * an object or the water. Air drag is left out, so real flights end a little shorter.
+   * an object or the water, with the game's gravity and air drag for players (not steering in the air).
    */
   jumpFlight(pad) {
     const d = pad.userData;
@@ -653,17 +654,25 @@ export class Project {
     const forward = new THREE.Vector3(0, 0, -1).transformDirection(pad.matrixWorld).setY(0);
     if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
     forward.normalize();
-    const pitch = THREE.MathUtils.degToRad(d.launchPitch ?? 65);
-    const v = forward.multiplyScalar(Math.cos(pitch) * (d.launchSpeed ?? 22)).setY(Math.sin(pitch) * (d.launchSpeed ?? 22));
+    const pitch = THREE.MathUtils.degToRad(d.launchPitch ?? 35);
+    const v = forward.multiplyScalar(Math.cos(pitch) * (d.launchSpeed ?? 103)).setY(Math.sin(pitch) * (d.launchSpeed ?? 103));
     const water = this.hole?.water ?? -Infinity;
     const points = [start.clone()];
     const p = start.clone();
-    const step = 0.05;
+    // Three physics steps per checked segment keeps the ray tests few.
+    const steps = 3;
+    const step = PHYSICS_STEP * steps;
     let landing = null;
     let inWater = false;
-    for (let t = 0; t < 12 && !landing; t += step) {
-      const next = p.clone().addScaledVector(v, step);
-      v.y -= JUMP_GRAVITY * step;
+    for (let t = 0; t < 15 && !landing; t += step) {
+      const next = p.clone();
+      for (let k = 0; k < steps; k++) {
+        v.y -= JUMP_GRAVITY * PHYSICS_STEP;
+        const keep = Math.max(0, 1 - JUMP_AIR_DRAG * PHYSICS_STEP);
+        v.x *= keep;
+        v.z *= keep;
+        next.addScaledVector(v, PHYSICS_STEP);
+      }
       const dir = next.clone().sub(p);
       const length = dir.length();
       const hit = length > 0 ? this.firstHit(p, dir.normalize(), length, pad) : null;

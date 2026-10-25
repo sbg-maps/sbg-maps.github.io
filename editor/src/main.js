@@ -819,9 +819,9 @@ function selectedObjectPanel(o) {
       ${kind === "chomp" ? `<p class="hint">Hops around where you place it and lunges every few seconds. Touching it knocks players over.</p>` : ""}
       ${kind === "seesaw" ? `<p class="hint">Tilts toward players standing on it. Its long side should run front to back.</p>` : ""}
       ${kind === "jumppad" ? `
-        ${slider("obj-jump-speed", "Launch speed", d.launchSpeed ?? 22, { min: 2, max: 80, step: 1, unit: "m/s" })}
-        ${slider("obj-jump-pitch", "Angle up", d.launchPitch ?? 65, { min: 0, max: 90, step: 1, unit: "&deg;" })}
-        <p class="hint">Launches players and balls that touch its top, the way its arrow points (turn it with Rotate). 90 degrees is straight up.</p>` : ""}
+        ${slider("obj-jump-speed", "Launch speed (players)", d.launchSpeed ?? 103, { min: 5, max: 200, step: 1, unit: "m/s" })}
+        ${slider("obj-jump-pitch", "Angle up", d.launchPitch ?? 35, { min: 0, max: 90, step: 1, unit: "&deg;" })}
+        <p class="hint">Launches players and balls that touch its top, the way its arrow points (turn it with Rotate). 90 degrees is straight up. The game's own pads use 103 m/s at 35 degrees; balls, diving and knocked-out players get the game's weaker launches. The orange arc shows where a player lands.</p>` : ""}
       <label class="check"><input type="checkbox" id="obj-billboard" ${d.billboard ? "checked" : ""} /> Always face the camera (for pictures)</label>
     </div>`;
 }
@@ -887,7 +887,7 @@ function wireObjects() {
     if (rerender) renderPanel();
   };
   info.querySelector("#obj-name").addEventListener("change", (e) => edit(() => (o.name = e.target.value)));
-  info.querySelector("#obj-jump-speed")?.addEventListener("change", (e) => edit(() => (d.launchSpeed = Math.min(80, Math.max(2, Number(e.target.value) || 22)))));
+  info.querySelector("#obj-jump-speed")?.addEventListener("change", (e) => edit(() => (d.launchSpeed = Math.min(200, Math.max(5, Number(e.target.value) || 103)))));
   info.querySelector("#obj-jump-pitch")?.addEventListener("change", (e) => edit(() => (d.launchPitch = Math.min(90, Math.max(0, Number(e.target.value) || 0)))));
   info.querySelector("#obj-kind").addEventListener("change", (e) =>
     edit(() => {
@@ -902,8 +902,8 @@ function wireObjects() {
         if (!d.path || d.path.length < 2) d.path = circlePath(10 / s);
       }
       if (d.object === "jumppad") {
-        d.launchSpeed ??= 22;
-        d.launchPitch ??= 65;
+        d.launchSpeed ??= 103;
+        d.launchPitch ??= 35;
       }
       if (d.object === "roller" && d.radius == null) {
         const size = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3());

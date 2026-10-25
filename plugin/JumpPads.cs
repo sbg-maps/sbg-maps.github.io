@@ -6,23 +6,30 @@ namespace SbgMaps
 {
     /// <summary>
     /// Map jump pads (objects with extras.object "jumppad"): players and balls touching the top are launched along the
-    /// pad's forward direction, tilted up by launchPitch degrees, at launchSpeed m/s. Works like the game's own pads:
-    /// every machine runs the trigger and the game only moves what that machine controls, so nothing is networked.
+    /// pad's forward direction, tilted up by launchPitch degrees, at launchSpeed m/s (players standing). Balls, diving and
+    /// knocked-out players get weaker, steeper launches in the same proportions as the game's own pads (103 m/s at 35
+    /// degrees for players). Works like the game's pads: every machine runs the trigger and the game only moves what
+    /// that machine controls, so nothing is networked.
     /// </summary>
     internal class MapJumpPad : MonoBehaviour
     {
         /// <summary>How high above the pad's top things are caught, in metres.</summary>
         private const float CatchHeight = 1.2f;
 
-        private float speed = 22f;
-        private float pitch = 65f;
+        private float speed = GamePlayerSpeed;
+        private float pitch = GamePlayerPitch;
+
+        // The game's own pad (Vertigo): launch speed and pitch per kind of thing launched.
+        private const float GamePlayerSpeed = 103f, GamePlayerPitch = 35f;
+        private const float GameDivingSpeed = 67f, GameKnockedOutSpeed = 78f, GameBallSpeed = 33f, GameOtherSpeed = 27f;
+        private const float GameOtherPitchesUp = 10f; // the others launch at 45 instead of 35 degrees
         private readonly Dictionary<Hittable, float> lastLaunch = new Dictionary<Hittable, float>();
 
         public static void Attach(GameObject go, Newtonsoft.Json.Linq.JObject extras)
         {
             var pad = go.AddComponent<MapJumpPad>();
-            pad.speed = Mathf.Clamp((float?)extras?["launchSpeed"] ?? 22f, 0f, 200f);
-            pad.pitch = Mathf.Clamp((float?)extras?["launchPitch"] ?? 65f, 0f, 180f);
+            pad.speed = Mathf.Clamp((float?)extras?["launchSpeed"] ?? GamePlayerSpeed, 0f, 250f);
+            pad.pitch = Mathf.Clamp((float?)extras?["launchPitch"] ?? GamePlayerPitch, 0f, 180f);
             pad.AddTrigger();
         }
 
@@ -62,6 +69,25 @@ namespace SbgMaps
             trigger.AddComponent<MapJumpPadTrigger>().Pad = this;
         }
 
+        /// <summary>Speed and pitch for what is being launched, scaled from the pad's player setting like the game's pads.</summary>
+        private (float speed, float pitch) LaunchFor(Hittable hittable)
+        {
+            float steeper = Mathf.Min(90f, pitch + GameOtherPitchesUp);
+            var entity = hittable.AsEntity;
+            if (entity.IsPlayer)
+            {
+                var movement = entity.PlayerInfo.Movement;
+                if (movement.DivingState != DivingState.None)
+                    return (speed * GameDivingSpeed / GamePlayerSpeed, steeper);
+                if (movement.IsKnockedOut || hittable.FrozenState == FrozenState.Frozen)
+                    return (speed * GameKnockedOutSpeed / GamePlayerSpeed, steeper);
+                return (speed, pitch);
+            }
+            if (entity.IsGolfBall)
+                return (speed * GameBallSpeed / GamePlayerSpeed, steeper);
+            return (speed * GameOtherSpeed / GamePlayerSpeed, steeper);
+        }
+
         public void OnTouch(Collider other)
         {
             if (other.gameObject.layer == GameManager.LayerSettings.StationaryBallLayer)
@@ -82,7 +108,8 @@ namespace SbgMaps
                 forward = Vector3.forward;
             forward.Normalize();
             var right = Vector3.Cross(Vector3.up, forward);
-            var velocity = Quaternion.AngleAxis(-pitch, right) * forward * speed;
+            var (launchSpeed, launchPitch) = LaunchFor(hittable);
+            var velocity = Quaternion.AngleAxis(-launchPitch, right) * forward * launchSpeed;
             hittable.HitWithJumpPadLocalOnly(velocity);
             try
             {

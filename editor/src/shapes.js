@@ -15,7 +15,7 @@ export const SHAPES = {
   ramp: { name: "Ramp", make: () => ramp() },
   pillar: { name: "Pillar", make: () => mesh(new THREE.CylinderGeometry(1.2, 1.2, 8, 24), mat(0xb4b4ac, "solid"), 4) },
   wall: { name: "Wall", make: () => mesh(new THREE.BoxGeometry(12, 4, 1), mat(0xc27ad6, "solid"), 2) },
-  jumppad: { name: "Jump pad", make: () => jumpPad(), data: { object: "jumppad", launchSpeed: 22, launchPitch: 65 } },
+  jumppad: { name: "Jump pad", make: () => jumpPad(), data: { object: "jumppad", launchSpeed: 103, launchPitch: 35 } },
 };
 
 /** A round pad with an arrow on top pointing the way it launches (forward, map +z). */

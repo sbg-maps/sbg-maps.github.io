@@ -234,7 +234,7 @@ await test("new level: sculpt, paint, undo/redo, objects, paths, export", async 
   assert(mover && mover.extras.knocks === true && mover.extras.path.length === 4, `mover node wrong: ${JSON.stringify(mover?.extras)}`);
   assert(nodes.some((n) => n.extras.billboard === true), "picture lost its face-the-camera flag");
   const pad = nodes.find((n) => n.extras.object === "jumppad");
-  assert(pad && pad.extras.launchSpeed === 30 && pad.extras.launchPitch === 65, `jump pad node wrong: ${JSON.stringify(pad?.extras)}`);
+  assert(pad && pad.extras.launchSpeed === 30 && pad.extras.launchPitch === 35, `jump pad node wrong: ${JSON.stringify(pad?.extras)}`);
   assert(page.errors.length === 0, page.errors.join("; "));
   await page.close();
 });

@@ -32,7 +32,11 @@ namespace SbgMaps
         public static void Update()
         {
             if (SingletonBehaviour<MainMenu>.HasInstance && button == null)
+            {
                 TryAddButton();
+                if (pendingMap == null)
+                    TryAutorun();
+            }
             if (!SingletonBehaviour<MainMenu>.HasInstance)
                 open = false;
             if (open && Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
@@ -110,6 +114,41 @@ namespace SbgMaps
             GUILayout.EndArea();
         }
 
+        /// <summary>A vanilla hole to start instead of a map hole (autorun), by scene or hole name.</summary>
+        private static string pendingVanilla;
+        private static bool quitAfterFacts;
+
+        /// <summary>
+        /// Dev autorun: if SbgMaps/autorun.txt names a hole ("Vertigo"), host it straight from the title screen,
+        /// log the game values there and quit. The file is removed first, so it runs once. Used to read game values
+        /// in a hidden game window without anyone playing.
+        /// </summary>
+        public static void TryAutorun()
+        {
+            string file = System.IO.Path.Combine(BepInEx.Paths.GameRootPath, "SbgMaps", "autorun.txt");
+            if (!System.IO.File.Exists(file))
+                return;
+            string hole = System.IO.File.ReadAllText(file).Trim();
+            System.IO.File.Delete(file);
+            if (string.IsNullOrEmpty(hole))
+                return;
+            Plugin.Log.LogInfo($"Autorun: hosting '{hole}', then quitting");
+            pendingVanilla = hole;
+            quitAfterFacts = true;
+            pendingMap = "";
+            pendingSince = Time.realtimeSinceStartup;
+            readySince = -1f;
+            SingletonBehaviour<MainMenu>.Instance.StartHost();
+        }
+
+        public static void OnFactsLogged()
+        {
+            if (!quitAfterFacts)
+                return;
+            Plugin.Log.LogInfo("Autorun: done, quitting");
+            Application.Quit();
+        }
+
         private static void Play(string mapId, int hole)
         {
             open = false;
@@ -149,7 +188,10 @@ namespace SbgMaps
             {
                 string name = CustomCourse.HoleName(mapId, pendingHole);
                 // The newest copy, in case the map changed since the game started.
-                var hole = GameManager.AllCourses.allHoles.LastOrDefault(h => h != null && h.name == name);
+                var hole = pendingVanilla != null
+                    ? GameManager.AllCourses.allHoles.FirstOrDefault(h => h != null && (h.Scene.Name == pendingVanilla || h.name == pendingVanilla))
+                    : GameManager.AllCourses.allHoles.LastOrDefault(h => h != null && h.name == name);
+                pendingVanilla = null;
                 if (hole == null)
                 {
                     DevTools.Say($"Map '{mapId}' hole {pendingHole + 1} is not in the custom course");
