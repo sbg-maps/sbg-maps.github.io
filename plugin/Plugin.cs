@@ -32,7 +32,9 @@ namespace SbgMaps
             harmony.PatchAll();
             SceneManager.sceneLoaded += OnSceneLoaded;
             CustomCourse.InjectLate();
-            Log.LogInfo($"Shader check: lit particles {(Shader.Find("Universal Render Pipeline/Particles/Lit") != null ? "available" : "missing")}; physics gravity {Physics.gravity}; player gravity factor {GameManager.PlayerMovementSettings?.BaseGravityFactor}");
+            foreach (var name in new[] { "Skybox/Panoramic", "Skybox/6 Sided", "Skybox/Cubemap", "Skybox/Procedural", "Universal Render Pipeline/Unlit", "Universal Render Pipeline/Simple Lit", "Unlit/Texture" })
+                Log.LogInfo($"Shader check: '{name}' {(Shader.Find(name) != null ? "available" : "missing")}");
+                        Log.LogInfo($"Shader check: lit particles {(Shader.Find("Universal Render Pipeline/Particles/Lit") != null ? "available" : "missing")}; physics gravity {Physics.gravity}; player gravity factor {GameManager.PlayerMovementSettings?.BaseGravityFactor}");
                         Log.LogInfo($"{Name} {Version} loaded");
         }
 

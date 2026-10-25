@@ -5,6 +5,7 @@ export const CHANGES = [
     id: 4,
     date: "2026-10-25",
     items: [
+      "<b>Sky</b> (Holes tab): give a hole the sky of any of the game's holes (desert, snow, city at night...) or your own 360 panorama picture. Needs mod 0.4.0.",
       "<b>Delete</b> key removes the selected object or cut-out piece (Ctrl+Z brings it back).",
       "Reopened maps show their real Scale. Before, a reopened map showed Scale 1 and typing the old number made it that much bigger again.",
     ],

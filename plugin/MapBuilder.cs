@@ -189,6 +189,10 @@ namespace SbgMaps
             var levelBounds = SetBounds(def, origin, cupPos, teePos);
             RebuildBoundsWall(levelBounds, (x, z) => GroundY(x - origin.x, z - origin.y));
             SetOverviewCamera(teePos, cupPos);
+            if (!string.IsNullOrEmpty(def.sky))
+                SkyThemes.Apply(def.sky);
+            if (!string.IsNullOrEmpty(def.skyImage))
+                SkyThemes.UsePicture(pack, def.skyImage);
             ForceTerrainDataRegeneration();
 
             Plugin.Log.LogInfo($"MapBuilder: done (tee {teePos}, cup {cupPos}, {def.itemBoxes.Count} item boxes, water {def.water})");

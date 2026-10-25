@@ -47,6 +47,10 @@ namespace SbgMaps
         public string theme = "coast";
         /// <summary>Optional song for this hole only, overriding the map's.</summary>
         public string music;
+        /// <summary>Optional: the sky and air of a vanilla hole, by its scene name ("Mirage", "Snow 2"...).</summary>
+        public string sky;
+        /// <summary>Optional: a panorama picture in the map (equirectangular, 2:1) used as the sky.</summary>
+        public string skyImage;
         /// <summary>Optional picture of the hole (a .jpg or .png in the map) shown in match setup.</summary>
         public string preview;
         /// <summary>Playable area in metres, [x, z]. Map-local coordinates run from (0,0) to size.</summary>

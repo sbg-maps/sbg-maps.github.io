@@ -90,6 +90,8 @@ export class Project {
     /** Songs in the map, by file name inside it (music/...); the map plays `music`, a hole its own `music` if set. */
     this.songs = new Map();
     this.music = null;
+    /** Sky pictures in the map, by file name inside it (sky/...); a hole uses one with `skyImage`. */
+    this.skyImages = new Map();
     /** Loudness per song (0 to 1); songs not listed play at full volume. */
     this.songVolumes = new Map();
     /** Export only the level around each hole, as a piece per hole (always, when the level is bigger than the game allows). */
@@ -870,6 +872,8 @@ export class Project {
         checkpoints: h.checkpoints.map(round),
         bounds: h.bounds?.length >= 3 ? h.bounds.map((p) => [Math.round(p.x * 100) / 100, Math.round(p.z * 100) / 100]) : undefined,
         music: h.music ?? undefined,
+        sky: h.sky || undefined,
+        skyImage: h.skyImage && this.skyImages.has(h.skyImage) ? h.skyImage : undefined,
         preview: pictures[i] ? `previews/hole${i + 1}.jpg` : undefined,
         ...(r ? { model: { file: `hole${i + 1}.glb` }, size: [r.w, r.h], origin: [r.x0, r.z0] } : {}),
       };
@@ -877,6 +881,7 @@ export class Project {
     };
     // Only songs something plays go in, stored as they are (they are compressed already).
     for (const name of this.usedSongs()) files[name] = [this.songs.get(name), { level: 0 }];
+    for (const name of new Set(this.holes.map((h) => h.skyImage).filter((n) => n && this.skyImages.has(n)))) files[name] = [this.skyImages.get(name), { level: 0 }];
     return zipSync({ "map.json": strToU8(JSON.stringify(manifest, null, 2)), ...files }, { level: 6 });
   }
 
@@ -955,6 +960,17 @@ export class Project {
     const ray = new THREE.Raycaster(new THREE.Vector3(p.x, 1e5, p.z), new THREE.Vector3(0, -1, 0));
     const hit = ray.intersectObjects([this.pivot, this.terrain?.mesh].filter(Boolean), true).find((h) => h.object.visible);
     return hit ? hit.point.y : -Infinity;
+  }
+
+  /** Adds a sky picture and returns its name inside the map. */
+  addSkyImage(fileName, bytes) {
+    const ext = fileName.split(".").pop().toLowerCase().replace("jpeg", "jpg");
+    if (!["jpg", "png"].includes(ext)) throw new Error("Sky pictures can be .jpg or .png");
+    const base = fileName.replace(/\.[^.]*$/, "").replace(/[^\w-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60) || "sky";
+    let name = `sky/${base}.${ext}`;
+    for (let i = 2; this.skyImages.has(name) && this.skyImages.get(name).length !== bytes.length; i++) name = `sky/${base}-${i}.${ext}`;
+    this.skyImages.set(name, bytes);
+    return name;
   }
 
   usedSongs() {
@@ -1156,7 +1172,10 @@ export class Project {
       // Play area corners carry a height only for drawing; the game uses x and z.
       ...(h.bounds?.length >= 3 ? { bounds: h.bounds.map(([x, z]) => ({ x, y: terrain ? terrain.heightAt(x, z) : (h.cup?.y ?? h.tee?.y ?? BASE_Y), z })) } : {}),
       ...(h.music ? { music: h.music } : {}),
+      ...(h.sky ? { sky: h.sky } : {}),
+      ...(h.skyImage ? { skyImage: h.skyImage } : {}),
     }));
+    for (const h of m.holes) if (h.skyImage && map.files.has(h.skyImage)) project.skyImages.set(h.skyImage, map.files.get(h.skyImage));
     for (const name of [m.music, ...m.holes.map((h) => h.music)]) {
       if (name && map.files.has(name)) project.songs.set(name, map.files.get(name));
     }

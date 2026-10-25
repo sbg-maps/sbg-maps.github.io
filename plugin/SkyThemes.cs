@@ -244,6 +244,88 @@ namespace SbgMaps
             }
         }
 
+        /// <summary>
+        /// A map's own sky: a panorama picture on a sphere around the camera, drawn behind everything. The game has no
+        /// panoramic skybox shader, so the picture goes on an unlit sphere that follows the camera.
+        /// </summary>
+        public static void UsePicture(MapPack pack, string file)
+        {
+            try
+            {
+                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, true) { name = file, wrapModeU = TextureWrapMode.Repeat, wrapModeV = TextureWrapMode.Clamp };
+                if (!tex.LoadImage(pack.ReadFile(file)))
+                    throw new IOException("not a picture");
+                // URP's unlit shader can skip writing depth, so the level still draws over the sphere.
+                var shader = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Texture");
+                var mat = new Material(shader) { name = "SbgMaps sky picture" };
+                mat.SetTexture("_BaseMap", tex);
+                mat.SetTexture("_MainTex", tex);
+                mat.SetFloat("_Cull", 0f); // seen from inside: draw both sides
+                mat.SetFloat("_ZWrite", 0f);
+                // A small sphere drawn before everything else and writing no depth: the level draws over it, and it is
+                // close enough that the scene's fog barely touches it. The game's own sky would paint over it, so it goes.
+                mat.renderQueue = (int)RenderQueue.Background;
+                RenderSettings.skybox = null;
+                var dome = new GameObject("SbgMaps sky picture");
+                dome.AddComponent<MeshFilter>().sharedMesh = SphereMesh();
+                var r = dome.AddComponent<MeshRenderer>();
+                r.sharedMaterial = mat;
+                r.shadowCastingMode = ShadowCastingMode.Off;
+                r.receiveShadows = false;
+                dome.AddComponent<FollowCamera>();
+                Plugin.Log.LogInfo($"Sky: using the map's picture '{file}' ({tex.width}x{tex.height})");
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning($"Could not use the sky picture '{file}': {e.Message}");
+            }
+        }
+
+        /// <summary>A unit sphere with latitude-longitude UVs for an equirectangular picture.</summary>
+        private static Mesh SphereMesh()
+        {
+            const int lon = 64, lat = 32;
+            var verts = new List<Vector3>();
+            var uvs = new List<Vector2>();
+            var tris = new List<int>();
+            for (int y = 0; y <= lat; y++)
+                for (int x = 0; x <= lon; x++)
+                {
+                    float u = x / (float)lon, v = y / (float)lat;
+                    float theta = u * Mathf.PI * 2f, phi = v * Mathf.PI;
+                    verts.Add(new Vector3(-Mathf.Sin(phi) * Mathf.Sin(theta), -Mathf.Cos(phi), -Mathf.Sin(phi) * Mathf.Cos(theta)));
+                    uvs.Add(new Vector2(u, v));
+                }
+            for (int y = 0; y < lat; y++)
+                for (int x = 0; x < lon; x++)
+                {
+                    int a = y * (lon + 1) + x, b = a + lon + 1;
+                    // Both sides, so it shows from inside whatever the shader culls.
+                    tris.AddRange(new[] { a, a + 1, b, b, a + 1, b + 1, a, b, a + 1, b, b + 1, a + 1 });
+                }
+            var mesh = new Mesh { name = "SbgMaps sky sphere", indexFormat = IndexFormat.UInt32 };
+            mesh.SetVertices(verts);
+            mesh.SetUVs(0, uvs);
+            mesh.SetTriangles(tris, 0);
+            mesh.bounds = new Bounds(Vector3.zero, Vector3.one * 1e6f);
+            return mesh;
+        }
+
+        /// <summary>Keeps the sky sphere centred on the camera.</summary>
+        private class FollowCamera : MonoBehaviour
+        {
+            private void LateUpdate()
+            {
+                var cam = Camera.main;
+                if (cam == null || !cam.isActiveAndEnabled)
+                    cam = Camera.allCameras.Where(c => c.isActiveAndEnabled && c.targetTexture == null).OrderByDescending(c => c.depth).FirstOrDefault();
+                if (cam == null)
+                    return;
+                transform.position = cam.transform.position;
+                transform.localScale = Vector3.one * Mathf.Min(50f, cam.farClipPlane * 0.5f);
+            }
+        }
+
         private static Color Col(float[] a) => a != null && a.Length >= 4 ? new Color(a[0], a[1], a[2], a[3]) : Color.gray;
     }
 }

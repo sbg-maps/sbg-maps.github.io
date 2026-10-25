@@ -280,8 +280,14 @@ namespace SbgMaps
                         var tex = m.GetTexture(p);
                         if (tex is Texture2D t2)
                         {
-                            string file = $"{lookName}-{San(data.name)}-{San(p)}.png";
-                            File.WriteAllBytes(Path.Combine(Folder, file), ReadablePng(t2));
+                            // Named by content, so the same texture used by many skies or looks is stored once.
+                            byte[] png = ReadablePng(t2);
+                            string file;
+                            using (var sha = System.Security.Cryptography.SHA1.Create())
+                                file = "tex-" + BitConverter.ToString(sha.ComputeHash(png)).Replace("-", "").Substring(0, 16).ToLowerInvariant() + ".png";
+                            string path = Path.Combine(Folder, file);
+                            if (!File.Exists(path))
+                                File.WriteAllBytes(path, png);
                             data.textures[p] = file;
                         }
                         var so = m.GetTextureScale(p);

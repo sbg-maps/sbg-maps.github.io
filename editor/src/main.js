@@ -12,6 +12,7 @@ import { History } from "./history.js";
 import { SHAPES, spriteFromImage, circlePath, linePath } from "./shapes.js";
 import { put as storePut, get as storeGet } from "./storage.js";
 import { CHANGES } from "./changes.js";
+import { SKIES } from "./skies.js";
 import { isFlying, setFlying, onFlyChange, flySpeed, setLookButtons, setLookBlocked } from "./fly.js";
 
 const status = document.getElementById("status");
@@ -101,6 +102,8 @@ function clear() {
   selectedMaterial = null;
   selectedMaterials.clear();
   toolbar.hidden = true;
+  scene.background = null;
+  renderer.domElement.parentElement.style.background = "";
   history.clear();
   setTool("look");
 }
@@ -593,6 +596,7 @@ function selectMaterial(material, add = false) {
 
 function renderPanel() {
   if (!project) return;
+  updateSkyPreview();
   const tabs = [
     ...(project.terrain ? [["terrain", "Terrain"]] : []),
     ["model", project.terrain ? "Surfaces" : "Model"],
@@ -1035,6 +1039,8 @@ function holesPanel() {
       ${stat(MARKERS.itemBoxes.name + "es", `${h.itemBoxes.length + (h.redItemBoxes?.length ?? 0)} / ${MAX_PER_HOLE}${h.redItemBoxes?.length ? ` (${h.redItemBoxes.length} red)` : ""}`)}
       ${stat(MARKERS.checkpoints.name + "s", `${h.checkpoints.length} / ${MAX_PER_HOLE}`)}
     </div>
+    <h3>Sky</h3>
+    ${skyChoice(h)}
     <h3>Items in the boxes</h3>
     ${itemChoice("items", h.items, "Normal boxes", "Normal boxes give the game's usual items: better ones the further a player is behind the leader.")}
     ${itemChoice("redItems", h.redItems, "Red boxes", "Red boxes give spring boots or the fire club, like in the game.")}
@@ -1049,6 +1055,44 @@ function holesPanel() {
     <p class="hint">Use the toolbar over the 3D view to place things. <b>Start</b> is where players tee off, <b>Flag</b> is the hole they aim for. ${
       project.terrain ? "Paint a green around the flag in the Terrain tab." : "Ground within the green radius of the flag plays as a putting green."
     }</p>`;
+}
+
+/** The hole's sky: the beach default, the sky of any vanilla hole, or a panorama picture. */
+function skyChoice(h) {
+  const worlds = [...new Set(SKIES.map((s) => s.world))];
+  return `<div class="field"><label for="sky">Sky in the game</label><select id="sky">
+      <option value="">Default (the beach)</option>
+      ${worlds.map((w) => `<optgroup label="${w}">${SKIES.filter((s) => s.world === w).map((s) => `<option value="${esc(s.id)}" ${s.id === h.sky ? "selected" : ""}>${esc(s.id)}</option>`).join("")}</optgroup>`).join("")}
+    </select></div>
+    <div class="row">
+      <label class="btn btn-secondary small" tabindex="0" title="A panorama picture (equirectangular, twice as wide as high), like a 360 photo">${h.skyImage ? "Other picture" : "Use my own picture"}<input id="sky-file" type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png" hidden /></label>
+      ${h.skyImage ? `<button class="btn btn-secondary small" id="sky-clear">Remove picture</button>` : ""}
+    </div>
+    <p class="hint">${h.skyImage ? `Picture: <b>${esc(h.skyImage.replace(/^sky\//, ""))}</b>, shown all around the hole instead of the sky.` : "The game's skies are named after the hole they come from. Your own picture should be a 360 panorama (twice as wide as high)."} Needs mod 0.4.0.</p>`;
+}
+
+/** Shows the active hole's sky behind the level: its picture, or its sky colours. */
+const skyTextures = new Map();
+function updateSkyPreview() {
+  const h = project?.hole;
+  const viewportEl = renderer.domElement.parentElement;
+  scene.background = null;
+  viewportEl.style.background = "";
+  if (!h) return;
+  if (h.skyImage && project.skyImages.has(h.skyImage)) {
+    let tex = skyTextures.get(h.skyImage);
+    if (!tex) {
+      const url = URL.createObjectURL(new Blob([project.skyImages.get(h.skyImage)]));
+      tex = new THREE.TextureLoader().load(url, () => URL.revokeObjectURL(url));
+      tex.mapping = THREE.EquirectangularReflectionMapping;
+      tex.colorSpace = THREE.SRGBColorSpace;
+      skyTextures.set(h.skyImage, tex);
+    }
+    scene.background = tex;
+  } else if (h.sky) {
+    const sky = SKIES.find((s) => s.id === h.sky);
+    if (sky) viewportEl.style.background = `linear-gradient(180deg, ${sky.sky}, ${sky.horizon})`;
+  }
 }
 
 /** Choose-the-items section for one kind of box: the game's own choice, or a weight per item (chance = weight / total). */
@@ -1116,6 +1160,27 @@ function wireHoles() {
     });
   }
   bind("#green", (v) => (project.hole.greenRadius = Math.max(3, Number(v) || 10)));
+  info.querySelector("#sky").addEventListener("change", (e) => {
+    history.record(() => {
+      if (e.target.value) project.hole.sky = e.target.value;
+      else delete project.hole.sky;
+    });
+    updateSkyPreview();
+  });
+  info.querySelector("#sky-file").addEventListener("change", (e) =>
+    e.target.files[0] &&
+    run("Adding sky picture", async () => {
+      const name = project.addSkyImage(e.target.files[0].name, new Uint8Array(await e.target.files[0].arrayBuffer()));
+      history.record(() => (project.hole.skyImage = name));
+      updateSkyPreview();
+      renderPanel();
+    }),
+  );
+  info.querySelector("#sky-clear")?.addEventListener("click", () => {
+    history.record(() => delete project.hole.skyImage);
+    updateSkyPreview();
+    renderPanel();
+  });
   info.querySelectorAll(".items-own").forEach((c) =>
     c.addEventListener("change", () => {
       const key = c.dataset.key;
