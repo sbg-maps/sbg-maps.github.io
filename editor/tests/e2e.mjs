@@ -380,6 +380,16 @@ await test("zipped game rip: pick the model, drop stacked layers, glow panels ad
   assert(s.status.includes("left out 1"), `status: ${s.status}`);
   assert(s.glow?.alphaMode === "add" && s.glow?.renderOnly, `glow panel not drawn as a glow: ${JSON.stringify(s.glow)}`);
   assert(!s.collision, "glow panel mistaken for a collision mesh");
+  // Shift+click picks several materials; a change to one applies to all of them.
+  await page.click('.tab[data-tab="model"]');
+  const rows = await page.$$(".material .thumb");
+  assert(rows.length >= 2, `expected 2+ material rows, got ${rows.length}`);
+  await rows[0].click();
+  await (await page.$$(".material .thumb"))[1].click({ modifiers: ["Shift"] });
+  assert((await page.$$(".material.selected")).length === 2, "shift+click did not select a second material");
+  await page.click('.alpha-modes [data-mode="cutout"]');
+  const modes = await page.evaluate(() => window.__sbg.project.materials.slice(0, 2).map((m) => m.material.userData.alphaMode));
+  assert(modes.every((m) => m === "cutout"), `change did not apply to both: ${modes}`);
   assert(page.errors.length === 0, page.errors.join("; "));
   await page.close();
 });

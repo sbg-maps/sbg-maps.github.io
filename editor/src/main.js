@@ -32,6 +32,8 @@ let project = null; // the level being edited
 let tab = "model";
 let tool = "look";
 let selectedMaterial = null;
+/** Every selected material (Shift+click adds or removes); changes made to one of them apply to all. */
+const selectedMaterials = new Set();
 let selectedObject = null;
 const brush = { radius: 14, strength: 12, surface: 1 };
 const newLevelChoice = { shape: "island", size: "500x600" };
@@ -97,6 +99,7 @@ function clear() {
   stopSongPreview();
   view = project = null;
   selectedMaterial = null;
+  selectedMaterials.clear();
   toolbar.hidden = true;
   history.clear();
   setTool("look");
@@ -515,7 +518,7 @@ renderer.domElement.addEventListener("pointerup", (e) => {
   if (tool === "look") {
     const owner = project.objects.find((o) => isInside(o, hit.object));
     if (owner) selectObject(owner);
-    else if (!hit.object.userData.isTerrain) selectMaterial(hitMaterial(hit));
+    else if (!hit.object.userData.isTerrain) selectMaterial(hitMaterial(hit), e.shiftKey);
   } else if (tool === "path") {
     if (!selectedObject) return setTool("look");
     history.record(() => {
@@ -551,10 +554,15 @@ function selectObject(object) {
   renderPanel();
 }
 
-function selectMaterial(material) {
-  if (selectedMaterial) selectedMaterial.emissive.setHex(0x000000);
+/** Selects a material; with `add` (Shift held) it is added to the selection, or taken out if it was in it. */
+function selectMaterial(material, add = false) {
+  if (!add) selectedMaterials.clear();
+  if (material && add && selectedMaterials.has(material)) {
+    selectedMaterials.delete(material);
+    material = [...selectedMaterials].pop() ?? null;
+  } else if (material) selectedMaterials.add(material);
   selectedMaterial = material;
-  if (material) material.emissive.setHex(0x665500);
+  for (const { material: m } of project?.materials ?? []) m.emissive?.setHex(selectedMaterials.has(m) ? 0x665500 : 0x000000);
   tab = "model";
   renderPanel();
   info.querySelector(".material.selected")?.scrollIntoView({ block: "nearest" });
@@ -643,7 +651,7 @@ function modelPanel() {
     .map(({ material }, i) =>
       material.userData.invisible && material.userData.renderOnly
         ? ""
-        : `<div class="material ${material === selectedMaterial ? "selected" : ""}" data-i="${i}">
+        : `<div class="material ${selectedMaterials.has(material) ? "selected" : ""}" data-i="${i}">
           <span class="thumb" style="${materialThumb(material)}"></span>
           <span class="mat-name" title="${esc(material.name)}">${esc(material.name || `Material ${i + 1}`)}</span>
           ${material.userData.renderOnly
@@ -668,7 +676,7 @@ function modelPanel() {
     <div class="row">${project.terrain ? "" : `<button class="btn btn-secondary small" id="rotate">Rotate 90&deg;</button>`}
     <label class="check"><input type="checkbox" id="overlay" ${project.surfaceOverlay ? "checked" : ""} /> Show surfaces</label></div>
     <h3>Surfaces</h3>
-    <p class="hint">${project.terrain ? "Surfaces of your objects and props (the terrain is painted in the Terrain tab)." : "Pick what each material plays as. Tip: click the level with Look to find a material."} Click a material for how its texture's transparency is drawn.${
+    <p class="hint">${project.terrain ? "Surfaces of your objects and props (the terrain is painted in the Terrain tab)." : "Pick what each material plays as. Tip: click the level with Look to find a material."} Click a material for how its texture's transparency is drawn; Shift+click to pick several and change them together.${
       project.hasCollisionMesh ? " This level has a separate collision mesh: tick Show surfaces to see it." : ""
     }</p>
     <div class="materials">${surfaceRows || `<p class="hint">Nothing here yet.</p>`}</div>`;
@@ -686,7 +694,8 @@ function lookSettings(material, i) {
   const { alphaMode = "opaque", alphaCutoff = 0.5, opacity = 1, doubleSided = true } = material.userData;
   const slider = (cls, label, value, min, tip) =>
     `<label class="look-slider" title="${tip}">${label}<input type="range" class="${cls}" data-i="${i}" min="${min}" max="100" step="5" value="${Math.round(value * 100)}" /><span class="hint">${Math.round(value * 100)}%</span></label>`;
-  return `<div class="mat-look">
+  const many = selectedMaterials.size > 1 ? `<p class="hint"><b>${selectedMaterials.size} materials selected</b>: changes here and in their rows apply to all of them. Shift+click to add or remove one.</p>` : "";
+  return `<div class="mat-look">${many}
     <div class="choice-group alpha-modes">${ALPHA_MODES.map(([id, name, tip]) => `<button class="choice ${id === alphaMode ? "active" : ""}" data-mode="${id}" data-i="${i}" title="${tip}">${name}</button>`).join("")}</div>
     ${alphaMode === "cutout" ? slider("alpha-cutoff", "Cut below", alphaCutoff, 5, "Parts more see-through than this are cut away. Raise it if edges look fuzzy, lower it if thin parts vanish.") : ""}
     ${alphaMode === "blend" ? slider("alpha-opacity", "Opacity", opacity, 5, "How solid it looks overall") : ""}
@@ -703,6 +712,12 @@ function surfaceOptions(selected) {
       .map((s) => `<option value="${s.id}" ${s.id === selected ? "selected" : ""}>${s.name}</option>`)
       .join("")}</optgroup>`)
     .join("");
+}
+
+/** The material a control belongs to, plus the rest of the selection if it is one of the selected. */
+function together(el) {
+  const { material } = project.materials[Number(el.dataset.i)];
+  return selectedMaterials.has(material) ? [...selectedMaterials] : [material];
 }
 
 function wireModel() {
@@ -727,17 +742,22 @@ function wireModel() {
     }),
   );
   info.querySelectorAll("select.surface").forEach((s) =>
-    s.addEventListener("change", () => project.setSurface(project.materials[Number(s.dataset.i)].material, s.value)),
+    s.addEventListener("change", () => {
+      for (const m of together(s)) project.setSurface(m, s.value);
+      if (selectedMaterials.size > 1) renderPanel();
+    }),
   );
   info.querySelectorAll(".climb input").forEach((c) =>
     c.addEventListener("change", () => {
-      const { material } = project.materials[Number(c.dataset.i)];
-      if (c.checked) material.userData.climbable = true;
-      else delete material.userData.climbable;
+      for (const material of together(c)) {
+        if (c.checked) material.userData.climbable = true;
+        else delete material.userData.climbable;
+      }
+      if (selectedMaterials.size > 1) renderPanel();
     }),
   );
   const look = (el, changes) => {
-    project.setLook(project.materials[Number(el.dataset.i)].material, changes);
+    for (const m of together(el)) project.setLook(m, changes);
     history.version++;
   };
   info.querySelectorAll(".alpha-modes .choice").forEach((b) =>
@@ -756,16 +776,17 @@ function wireModel() {
   info.querySelectorAll(".two-sided").forEach((c) => c.addEventListener("change", () => look(c, { doubleSided: c.checked })));
   info.querySelectorAll(".walk-through").forEach((c) =>
     c.addEventListener("change", () => {
-      const { material } = project.materials[Number(c.dataset.i)];
-      if (c.checked) material.userData.renderOnly = true;
-      else delete material.userData.renderOnly;
+      for (const material of together(c)) {
+        if (c.checked) material.userData.renderOnly = true;
+        else delete material.userData.renderOnly;
+      }
       history.version++;
       renderPanel();
     }),
   );
   info.querySelectorAll(".material").forEach((row) =>
     row.addEventListener("click", (e) => {
-      if (!["SELECT", "INPUT", "LABEL"].includes(e.target.tagName)) selectMaterial(project.materials[Number(row.dataset.i)].material);
+      if (!["SELECT", "INPUT", "LABEL"].includes(e.target.tagName)) selectMaterial(project.materials[Number(row.dataset.i)].material, e.shiftKey);
     }),
   );
 }
@@ -1307,6 +1328,13 @@ async function offerRestore() {
   );
 }
 offerRestore();
+
+// Controls overview.
+const helpDialog = document.getElementById("help");
+document.getElementById("help-btn").addEventListener("click", () => (helpDialog.hidden = false));
+helpDialog.addEventListener("click", (e) => {
+  if (e.target === helpDialog || e.target.closest("[data-act=cancel]")) helpDialog.hidden = true;
+});
 
 // Close: back to the start screen. The work is autosaved first, so "Continue where you left off" brings it back.
 closeBtn.addEventListener("click", () =>

@@ -28,6 +28,7 @@
         <select id="hole-select" class="pill-select" disabled aria-label="Hole"><option>No map open</option></select>
         <button class="btn btn-secondary icon" id="undo" title="Undo (Ctrl+Z)" aria-label="Undo">&#8630;</button>
         <button class="btn btn-secondary icon" id="redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo">&#8631;</button>
+        <button class="btn btn-secondary" id="help-btn" title="Mouse and keyboard controls">Controls</button>
         <button class="btn btn-secondary" id="close-btn" hidden title="Close this model or map and start over (it stays in the autosave)">Close</button>
       </div>
       <span id="status" class="bubble">Files stay on your computer</span>
@@ -65,6 +66,23 @@
             <button class="btn btn-primary" data-act="create">Create level</button>
             <button class="btn btn-secondary small" data-act="cancel">Cancel</button>
           </div>
+        </div>
+      </div>
+      <div id="help" class="dialog-backdrop" hidden>
+        <div class="dialog">
+          <h2>Controls</h2>
+          <table class="controls">
+            <tr><th>Left-drag</th><td>Turn the view around (with brushes: paint or sculpt)</td></tr>
+            <tr><th>Right-drag</th><td>Move the view sideways (with brushes: turn it)</td></tr>
+            <tr><th>Wheel</th><td>Zoom (while flying: flying speed)</td></tr>
+            <tr><th>Click</th><td>Use the tool picked in the toolbar</td></tr>
+            <tr><th>Right-click</th><td>Erase the object or marker under the pointer</td></tr>
+            <tr><th>Shift+click</th><td>Pick several materials (in the view with Look, or in the Model list) and change them together</td></tr>
+            <tr><th>Ctrl+Z / Ctrl+Shift+Z</th><td>Undo / redo</td></tr>
+            <tr><th>Fly</th><td>WASD to move, E/Q up and down, Shift or F faster, drag to look, Esc to stop</td></tr>
+            <tr><th>Esc</th><td>Stop flying or drawing a path</td></tr>
+          </table>
+          <div class="row"><button class="btn btn-primary" data-act="cancel">Got it</button></div>
         </div>
       </div>
       <div id="pick-model" class="dialog-backdrop" hidden>

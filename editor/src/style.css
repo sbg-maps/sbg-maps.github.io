@@ -1041,3 +1041,21 @@ button.btn {
 .slider-note .bad {
   color: var(--flag-dark);
 }
+
+.controls {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.controls th {
+  padding: 5px 12px 5px 0;
+  text-align: left;
+  white-space: nowrap;
+  vertical-align: top;
+  color: var(--grass-deep);
+}
+
+.controls td {
+  padding: 5px 0;
+}

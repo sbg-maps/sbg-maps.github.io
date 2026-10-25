@@ -2,14 +2,22 @@
 // Write for players: what they can do now in the editor, not how it works, and not mod or game news. Bump `id` for every new entry.
 export const CHANGES = [
   {
+    id: 3,
+    date: "2026-10-25",
+    items: [
+      "<b>Shift+click</b> materials (in the view with Look, or in the Model list) to pick several and change their surface, Climb, transparency or Walk through all at once.",
+      "<b>Controls</b> button at the top lists every mouse and keyboard shortcut.",
+      "<b>Close</b> button at the top: back to the start screen. Your work stays in the autosave (Continue where you left off).",
+      "<b>Right-click</b> an object or marker to erase it (Ctrl+Z brings it back). Right-drag still moves the view.",
+      "Jump pads launch like the game's own (103 m/s at 35 degrees) and the arc now uses the game's real gravity and air drag.",
+    ],
+  },
+  {
     id: 2,
     date: "2026-10-25",
     items: [
       "<b>Fly</b> button (top right of the view): fly around the map with WASD, look by dragging, Shift or F to go faster, the wheel sets the speed. Tools keep working while you fly. In Firefox, use F to go faster: Shift + right-click opens the browser's menu.",
       "Up to 64 item boxes and 64 checkpoints per hole (was 16 and 1). Checkpoints count in the order you place them, from the Start to the Flag. Needs mod 0.3.0.",
-      "<b>Close</b> button at the top: back to the start screen. Your work stays in the autosave (Continue where you left off).",
-      "<b>Right-click</b> an object or marker to erase it (Ctrl+Z brings it back). Right-drag still moves the view.",
-      "Jump pads launch like the game's own (103 m/s at 35 degrees) and the arc now uses the game's real gravity and air drag.",
       "<b>Red item boxes</b> (Red box in the toolbar): they give the better movement items, like the red boxes in the game. Needs mod 0.3.0.",
       "<b>Jump pads show their flight</b>: a dashed arc and a ring where players come down (blue if it is in the water). It updates as you move, turn or change a pad.",
       "GameCube and Wii levels: ground layers that fade into each other (through vertex colours) now blend instead of fighting, in the editor and in the game (mod 0.3.0). Re-export maps made before today to get this.",
