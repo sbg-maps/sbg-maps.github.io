@@ -130,7 +130,10 @@ export class Project {
     const seen = new Map();
     this.root.traverse((o) => {
       if (!o.isMesh) return;
+      const fades = fadesOut(o.geometry);
       for (const m of materialsOf(o)) {
+        // Layers that fade out through their vertex colours (game rips blend ground textures like this).
+        if (fades && m.userData.alphaMode == null) m.userData.alphaMode = "blend";
         if (!seen.has(m)) {
           m.userData.surface ??= m.userData.renderOnly ? "none" : "rough";
           // How the texture's alpha is drawn; imported files and older maps say it in their own ways.
@@ -944,4 +947,16 @@ function exportMaterial({ material, original }) {
   m.blending = THREE.NormalBlending;
   m.side = doubleSided ? THREE.DoubleSide : THREE.FrontSide;
   return m;
+}
+
+const fadeCache = new WeakMap();
+
+/** Does a mesh have see-through vertex colours (a layer that fades into what is under it)? Remembered per geometry. */
+function fadesOut(geometry) {
+  if (fadeCache.has(geometry)) return fadeCache.get(geometry);
+  const c = geometry.attributes.color;
+  let fades = false;
+  if (c && c.itemSize === 4) for (let i = 0; i < c.count && !fades; i++) fades = c.getW(i) < 0.99;
+  fadeCache.set(geometry, fades);
+  return fades;
 }

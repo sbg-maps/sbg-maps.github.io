@@ -19,6 +19,9 @@ namespace SbgMaps
             public float[] Positions;   // xyz per vertex, map coordinates
             public float[] Normals;     // xyz per vertex, may be null
             public float[] Uvs;         // uv per vertex (Unity convention), may be null
+            public float[] Colors;      // rgba per vertex (COLOR_0), may be null; game rips keep baked shading and layer blending here
+            /// <summary>Some vertex colours are see-through: a layer that fades into the ground under it.</summary>
+            public bool HasVertexAlpha;
             public int[] Indices;       // triangles, Unity winding
             public int Material = -1;
         }
@@ -231,6 +234,13 @@ namespace SbgMaps
                 int count = pos.Length / 3;
                 var nrm = attrs["NORMAL"] != null ? ReadFloats((int)attrs["NORMAL"], 3) : null;
                 var uv = attrs["TEXCOORD_0"] != null ? ReadFloats((int)attrs["TEXCOORD_0"], 2) : null;
+                float[] col = null;
+                int colComponents = 4;
+                if (attrs["COLOR_0"] != null)
+                {
+                    colComponents = (string)Arr("accessors")[(int)attrs["COLOR_0"]]["type"] == "VEC3" ? 3 : 4;
+                    col = ReadFloats((int)attrs["COLOR_0"], colComponents);
+                }
                 int[] idx;
                 if (p["indices"] != null)
                     idx = ReadInts((int)p["indices"]);
@@ -273,6 +283,22 @@ namespace SbgMaps
                         prim.Uvs[i * 2] = uv[i * 2];
                         prim.Uvs[i * 2 + 1] = 1f - uv[i * 2 + 1];
                     }
+                }
+                if (col != null)
+                {
+                    prim.Colors = new float[count * 4];
+                    bool anyShade = false;
+                    for (int i = 0; i < count; i++)
+                    {
+                        for (int c = 0; c < 3; c++)
+                            prim.Colors[i * 4 + c] = col[i * colComponents + c];
+                        prim.Colors[i * 4 + 3] = colComponents == 4 ? col[i * colComponents + 3] : 1f;
+                        anyShade |= prim.Colors[i * 4] < 0.99f || prim.Colors[i * 4 + 1] < 0.99f || prim.Colors[i * 4 + 2] < 0.99f;
+                        prim.HasVertexAlpha |= prim.Colors[i * 4 + 3] < 0.99f;
+                    }
+                    // All white and solid changes nothing; skip it so the plain material is used.
+                    if (!anyShade && !prim.HasVertexAlpha)
+                        prim.Colors = null;
                 }
                 // Flipping z mirrors the mesh, so reverse the winding (unless the node transform already mirrored it).
                 prim.Indices = new int[idx.Length - idx.Length % 3];

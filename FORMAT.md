@@ -107,6 +107,8 @@ Unknown values count as rough.
 
 ### Objects
 
+Vertex colours (`COLOR_0`, RGB or RGBA) multiply the texture, as game rips use them for baked shading. A part whose vertex alpha goes below 1 is a layer that fades into what is under it: it is drawn see-through (if the game's lit particle shader is available, else it is not drawn) and still collides.
+
 A node with `extras.object` is an object. It is built separately, with its own transform, so the game can move it.
 
 | `object` | behaviour |

@@ -32,7 +32,9 @@ namespace SbgMaps
             harmony.PatchAll();
             SceneManager.sceneLoaded += OnSceneLoaded;
             CustomCourse.InjectLate();
-            Log.LogInfo($"{Name} {Version} loaded");
+            foreach (var name in new[] { "Universal Render Pipeline/Particles/Lit", "Universal Render Pipeline/Particles/Simple Lit", "Universal Render Pipeline/Particles/Unlit", "Universal Render Pipeline/Simple Lit", "Universal Render Pipeline/Unlit", "Universal Render Pipeline/Lit" })
+                Log.LogInfo($"Shader '{name}': {(Shader.Find(name) != null ? "available" : "missing")}");
+                        Log.LogInfo($"{Name} {Version} loaded");
         }
 
         // ScriptEngine hot reload destroys and recreates the plugin, so undo everything Awake did.

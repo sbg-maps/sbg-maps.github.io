@@ -266,9 +266,9 @@ namespace SbgMaps
 
                 string name = $"{label} {index++:D3} {mat?.Name ?? "unnamed"} [{surface}]";
                 if (main.Count > 0)
-                    CreatePart(parent, name, main, invisible ? null : MaterialFor(ctx.Materials, model, prim.Material, false), surface, ctx.GroundLayer, mat?.Climbable ?? false);
+                    CreatePart(parent, name, main, invisible ? null : MaterialFor(ctx.Materials, model, prim.Material, false, main), surface, ctx.GroundLayer, mat?.Climbable ?? false);
                 if (green.Count > 0)
-                    CreatePart(parent, name + " green", green, invisible ? null : MaterialFor(ctx.GreenMaterials, model, prim.Material, true),
+                    CreatePart(parent, name + " green", green, invisible ? null : MaterialFor(ctx.GreenMaterials, model, prim.Material, true, green),
                         greenSurface ?? "none", ctx.GroundLayer, mat?.Climbable ?? false);
             }
         }
@@ -282,7 +282,8 @@ namespace SbgMaps
         {
             var model = ctx.Model;
             GlbReader.Material MatOf(GlbReader.Primitive p) => p.Material >= 0 && p.Material < model.Materials.Count ? model.Materials[p.Material] : null;
-            bool hasCollisionMesh = model.Materials.Any(m => m.Invisible);
+            // Invisible and drawn-only together is an effect that is never there at all, not a collision mesh.
+            bool hasCollisionMesh = model.Materials.Any(m => m.Invisible && !m.RenderOnly);
 
             // Visual ground: drawn triangles. Collision ground: the invisible mesh, or the drawn one if there is none.
             // Solid opaque ground first, then drawn-only, then cut-out, then see-through layers.
@@ -365,7 +366,7 @@ namespace SbgMaps
             {
                 var src = kv.Key >= 0 && kv.Key < ctx.Model.Materials.Count ? ctx.Model.Materials[kv.Key] : null;
                 string surface = GreenFor(src?.Surface ?? "rough") ?? "green";
-                var material = drawn ? MaterialFor(ctx.GreenMaterials, ctx.Model, kv.Key, true) : null;
+                var material = drawn ? MaterialFor(ctx.GreenMaterials, ctx.Model, kv.Key, true, kv.Value) : null;
                 CreatePart(parent, $"cup apron {(drawn ? "visual" : "collision")} {src?.Name}", kv.Value, material, collides ? surface : "none", ctx.GroundLayer);
             }
         }
@@ -429,6 +430,7 @@ namespace SbgMaps
                         Pos = a.Pos * u + b.Pos * v + c.Pos * w,
                         Normal = (a.Normal * u + b.Normal * v + c.Normal * w).normalized,
                         Uv = a.Uv * u + b.Uv * v + c.Uv * w,
+                        Color = a.Color * u + b.Color * v + c.Color * w,
                     };
                     // Prefer the ground closest to the cup's height (not a bridge above or a cave below).
                     // Where layers lie on top of each other (decals, blend layers), take the plain ground, so the
@@ -520,12 +522,56 @@ namespace SbgMaps
             go.SetActive(true);
         }
 
-        private static Material MaterialFor(Dictionary<int, Material> cache, GlbReader.Model model, int index, bool greenZone)
+        private const string VertexColorShader = "Universal Render Pipeline/Particles/Lit";
+        private static Shader vertexColorShader;
+        private static bool vertexColorShaderLooked;
+
+        /// <summary>
+        /// The material for a part. Parts with vertex colours (baked shading, layers that fade out) need a shader that
+        /// uses them; the game's lit particle shader does. Without it, a fading layer would be a solid copy over the
+        /// ground under it, so it is not drawn (returns null: collision only).
+        /// </summary>
+        private static Material MaterialFor(Dictionary<int, Material> cache, GlbReader.Model model, int index, bool greenZone, MeshData mesh)
+        {
+            if (!mesh.HasColors)
+                return MaterialFor(cache, model, index, greenZone);
+            if (!vertexColorShaderLooked)
+            {
+                vertexColorShaderLooked = true;
+                vertexColorShader = Shader.Find(VertexColorShader);
+                Plugin.Log.LogInfo($"LevelBuilder: vertex colours {(vertexColorShader != null ? "drawn with " + VertexColorShader : "not supported (shader missing); fading layers are hidden")}");
+            }
+            if (vertexColorShader == null)
+                return mesh.HasVertexAlpha ? null : MaterialFor(cache, model, index, greenZone);
+            int key = -1000 - (index + 1) * 2 - (mesh.HasVertexAlpha ? 1 : 0);
+            if (cache.TryGetValue(key, out var cached))
+                return cached;
+            var mat = MaterialFor(new Dictionary<int, Material>(), model, index, greenZone, vertexColorShader);
+            if (mesh.HasVertexAlpha)
+                MakeTransparent(mat, additive: false);
+            cache[key] = mat;
+            return mat;
+        }
+
+        private static void MakeTransparent(Material mat, bool additive)
+        {
+            mat.SetFloat("_Surface", 1f);
+            // URP blend modes: 0 alpha, 2 additive.
+            mat.SetFloat("_Blend", additive ? 2f : 0f);
+            mat.SetOverrideTag("RenderType", "Transparent");
+            mat.SetFloat("_SrcBlend", (float)(additive ? UnityEngine.Rendering.BlendMode.One : UnityEngine.Rendering.BlendMode.SrcAlpha));
+            mat.SetFloat("_DstBlend", (float)(additive ? UnityEngine.Rendering.BlendMode.One : UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha));
+            mat.SetFloat("_ZWrite", 0f);
+            mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        }
+
+        private static Material MaterialFor(Dictionary<int, Material> cache, GlbReader.Model model, int index, bool greenZone, Shader shaderOverride = null)
         {
             if (cache.TryGetValue(index, out var cached))
                 return cached;
             var src = index >= 0 && index < model.Materials.Count ? model.Materials[index] : null;
-            var shader = Shader.Find("Universal Render Pipeline/Lit");
+            var shader = shaderOverride ?? Shader.Find("Universal Render Pipeline/Lit");
             var mat = new Material(shader) { name = src?.Name ?? "sbgmaps" };
             var color = src != null ? new Color(src.BaseColor[0], src.BaseColor[1], src.BaseColor[2], src.BaseColor[3]) : Color.white;
             if (greenZone)
@@ -556,17 +602,7 @@ namespace SbgMaps
                 mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.AlphaTest;
             }
             else if (src != null && (src.AlphaBlend || src.Additive))
-            {
-                mat.SetFloat("_Surface", 1f);
-                // URP blend modes: 0 alpha, 2 additive.
-                mat.SetFloat("_Blend", src.Additive ? 2f : 0f);
-                mat.SetOverrideTag("RenderType", "Transparent");
-                mat.SetFloat("_SrcBlend", (float)(src.Additive ? UnityEngine.Rendering.BlendMode.One : UnityEngine.Rendering.BlendMode.SrcAlpha));
-                mat.SetFloat("_DstBlend", (float)(src.Additive ? UnityEngine.Rendering.BlendMode.One : UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha));
-                mat.SetFloat("_ZWrite", 0f);
-                mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
-                mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
-            }
+                MakeTransparent(mat, src.Additive);
             cache[index] = mat;
             return mat;
         }
@@ -585,12 +621,14 @@ namespace SbgMaps
             public Vector3 Pos;
             public Vector3 Normal;
             public Vector2 Uv;
+            public Color Color;
 
             public static Vertex From(GlbReader.Primitive p, int i) => new Vertex
             {
                 Pos = new Vector3(p.Positions[i * 3], p.Positions[i * 3 + 1], p.Positions[i * 3 + 2]),
                 Normal = p.Normals != null ? new Vector3(p.Normals[i * 3], p.Normals[i * 3 + 1], p.Normals[i * 3 + 2]) : Vector3.up,
                 Uv = p.Uvs != null ? new Vector2(p.Uvs[i * 2], p.Uvs[i * 2 + 1]) : Vector2.zero,
+                Color = p.Colors != null ? new Color(p.Colors[i * 4], p.Colors[i * 4 + 1], p.Colors[i * 4 + 2], p.Colors[i * 4 + 3]) : Color.white,
             };
 
             public static Vertex Lerp(Vertex a, Vertex b, float t) => new Vertex
@@ -598,6 +636,7 @@ namespace SbgMaps
                 Pos = Vector3.Lerp(a.Pos, b.Pos, t),
                 Normal = Vector3.Lerp(a.Normal, b.Normal, t).normalized,
                 Uv = Vector2.Lerp(a.Uv, b.Uv, t),
+                Color = Color.Lerp(a.Color, b.Color, t),
             };
         }
 
@@ -606,9 +645,13 @@ namespace SbgMaps
             private readonly List<Vector3> positions = new List<Vector3>();
             private readonly List<Vector3> normals = new List<Vector3>();
             private readonly List<Vector2> uvs = new List<Vector2>();
+            private readonly List<Color> colors = new List<Color>();
             private readonly List<int> indices = new List<int>();
 
             public int Count => indices.Count;
+            /// <summary>Any vertex colour other than solid white (shading or see-through parts).</summary>
+            public bool HasColors { get; private set; }
+            public bool HasVertexAlpha { get; private set; }
 
             /// <summary>Adds a convex polygon (in winding order) as a triangle fan.</summary>
             public void AddPolygon(List<Vertex> poly)
@@ -621,6 +664,9 @@ namespace SbgMaps
                     positions.Add(v.Pos);
                     normals.Add(v.Normal);
                     uvs.Add(v.Uv);
+                    colors.Add(v.Color);
+                    HasColors |= v.Color.r < 0.99f || v.Color.g < 0.99f || v.Color.b < 0.99f || v.Color.a < 0.99f;
+                    HasVertexAlpha |= v.Color.a < 0.99f;
                 }
                 for (int i = 1; i + 1 < poly.Count; i++)
                 {
@@ -638,6 +684,8 @@ namespace SbgMaps
                 mesh.SetVertices(positions);
                 mesh.SetNormals(normals);
                 mesh.SetUVs(0, uvs);
+                if (HasColors)
+                    mesh.SetColors(colors);
                 mesh.SetTriangles(indices, 0);
                 mesh.RecalculateBounds();
                 return mesh;
