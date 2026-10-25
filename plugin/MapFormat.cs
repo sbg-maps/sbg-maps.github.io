@@ -21,7 +21,17 @@ namespace SbgMaps
         public ModelDef model;
         /// <summary>Optional song (a file in the map: .mp3, .ogg, .wav or .flac) played on every hole.</summary>
         public string music;
+        /// <summary>Optional settings per song file, e.g. its volume.</summary>
+        public Dictionary<string, SongDef> songs;
         public List<HoleDef> holes = new List<HoleDef>();
+
+        /// <summary>How loud a song in the map plays, 0 to 1.</summary>
+        public float VolumeOf(string file) => songs != null && file != null && songs.TryGetValue(file, out var s) && s != null ? Mathf.Clamp01(s.volume) : 1f;
+    }
+
+    public class SongDef
+    {
+        public float volume = 1f;
     }
 
     public class ModelDef
@@ -37,6 +47,8 @@ namespace SbgMaps
         public string theme = "coast";
         /// <summary>Optional song for this hole only, overriding the map's.</summary>
         public string music;
+        /// <summary>Optional picture of the hole (a .jpg or .png in the map) shown in match setup.</summary>
+        public string preview;
         /// <summary>Playable area in metres, [x, z]. Map-local coordinates run from (0,0) to size.</summary>
         public float[] size;
         public GridDef heightmap;

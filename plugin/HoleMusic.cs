@@ -50,7 +50,7 @@ namespace SbgMaps
                 string file = pack.Manifest.holes[index].music ?? pack.Manifest.music;
                 if (string.IsNullOrEmpty(file))
                     return true;
-                Play(CachedPath(pack, file), hurryUpInstantly);
+                Play(CachedPath(pack, file), hurryUpInstantly, pack.Manifest.VolumeOf(file));
                 owner = __instance;
                 ___isPlayingHoleMusic = true;
                 return false;
@@ -113,7 +113,7 @@ namespace SbgMaps
             return path;
         }
 
-        private static void Play(string path, bool hurry)
+        private static void Play(string path, bool hurry, float volume)
         {
             Stop();
             var core = RuntimeManager.CoreSystem;
@@ -124,6 +124,7 @@ namespace SbgMaps
             bus.getChannelGroup(out var group);
             Check(core.playSound(sound, group, false, out channel), "play");
             AppDomain.CurrentDomain.SetData(SharedKey, new[] { channel.handle, sound.handle });
+            channel.setVolume(volume);
             if (hurry)
                 channel.setPitch(HurryPitch);
         }

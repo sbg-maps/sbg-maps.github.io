@@ -307,8 +307,21 @@ await test("import an OBJ with MTL and texture, export, reopen", async () => {
   await page.click('.tab[data-tab="model"]');
   await page.check(".material .climb input");
   await page.waitForFunction(() => window.__sbg.project.materials.some((m) => m.material.userData.climbable), null, { timeout: 5000 });
+  // Transparency settings of the selected material.
+  await page.click(".material .thumb");
+  await page.waitForSelector(".mat-look", { timeout: 5000 }).catch(async () => {
+    throw new Error(`no material settings after selecting; panel: ${(await page.textContent("#info")).slice(0, 300)}`);
+  });
+  await page.click('.alpha-modes [data-mode="cutout"]');
+  await page.$eval(".alpha-cutoff", (r) => {
+    r.value = "30";
+    r.dispatchEvent(new Event("input"));
+  });
+  await page.uncheck(".mat-look .two-sided");
   const file = await exportMap(page, "obj.sbgmap");
   const { gltf } = readSbgmap(file);
+  const cut = gltf.materials.find((m) => m.alphaMode === "MASK");
+  assert(cut && Math.abs(cut.alphaCutoff - 0.3) < 0.01 && !cut.doubleSided, `cut-out settings lost on export: ${JSON.stringify(gltf.materials)}`);
   assert(gltf.images?.length > 0, "textures missing from export");
   assert(gltf.materials.some((m) => m.extras?.climbable), "Climb box lost on export");
   await page.close();
@@ -320,7 +333,7 @@ await test("import an OBJ with MTL and texture, export, reopen", async () => {
   await again.close();
 });
 
-await test("zipped game rip: pick the model, drop stacked layers and glow panels", async () => {
+await test("zipped game rip: pick the model, drop stacked layers, glow panels add light", async () => {
   // Like a GameCube/Wii rip: the ground plus a stacked shadow copy of it, a glow panel (grey, no alpha), and a smaller extra model.
   const quad = (y, first) => [`v -50 ${y} -50`, `v 50 ${y} -50`, `v 50 ${y} 50`, `v -50 ${y} 50`, `f ${first}/1 ${first + 1}/2 ${first + 2}/3`, `f ${first}/1 ${first + 2}/3 ${first + 3}/4`];
   const big = ["mtllib rip.mtl", "vt 0 0", "vt 1 0", "vt 1 1", "vt 0 1", "o ground", "usemtl grass", ...quad(0, 1), "o ground_uv2", "usemtl shadow", ...quad(0, 5),
@@ -347,11 +360,11 @@ await test("zipped game rip: pick the model, drop stacked layers and glow panels
     const p = window.__sbg.project;
     const meshes = [];
     p.root.traverse((o) => o.isMesh && meshes.push(o.name));
-    return { meshes, status: document.querySelector("#status").textContent, glow: p.materials.find((m) => m.material.name === "glow")?.material.visible, collision: p.hasCollisionMesh };
+    return { meshes, status: document.querySelector("#status").textContent, glow: p.materials.find((m) => m.material.name === "glow")?.material.userData, collision: p.hasCollisionMesh };
   });
   assert(!s.meshes.includes("ground_uv2") && s.meshes.includes("ground"), `stacked layer not removed: ${s.meshes}`);
   assert(s.status.includes("left out 1"), `status: ${s.status}`);
-  assert(s.glow === false, "glow panel still drawn");
+  assert(s.glow?.alphaMode === "add" && s.glow?.renderOnly, `glow panel not drawn as a glow: ${JSON.stringify(s.glow)}`);
   assert(!s.collision, "glow panel mistaken for a collision mesh");
   assert(page.errors.length === 0, page.errors.join("; "));
   await page.close();
@@ -377,7 +390,7 @@ if (fs.existsSync(OPTIONAL.sm64Glb)) {
   });
 } else results.push("  skip SM64 decomp level (imports/sm64/bob.glb not present)");
 
-await test("music and play area: add, export, reopen", async () => {
+await test("music, volume, play area and hole picture: add, export, reopen", async () => {
   // A quarter second of silence as a WAV file.
   const rate = 8000, samples = 2000, wav = Buffer.alloc(44 + samples * 2);
   wav.write("RIFF", 0); wav.writeUInt32LE(36 + samples * 2, 4); wav.write("WAVEfmt ", 8); wav.writeUInt32LE(16, 16);
@@ -395,10 +408,19 @@ await test("music and play area: add, export, reopen", async () => {
   await page.click('.tab[data-tab="export"]');
   await page.setInputFiles("#song-file", song);
   await page.waitForSelector(".song", { timeout: 10000 });
+  await page.$eval(".song-vol", (r) => {
+    r.value = "60";
+    r.dispatchEvent(new Event("input"));
+    r.dispatchEvent(new Event("change"));
+  });
   const file = await exportMap(page, "music.sbgmap");
   const { manifest, files } = readSbgmap(file);
   assert(manifest.music === "music/Main_Theme.wav", `map song: ${manifest.music}`);
   assert(files["music/Main_Theme.wav"]?.length === wav.length, "song file missing from the map");
+  assert(manifest.songs?.["music/Main_Theme.wav"]?.volume === 0.6, `song volume: ${JSON.stringify(manifest.songs)}`);
+  const picture = files[manifest.holes[0].preview ?? ""];
+  assert(picture?.length > 2000 && picture[0] === 0xff && picture[1] === 0xd8, `hole picture: ${manifest.holes[0].preview} ${picture?.length}`);
+  fs.writeFileSync(path.join(tmp, "preview.jpg"), picture);
   assert(manifest.holes[0].bounds?.length >= 3 && manifest.holes[0].bounds.every((p) => p.length === 2), `play area: ${JSON.stringify(manifest.holes[0].bounds)}`);
   await page.close();
   const again = await freshPage(browser, url);
@@ -406,6 +428,7 @@ await test("music and play area: add, export, reopen", async () => {
   await again.waitForFunction(() => window.__sbg.project?.music, null, { timeout: 20000 }).catch(() => {});
   assert(await again.evaluate(() => window.__sbg.project?.music === "music/Main_Theme.wav"), "reopened map lost its song");
   assert(await again.evaluate(() => window.__sbg.project?.hole.bounds?.length >= 3), "reopened map lost its play area");
+  assert(await again.evaluate(() => window.__sbg.project?.songVolumes.get("music/Main_Theme.wav") === 0.6), "reopened map lost its song volume");
   assert(again.errors.length === 0, again.errors.join("; "));
   await again.close();
 });

@@ -390,21 +390,29 @@ export class Terrain {
 /**
  * Terrain material with height contour lines (thin every 2 m, strong every 10 m), so sculpting is easy to see.
  */
+const contours = { value: 1 };
+
+/** Shows or hides the contour lines on every terrain (hidden for hole pictures). */
+export function setContours(on) {
+  contours.value = on ? 1 : 0;
+}
+
 function contourMaterial() {
   const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, side: THREE.DoubleSide });
   material.onBeforeCompile = (shader) => {
+    shader.uniforms.uContours = contours;
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nvarying float vWorldY;")
       .replace("#include <begin_vertex>", "#include <begin_vertex>\nvWorldY = (modelMatrix * vec4(transformed, 1.0)).y;");
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nvarying float vWorldY;")
+      .replace("#include <common>", "#include <common>\nvarying float vWorldY;\nuniform float uContours;")
       .replace(
         "#include <color_fragment>",
         `#include <color_fragment>
         float minor = abs(fract(vWorldY / 2.0 + 0.5) - 0.5) / fwidth(vWorldY / 2.0);
         float major = abs(fract(vWorldY / 10.0 + 0.5) - 0.5) / fwidth(vWorldY / 10.0);
-        diffuseColor.rgb *= mix(0.82, 1.0, clamp(minor, 0.0, 1.0));
-        diffuseColor.rgb *= mix(0.62, 1.0, clamp(major * 0.7, 0.0, 1.0));`,
+        diffuseColor.rgb *= mix(1.0, mix(0.82, 1.0, clamp(minor, 0.0, 1.0)), uContours);
+        diffuseColor.rgb *= mix(1.0, mix(0.62, 1.0, clamp(major * 0.7, 0.0, 1.0)), uContours);`,
       );
   };
   return material;

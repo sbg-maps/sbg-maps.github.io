@@ -906,6 +906,32 @@ button.btn {
   margin-bottom: 6px;
 }
 
+.mat-look {
+  margin: 2px 0 10px 36px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(245, 196, 0, 0.12);
+}
+
+.mat-look .choice-group {
+  margin: 0 0 8px;
+}
+
+.mat-look .choice {
+  padding: 5px 8px;
+  font-size: 13px;
+}
+
+.look-slider,
+.song-volume {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: auto 1fr 3.2em;
+  align-items: center;
+  gap: 8px;
+  font: 600 13px var(--ui-font);
+}
+
 .whats-new {
   position: fixed;
   left: 16px;

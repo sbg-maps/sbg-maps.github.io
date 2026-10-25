@@ -202,11 +202,8 @@ function normalizeMaterials(root, { keepWrap = false } = {}) {
       // glTF extras (surface, invisible collision, render-only) arrive as userData; keep them.
       out.userData = { ...m.userData };
       // A grey texture with no alpha at all is a glow (light shafts, mist) that the game adds onto the picture.
-      // Drawn normally it is a dark panel, so it is left out: hidden and without collision.
-      if (map && isGlowTexture(map.image)) {
-        Object.assign(out.userData, { invisible: true, renderOnly: true });
-        out.visible = false;
-      }
+      // Drawn normally it is a dark panel; it is drawn added on, and nothing collides with it.
+      if (map && isGlowTexture(map.image)) Object.assign(out.userData, { renderOnly: true, alphaMode: "add" });
       if (out.map) {
         out.map.colorSpace = THREE.SRGBColorSpace;
         if (!keepWrap) out.map.wrapS = out.map.wrapT = THREE.RepeatWrapping;

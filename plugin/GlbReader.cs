@@ -35,6 +35,9 @@ namespace SbgMaps
             public bool DoubleSided;
             public bool AlphaBlend;
             public bool AlphaMask;
+            public float AlphaCutoff = 0.5f;
+            /// <summary>Glows: added onto what is behind (extras.alphaMode "add"; glTF itself has no such mode).</summary>
+            public bool Additive;
             public string Surface;      // from extras.surface
             public bool Invisible;      // extras.invisible: collision only, never drawn
             public bool RenderOnly;     // extras.renderOnly: drawn only, no collision
@@ -120,6 +123,8 @@ namespace SbgMaps
                     DoubleSided = (bool?)m["doubleSided"] ?? false,
                     AlphaBlend = (string)m["alphaMode"] == "BLEND",
                     AlphaMask = (string)m["alphaMode"] == "MASK",
+                    AlphaCutoff = (float?)m["alphaCutoff"] ?? 0.5f,
+                    Additive = (string)m["extras"]?["alphaMode"] == "add",
                     Surface = (string)m["extras"]?["surface"],
                     Invisible = (bool?)m["extras"]?["invisible"] ?? false,
                     RenderOnly = (bool?)m["extras"]?["renderOnly"] ?? false,

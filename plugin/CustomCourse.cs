@@ -187,8 +187,29 @@ namespace SbgMaps
             t.Property("Par").SetValue(Mathf.Max(1, def.par));
             t.Property("Difficulty").SetValue(ParseDifficulty(def.difficulty));
             t.Property("DontShowNewHoleNotification").SetValue(true);
+            var preview = LoadPreview(pack, def.preview);
+            // Without its own picture the hole would show the donor's, which is a different place.
+            t.Property("ScreenshotsThumbnail").SetValue(preview != null ? new List<Sprite> { preview } : new List<Sprite>());
             holeCache[key] = hole;
             return hole;
+        }
+
+        private static Sprite LoadPreview(MapPack pack, string file)
+        {
+            if (string.IsNullOrEmpty(file))
+                return null;
+            try
+            {
+                var texture = new Texture2D(2, 2, TextureFormat.RGB24, mipChain: false) { name = file };
+                if (!texture.LoadImage(pack.ReadFile(file), markNonReadable: true))
+                    return null;
+                return Sprite.Create(texture, new Rect(0, 0, texture.width, texture.height), new Vector2(0.5f, 0.5f));
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning($"Could not load the picture '{file}' of map '{pack.Manifest.id}': {e.Message}");
+                return null;
+            }
         }
 
         private static HoleData.DifficultyLevel ParseDifficulty(string s) =>

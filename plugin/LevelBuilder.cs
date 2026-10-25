@@ -528,17 +528,18 @@ namespace SbgMaps
             {
                 // Cut-out textures (tree leaves, fences): URP alpha clipping.
                 mat.SetFloat("_AlphaClip", 1f);
-                mat.SetFloat("_Cutoff", 0.5f);
+                mat.SetFloat("_Cutoff", Mathf.Clamp01(src.AlphaCutoff));
                 mat.EnableKeyword("_ALPHATEST_ON");
                 mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.AlphaTest;
             }
-            else if (src != null && src.AlphaBlend)
+            else if (src != null && (src.AlphaBlend || src.Additive))
             {
                 mat.SetFloat("_Surface", 1f);
-                mat.SetFloat("_Blend", 0f);
+                // URP blend modes: 0 alpha, 2 additive.
+                mat.SetFloat("_Blend", src.Additive ? 2f : 0f);
                 mat.SetOverrideTag("RenderType", "Transparent");
-                mat.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
-                mat.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                mat.SetFloat("_SrcBlend", (float)(src.Additive ? UnityEngine.Rendering.BlendMode.One : UnityEngine.Rendering.BlendMode.SrcAlpha));
+                mat.SetFloat("_DstBlend", (float)(src.Additive ? UnityEngine.Rendering.BlendMode.One : UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha));
                 mat.SetFloat("_ZWrite", 0f);
                 mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
                 mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;

@@ -3,10 +3,10 @@ import * as THREE from "three";
 import { zipSync, strToU8 } from "fflate";
 import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { scene, fromMap, toMap, disposeObject } from "./scene.js";
+import { scene, renderer, fromMap, toMap, disposeObject } from "./scene.js";
 import { materialsOf } from "./importer.js";
 import { makeGolfer, yawToRotation } from "./golfer.js";
-import { Terrain } from "./terrain.js";
+import { Terrain, setContours } from "./terrain.js";
 import { holeGrids } from "./mapfile.js";
 
 /** Surfaces a model material can have, grouped for the picker. `id` is what goes into the map file. */
@@ -72,6 +72,8 @@ export class Project {
     /** Songs in the map, by file name inside it (music/...); the map plays `music`, a hole its own `music` if set. */
     this.songs = new Map();
     this.music = null;
+    /** Loudness per song (0 to 1); songs not listed play at full volume. */
+    this.songVolumes = new Map();
     /** Real rotations of camera-facing objects, which the editor turns toward the camera while showing them. */
     this.billboardBase = new WeakMap();
     this.collectMaterials();
@@ -123,6 +125,11 @@ export class Project {
       for (const m of materialsOf(o)) {
         if (!seen.has(m)) {
           m.userData.surface ??= m.userData.renderOnly ? "none" : "rough";
+          // How the texture's alpha is drawn; imported files and older maps say it in their own ways.
+          m.userData.alphaMode ??= m.userData.alphaBlend || (m.transparent && !(m.alphaTest > 0)) ? "blend" : m.alphaTest > 0 ? "cutout" : "opaque";
+          m.userData.alphaCutoff ??= m.alphaTest > 0 ? m.alphaTest : 0.5;
+          m.userData.opacity ??= m.userData.alphaMode === "blend" ? m.opacity : 1;
+          m.userData.doubleSided ??= m.side === THREE.DoubleSide;
           m.userData.thumb ??= thumbnail(m);
           seen.set(m, { material: m, original: { color: m.color.clone(), map: m.map, vertexColors: m.vertexColors } });
         }
@@ -137,6 +144,12 @@ export class Project {
   /** Materials whose surface the mapper chooses (render-only visuals are left out). */
   get surfaceMaterials() {
     return this.materials.filter(({ material }) => !material.userData.renderOnly);
+  }
+
+  /** Changes how a material is drawn (alphaMode, alphaCutoff, opacity, doubleSided). */
+  setLook(material, changes) {
+    Object.assign(material.userData, changes);
+    this.refreshOverlay();
   }
 
   setSurface(material, surface) {
@@ -165,8 +178,14 @@ export class Project {
       }
       // Normal view shows what players see; the surface view shows what they play on.
       material.visible = this.surfaceOverlay ? !renderOnly : !invisible;
-      material.opacity = material.userData.surface === "none" && this.surfaceOverlay ? 0.35 : 1;
-      material.transparent = material.opacity < 1 || material.userData.alphaBlend === true;
+      const { alphaMode = "opaque", alphaCutoff = 0.5, opacity = 1, doubleSided = true } = material.userData;
+      const seeThrough = alphaMode === "blend" || alphaMode === "add";
+      material.opacity = material.userData.surface === "none" && this.surfaceOverlay ? 0.35 : alphaMode === "blend" ? opacity : 1;
+      material.alphaTest = alphaMode === "cutout" ? alphaCutoff : 0;
+      material.blending = alphaMode === "add" ? THREE.AdditiveBlending : THREE.NormalBlending;
+      material.transparent = material.opacity < 1 || seeThrough;
+      material.depthWrite = !seeThrough;
+      material.side = doubleSided ? THREE.DoubleSide : THREE.FrontSide;
       material.needsUpdate = true;
     }
   }
@@ -502,9 +521,14 @@ export class Project {
     return out;
   }
 
-  /** Builds the .sbgmap (zip) bytes: map.json plus level.glb and/or the terrain grids. */
-  async exportSbgmap() {
+  /**
+   * Builds the .sbgmap (zip) bytes: map.json plus level.glb and/or the terrain grids. With `previews`, each hole also
+   * gets a picture for the game's match setup (left out of autosaves, which run often).
+   */
+  async exportSbgmap({ previews = false } = {}) {
     const files = {};
+    const pictures = previews ? await this.renderPreviews() : [];
+    pictures.forEach((bytes, i) => bytes && (files[`previews/hole${i + 1}.jpg`] = [bytes, { level: 0 }]));
     const withModel = !this.terrain || this.hasModel;
     if (withModel) files["level.glb"] = new Uint8Array(await this.exportGlb());
     const grids = this.terrain?.exportGrids("terrain");
@@ -521,7 +545,8 @@ export class Project {
       size: this.size,
       model: withModel ? { file: "level.glb" } : undefined,
       music: this.music ?? undefined,
-      holes: this.holes.map((h) => ({
+      songs: this.songVolumesFor(this.usedSongs()),
+      holes: this.holes.map((h, i) => ({
         name: h.name,
         par: h.par,
         difficulty: h.difficulty,
@@ -536,11 +561,89 @@ export class Project {
         checkpoints: h.checkpoints.map(round),
         bounds: h.bounds?.length >= 3 ? h.bounds.map((p) => [Math.round(p.x * 100) / 100, Math.round(p.z * 100) / 100]) : undefined,
         music: h.music ?? undefined,
+        preview: pictures[i] ? `previews/hole${i + 1}.jpg` : undefined,
       })),
     };
     // Only songs something plays go in, stored as they are (they are compressed already).
     for (const name of this.usedSongs()) files[name] = [this.songs.get(name), { level: 0 }];
     return zipSync({ "map.json": strToU8(JSON.stringify(manifest, null, 2)), ...files }, { level: 6 });
+  }
+
+  /** `songs` for map.json: settings of the given songs that differ from the defaults, or nothing. */
+  songVolumesFor(names) {
+    const out = {};
+    for (const n of names) {
+      const v = this.songVolumes.get(n);
+      if (v != null && v !== 1) out[n] = { volume: Math.round(v * 100) / 100 };
+    }
+    return Object.keys(out).length ? out : undefined;
+  }
+
+  static PREVIEW_SIZE = [608, 400];
+
+  /**
+   * A picture of each hole from above and behind the Start, looking down the hole to the Flag (like the game's own
+   * hole pictures), as JPEG bytes; null for holes without a Start and Flag. Editor helpers are hidden meanwhile.
+   */
+  async renderPreviews() {
+    const [w, h] = Project.PREVIEW_SIZE;
+    const target = new THREE.WebGLRenderTarget(w, h, { samples: 4 });
+    target.texture.colorSpace = THREE.SRGBColorSpace;
+    const camera = new THREE.PerspectiveCamera(50, w / h, 0.5, 20000);
+    const keep = new Set([this.pivot, this.markersGroup, this.terrain?.mesh]);
+    const hidden = scene.children.filter((o) => o.visible && !o.isLight && !keep.has(o));
+    const before = { active: this.activeHole, background: scene.background };
+    const pixels = [];
+    try {
+      hidden.forEach((o) => (o.visible = false));
+      scene.background = new THREE.Color(0x9fd8f5);
+      setContours(false);
+      for (let i = 0; i < this.holes.length; i++) {
+        const hole = this.holes[i];
+        if (!hole.tee || !hole.cup) {
+          pixels.push(null);
+          continue;
+        }
+        this.activeHole = i;
+        this.rebuildMarkers();
+        // Only the water stays of the markers, reaching to the horizon like the game's sea.
+        this.markersGroup.children.forEach((o) => {
+          o.visible = !!o.userData.isWater;
+          if (o.visible) o.scale.set(30, 30, 1);
+        });
+        const tee = fromMap(hole.tee);
+        const cup = fromMap(hole.cup);
+        const along = new THREE.Vector3(cup.x - tee.x, 0, cup.z - tee.z);
+        const length = Math.max(20, along.length());
+        along.normalize();
+        camera.position.copy(tee).addScaledVector(along, -(length * 0.25 + 15)).add(new THREE.Vector3(0, length * 0.35 + 20, 0));
+        // Stay well above any hill behind the Start, and clear of what lies between it and the Flag.
+        camera.position.y = Math.max(camera.position.y, this.groundUnder(camera.position) + 25, ...[0.2, 0.4].map((t) => this.groundUnder(tee.clone().lerp(cup, t)) + 15));
+        camera.lookAt(tee.clone().lerp(cup, 0.55));
+        camera.updateMatrixWorld();
+        renderer.setRenderTarget(target);
+        renderer.render(scene, camera);
+        const data = new Uint8Array(w * h * 4);
+        renderer.readRenderTargetPixels(target, 0, 0, w, h, data);
+        pixels.push(data);
+      }
+    } finally {
+      renderer.setRenderTarget(null);
+      target.dispose();
+      setContours(true);
+      hidden.forEach((o) => (o.visible = true));
+      scene.background = before.background;
+      this.activeHole = before.active;
+      this.rebuildMarkers();
+    }
+    return Promise.all(pixels.map((data) => data && toJpeg(data, w, h)));
+  }
+
+  /** Height of the level or terrain under a point (three.js coordinates), or -Infinity. */
+  groundUnder(p) {
+    const ray = new THREE.Raycaster(new THREE.Vector3(p.x, 1e5, p.z), new THREE.Vector3(0, -1, 0));
+    const hit = ray.intersectObjects([this.pivot, this.terrain?.mesh].filter(Boolean), true).find((h) => h.object.visible);
+    return hit ? hit.point.y : -Infinity;
   }
 
   usedSongs() {
@@ -562,6 +665,7 @@ export class Project {
 
   removeSong(name) {
     this.songs.delete(name);
+    this.songVolumes.delete(name);
     if (this.music === name) this.music = this.songs.keys().next().value ?? null;
     for (const h of this.holes) if (h.music === name) delete h.music;
   }
@@ -575,7 +679,7 @@ export class Project {
     const wasOverlay = this.surfaceOverlay;
     this.setSurfaceOverlay(false);
     // Only game-relevant fields go into the file (userData becomes glTF extras); keep editor-only data out.
-    const KEEP = ["surface", "invisible", "renderOnly", "climbable", "sm64Surface", "alphaBlend"];
+    const KEEP = ["surface", "invisible", "renderOnly", "climbable", "sm64Surface", "alphaBlend", "alphaMode"];
     const savedUserData = this.materials.map(({ material }) => [material, material.userData, material.visible]);
     for (const [m, data] of savedUserData) {
       m.userData = Object.fromEntries(KEEP.filter((k) => data[k] !== undefined).map((k) => [k, data[k]]));
@@ -664,6 +768,7 @@ export class Project {
       if (name && map.files.has(name)) project.songs.set(name, map.files.get(name));
     }
     project.music = m.music && project.songs.has(m.music) ? m.music : null;
+    for (const [name, settings] of Object.entries(m.songs ?? {})) if (typeof settings?.volume === "number") project.songVolumes.set(name, settings.volume);
     // Points saved without a height (format 1) take it from the terrain.
     if (terrain) {
       for (const h of project.holes) for (const [set, p] of project.markerPoints(h)) if (p && p.y == null) set({ ...p, y: terrain.heightAt(p.x, p.z) });
@@ -701,4 +806,20 @@ function thumbnail(material) {
 
 function slug(text) {
   return String(text).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "map";
+}
+
+/** RGBA pixels read from WebGL (bottom row first) as JPEG bytes. */
+async function toJpeg(data, w, h) {
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  const image = ctx.createImageData(w, h);
+  const row = w * 4;
+  for (let y = 0; y < h; y++) image.data.set(data.subarray((h - 1 - y) * row, (h - y) * row), y * row);
+  // The sky is see-through in the editor; give the picture an opaque one.
+  for (let i = 3; i < image.data.length; i += 4) image.data[i] = 255;
+  ctx.putImageData(image, 0, 0);
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+  return new Uint8Array(await blob.arrayBuffer());
 }

@@ -600,14 +600,16 @@ function modelPanel() {
   const [sx, sz] = project.size;
   const surfaceRows = project.materials
     .map(({ material }, i) =>
-      material.userData.renderOnly
+      material.userData.invisible && material.userData.renderOnly
         ? ""
         : `<div class="material ${material === selectedMaterial ? "selected" : ""}" data-i="${i}">
           <span class="thumb" style="${materialThumb(material)}"></span>
           <span class="mat-name" title="${esc(material.name)}">${esc(material.name || `Material ${i + 1}`)}</span>
-          <select data-i="${i}" class="surface">${surfaceOptions(material.userData.surface)}</select>
-          <label class="climb" title="Players can walk up it however steep it is (only walls stop them)"><input type="checkbox" data-i="${i}" ${material.userData.climbable ? "checked" : ""} /> Climb</label>
-        </div>`,
+          ${material.userData.renderOnly
+            ? `<span class="hint" title="Only drawn: nothing collides with it">Looks only</span><span></span>`
+            : `<select data-i="${i}" class="surface">${surfaceOptions(material.userData.surface)}</select>
+          <label class="climb" title="Players can walk up it however steep it is (only walls stop them)"><input type="checkbox" data-i="${i}" ${material.userData.climbable ? "checked" : ""} /> Climb</label>`}
+        </div>${material === selectedMaterial ? lookSettings(material, i) : ""}`,
     )
     .join("");
   return `
@@ -625,10 +627,30 @@ function modelPanel() {
     <div class="row">${project.terrain ? "" : `<button class="btn btn-secondary small" id="rotate">Rotate 90&deg;</button>`}
     <label class="check"><input type="checkbox" id="overlay" ${project.surfaceOverlay ? "checked" : ""} /> Show surfaces</label></div>
     <h3>Surfaces</h3>
-    <p class="hint">${project.terrain ? "Surfaces of your objects and props (the terrain is painted in the Terrain tab)." : "Pick what each material plays as. Tip: click the level with Look to find a material."}${
+    <p class="hint">${project.terrain ? "Surfaces of your objects and props (the terrain is painted in the Terrain tab)." : "Pick what each material plays as. Tip: click the level with Look to find a material."} Click a material for how its texture's transparency is drawn.${
       project.hasCollisionMesh ? " This level has a separate collision mesh: tick Show surfaces to see it." : ""
     }</p>
     <div class="materials">${surfaceRows || `<p class="hint">Nothing here yet.</p>`}</div>`;
+}
+
+const ALPHA_MODES = [
+  ["opaque", "Solid", "Ignores the texture's transparency"],
+  ["cutout", "Cut out", "Leaves, fences, grass: see-through parts are cut away"],
+  ["blend", "See-through", "Glass, water, smoke: blends with what is behind"],
+  ["add", "Glow", "Light shafts, sparkles: adds light, dark parts vanish"],
+];
+
+/** Drawing settings of the selected material: transparency, its strength, and whether both sides show. */
+function lookSettings(material, i) {
+  const { alphaMode = "opaque", alphaCutoff = 0.5, opacity = 1, doubleSided = true } = material.userData;
+  const slider = (cls, label, value, min, tip) =>
+    `<label class="look-slider" title="${tip}">${label}<input type="range" class="${cls}" data-i="${i}" min="${min}" max="100" step="5" value="${Math.round(value * 100)}" /><span class="hint">${Math.round(value * 100)}%</span></label>`;
+  return `<div class="mat-look">
+    <div class="choice-group alpha-modes">${ALPHA_MODES.map(([id, name, tip]) => `<button class="choice ${id === alphaMode ? "active" : ""}" data-mode="${id}" data-i="${i}" title="${tip}">${name}</button>`).join("")}</div>
+    ${alphaMode === "cutout" ? slider("alpha-cutoff", "Cut below", alphaCutoff, 5, "Parts more see-through than this are cut away. Raise it if edges look fuzzy, lower it if thin parts vanish.") : ""}
+    ${alphaMode === "blend" ? slider("alpha-opacity", "Opacity", opacity, 5, "How solid it looks overall") : ""}
+    <label class="check" title="Show the back of each face too (needed for leaves and flat cut-outs)"><input type="checkbox" class="two-sided" data-i="${i}" ${doubleSided ? "checked" : ""} /> Two-sided</label>
+  </div>`;
 }
 
 function surfaceOptions(selected) {
@@ -671,6 +693,24 @@ function wireModel() {
       else delete material.userData.climbable;
     }),
   );
+  const look = (el, changes) => {
+    project.setLook(project.materials[Number(el.dataset.i)].material, changes);
+    history.version++;
+  };
+  info.querySelectorAll(".alpha-modes .choice").forEach((b) =>
+    b.addEventListener("click", () => {
+      look(b, { alphaMode: b.dataset.mode });
+      renderPanel();
+    }),
+  );
+  for (const [cls, key] of [["alpha-cutoff", "alphaCutoff"], ["alpha-opacity", "opacity"]])
+    info.querySelectorAll(`.${cls}`).forEach((r) =>
+      r.addEventListener("input", () => {
+        look(r, { [key]: Number(r.value) / 100 });
+        r.nextElementSibling.textContent = `${r.value}%`;
+      }),
+    );
+  info.querySelectorAll(".two-sided").forEach((c) => c.addEventListener("change", () => look(c, { doubleSided: c.checked })));
   info.querySelectorAll(".material").forEach((row) =>
     row.addEventListener("click", (e) => {
       if (!["SELECT", "INPUT", "LABEL"].includes(e.target.tagName)) selectMaterial(project.materials[Number(row.dataset.i)].material);
@@ -959,7 +999,7 @@ function wireExport() {
   wireMusic();
   info.querySelector("#export").addEventListener("click", () =>
     run("Exporting", async () => {
-      const bytes = await project.exportSbgmap();
+      const bytes = await project.exportSbgmap({ previews: true });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(new Blob([bytes], { type: "application/zip" }));
       a.download = `${(project.info.name || "map").replace(/[^\w.-]+/g, "_")}.sbgmap`;
@@ -984,7 +1024,10 @@ function musicSection() {
       const playing = songPreview?.name === n;
       return `<div class="song"><span class="mat-name" title="${label(n)}">${label(n)}</span><span class="hint">${kb > 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${kb} KB`}</span>
         <button class="btn btn-secondary small song-play" data-name="${esc(n)}">${playing ? "Stop" : "Play"}</button>
-        <button class="btn btn-secondary small song-remove" data-name="${esc(n)}" title="Remove this song">Remove</button></div>`;
+        <button class="btn btn-secondary small song-remove" data-name="${esc(n)}" title="Remove this song">Remove</button>
+        <label class="song-volume" title="How loud this song plays in the game (the game's music volume setting still applies on top)">Volume
+          <input type="range" class="song-vol" data-name="${esc(n)}" min="0" max="100" step="5" value="${Math.round((project.songVolumes.get(n) ?? 1) * 100)}" />
+          <span class="hint">${Math.round((project.songVolumes.get(n) ?? 1) * 100)}%</span></label></div>`;
     })
     .join("");
   return `
@@ -1038,12 +1081,22 @@ function wireMusic() {
         const url = URL.createObjectURL(new Blob([project.songs.get(b.dataset.name)]));
         const audio = new Audio(url);
         audio.loop = true;
+        audio.volume = project.songVolumes.get(b.dataset.name) ?? 1;
         audio.play().catch(() => setStatus("This browser can't preview that song (the game can still play it)"));
         songPreview = { name: b.dataset.name, audio, url };
       }
       renderPanel();
     }),
   );
+  info.querySelectorAll(".song-vol").forEach((r) => {
+    r.addEventListener("input", () => {
+      const volume = Number(r.value) / 100;
+      project.songVolumes.set(r.dataset.name, volume);
+      r.nextElementSibling.textContent = `${r.value}%`;
+      if (songPreview?.name === r.dataset.name) songPreview.audio.volume = volume;
+    });
+    r.addEventListener("change", () => history.version++);
+  });
   info.querySelectorAll(".song-remove").forEach((b) =>
     b.addEventListener("click", () => {
       if (songPreview?.name === b.dataset.name) stopSongPreview();
