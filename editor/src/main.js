@@ -752,6 +752,7 @@ const BEHAVIOURS = [
   ["roller", "Rolls copies along a path"],
   ["seesaw", "Tilting see-saw"],
   ["chomp", "Chain chomp (lunges around its spot)"],
+  ["jumppad", "Jump pad (launches players and balls)"],
 ];
 const DEFAULTS = {
   mover: { speed: 4, loop: true, count: 1 },
@@ -815,6 +816,10 @@ function selectedObjectPanel(o) {
         <p class="hint">Paths start from where the object stands. ${points < 2 ? "Add at least 2 points." : ""}</p>` : ""}
       ${kind === "chomp" ? `<p class="hint">Hops around where you place it and lunges every few seconds. Touching it knocks players over.</p>` : ""}
       ${kind === "seesaw" ? `<p class="hint">Tilts toward players standing on it. Its long side should run front to back.</p>` : ""}
+      ${kind === "jumppad" ? `
+        <div class="field"><label for="obj-jump-speed">Launch speed (m/s)</label><input id="obj-jump-speed" type="number" min="2" max="80" step="1" value="${d.launchSpeed ?? 22}" /></div>
+        <div class="field"><label for="obj-jump-pitch">Angle up (degrees)</label><input id="obj-jump-pitch" type="number" min="0" max="90" step="5" value="${d.launchPitch ?? 65}" /></div>
+        <p class="hint">Launches players and balls that touch its top, the way its arrow points (turn it with Rotate). 90 degrees is straight up.</p>` : ""}
       <label class="check"><input type="checkbox" id="obj-billboard" ${d.billboard ? "checked" : ""} /> Always face the camera (for pictures)</label>
     </div>`;
 }
@@ -824,7 +829,7 @@ async function addObject(make, label) {
   const where = hit ? hit.point : project.box.getCenter(new THREE.Vector3());
   let obj;
   history.record(() => {
-    obj = project.addObject(make.root, where, { size: make.size, billboard: make.billboard });
+    obj = project.addObject(make.root, where, { size: make.size, billboard: make.billboard, data: make.data });
   });
   selectObject(obj);
   setStatus(`Added ${label}`);
@@ -832,7 +837,7 @@ async function addObject(make, label) {
 
 function wireObjects() {
   const objects = project.objects;
-  info.querySelectorAll(".add-shape").forEach((b) => b.addEventListener("click", () => addObject({ root: SHAPES[b.dataset.shape].make() }, SHAPES[b.dataset.shape].name)));
+  info.querySelectorAll(".add-shape").forEach((b) => b.addEventListener("click", () => addObject({ root: SHAPES[b.dataset.shape].make(), data: SHAPES[b.dataset.shape].data }, SHAPES[b.dataset.shape].name)));
   info.querySelector("#add-sprite").addEventListener("change", (e) =>
     e.target.files[0] &&
     run("Adding picture", async () => {
@@ -880,6 +885,8 @@ function wireObjects() {
     if (rerender) renderPanel();
   };
   info.querySelector("#obj-name").addEventListener("change", (e) => edit(() => (o.name = e.target.value)));
+  info.querySelector("#obj-jump-speed")?.addEventListener("change", (e) => edit(() => (d.launchSpeed = Math.min(80, Math.max(2, Number(e.target.value) || 22)))));
+  info.querySelector("#obj-jump-pitch")?.addEventListener("change", (e) => edit(() => (d.launchPitch = Math.min(90, Math.max(0, Number(e.target.value) || 0)))));
   info.querySelector("#obj-kind").addEventListener("change", (e) =>
     edit(() => {
       d.object = e.target.value;
@@ -891,6 +898,10 @@ function wireObjects() {
           d.count ??= 1;
         } else d.interval ??= DEFAULTS.roller.interval;
         if (!d.path || d.path.length < 2) d.path = circlePath(10 / s);
+      }
+      if (d.object === "jumppad") {
+        d.launchSpeed ??= 22;
+        d.launchPitch ??= 65;
       }
       if (d.object === "roller" && d.radius == null) {
         const size = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3());

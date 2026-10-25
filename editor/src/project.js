@@ -216,10 +216,11 @@ export class Project {
    * Adds an object (shape, picture or imported model) standing at a world point. Built-in shapes and pictures are
    * in metres; pass `size` to fit an imported model to roughly that many metres instead.
    */
-  addObject(model, worldPoint, { size = null, billboard = false } = {}) {
+  addObject(model, worldPoint, { size = null, billboard = false, data = null } = {}) {
     const obj = new THREE.Group();
     obj.name = model.name || "object";
     obj.userData.object = "static";
+    if (data) Object.assign(obj.userData, structuredClone(data));
     if (billboard) obj.userData.billboard = true;
     obj.add(model);
     const box = new THREE.Box3().setFromObject(model);

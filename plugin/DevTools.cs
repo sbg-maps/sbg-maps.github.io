@@ -98,6 +98,11 @@ namespace SbgMaps
             Add<Checkpoint>("Checkpoint");
             Add<MainOutOfBoundsHazard>("MainOOB");
             Add<TerrainAddition>("TerrainAddition");
+            // Item box kinds the game has loaded (looking for the special red boxes).
+            foreach (var settings in Resources.FindObjectsOfTypeAll<ItemSpawnerSettings>())
+                sb.AppendLine($"  ItemSpawnerSettings '{settings.name}' pools={settings.ItemPoolsDefaults?.Count} aheadOfBall={(settings.AheadOfBallItemPoolDefaults != null ? settings.AheadOfBallItemPoolDefaults.name : "-")}");
+            foreach (var visuals in Resources.FindObjectsOfTypeAll<ItemSpawnerVisuals>())
+                sb.AppendLine($"  ItemSpawnerVisuals '{visuals.name}' type={HarmonyLib.Traverse.Create(visuals).Field("type").GetValue()} scene='{visuals.gameObject.scene.name}'");
             // Player size, for the editor's scale reference golfer.
             var me = GameManager.LocalPlayerMovement;
             if (me != null)

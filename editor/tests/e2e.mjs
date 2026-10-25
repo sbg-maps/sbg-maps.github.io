@@ -217,6 +217,11 @@ await test("new level: sculpt, paint, undo/redo, objects, paths, export", async 
   await page.keyboard.press("Control+Shift+z");
   assert((await page.evaluate(() => window.__sbg.project.objects.length)) === 2, "redo did not restore the picture");
 
+  // A jump pad with its own launch settings.
+  await page.click('.add-shape[data-shape="jumppad"]');
+  await page.fill("#obj-jump-speed", "30");
+  await page.dispatchEvent("#obj-jump-speed", "change");
+
   terrainMap = await exportMap(page, "terrain.sbgmap");
   const { manifest, files, gltf } = readSbgmap(terrainMap);
   const hole = manifest.holes[0];
@@ -228,6 +233,8 @@ await test("new level: sculpt, paint, undo/redo, objects, paths, export", async 
   const mover = nodes.find((n) => n.extras.object === "mover");
   assert(mover && mover.extras.knocks === true && mover.extras.path.length === 4, `mover node wrong: ${JSON.stringify(mover?.extras)}`);
   assert(nodes.some((n) => n.extras.billboard === true), "picture lost its face-the-camera flag");
+  const pad = nodes.find((n) => n.extras.object === "jumppad");
+  assert(pad && pad.extras.launchSpeed === 30 && pad.extras.launchPitch === 65, `jump pad node wrong: ${JSON.stringify(pad?.extras)}`);
   assert(page.errors.length === 0, page.errors.join("; "));
   await page.close();
 });
@@ -287,7 +294,7 @@ await test("reopen the exported terrain level", async () => {
     const p = window.__sbg.project;
     return { terrain: !!p.terrain, objects: p.objects.length, tee: !!p.hole.tee, cup: !!p.hole.cup, mover: p.objects.find((o) => o.userData.object === "mover")?.userData };
   });
-  assert(state.terrain && state.objects === 2 && state.tee && state.cup, `reopened state wrong: ${JSON.stringify(state)}`);
+  assert(state.terrain && state.objects === 3 && state.tee && state.cup, `reopened state wrong: ${JSON.stringify(state)}`);
   assert(state.mover.knocks && state.mover.path.length === 4, "mover settings lost on reopen");
   assert(page.errors.length === 0, page.errors.join("; "));
   await page.close();

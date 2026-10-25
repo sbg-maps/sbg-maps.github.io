@@ -168,6 +168,10 @@ namespace SbgMaps
                         BuildParts(ctx, look.transform, obj.Primitives, obj.Name, null, forceSurface: "none");
                         Chomp.Attach(go, look, obj.Extras, chomps++, groundLayer);
                         break;
+                    case "jumppad":
+                        BuildParts(ctx, go.transform, obj.Primitives, obj.Name, null);
+                        MapJumpPad.Attach(go, obj.Extras);
+                        break;
                     default:
                         if (billboard && obj.Extras?["hitbox"] is Newtonsoft.Json.Linq.JObject hitbox)
                         {

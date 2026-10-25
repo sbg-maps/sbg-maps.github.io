@@ -15,7 +15,25 @@ export const SHAPES = {
   ramp: { name: "Ramp", make: () => ramp() },
   pillar: { name: "Pillar", make: () => mesh(new THREE.CylinderGeometry(1.2, 1.2, 8, 24), mat(0xb4b4ac, "solid"), 4) },
   wall: { name: "Wall", make: () => mesh(new THREE.BoxGeometry(12, 4, 1), mat(0xc27ad6, "solid"), 2) },
+  jumppad: { name: "Jump pad", make: () => jumpPad(), data: { object: "jumppad", launchSpeed: 22, launchPitch: 65 } },
 };
+
+/** A round pad with an arrow on top pointing the way it launches (forward, map +z). */
+function jumpPad() {
+  const g = new THREE.Group();
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.4, 0.4, 32), mat(0x5a6170, "solid"));
+  base.position.y = 0.2;
+  const top = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 1.9, 0.08, 32), mat(0xff7a1a, "solid"));
+  top.position.y = 0.44;
+  const arrowShape = new THREE.Shape([new THREE.Vector2(-0.6, -1.1), new THREE.Vector2(0.6, -1.1), new THREE.Vector2(0.6, 0.1), new THREE.Vector2(1.2, 0.1), new THREE.Vector2(0, 1.4), new THREE.Vector2(-1.2, 0.1), new THREE.Vector2(-0.6, 0.1)]);
+  const arrow = new THREE.Mesh(new THREE.ShapeGeometry(arrowShape), mat(0xffffff, "solid"));
+  // Flat on the top, tip toward -z (map +z, the way players are launched).
+  arrow.rotation.x = -Math.PI / 2;
+  arrow.position.y = 0.49;
+  g.add(base, top, arrow);
+  g.name = "Jump pad";
+  return g;
+}
 
 function mesh(geometry, material, lift) {
   const m = new THREE.Mesh(geometry, material);
