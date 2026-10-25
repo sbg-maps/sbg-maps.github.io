@@ -2,6 +2,13 @@
 // Write for players: what they can do now in the editor, not how it works, and not mod or game news. Bump `id` for every new entry.
 export const CHANGES = [
   {
+    id: 4,
+    date: "2026-10-25",
+    items: [
+      "Reopened maps show their real Scale. Before, a reopened map showed Scale 1 and typing the old number made it that much bigger again.",
+    ],
+  },
+  {
     id: 3,
     date: "2026-10-25",
     items: [

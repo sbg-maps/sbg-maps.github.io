@@ -78,6 +78,8 @@ export class Project {
     this.pivot.add(root);
     this.root = root;
     this.scale = 1;
+    /** Scale already baked into the model by an earlier export (the map remembers it), so the editor can show the real one. */
+    this.bakedScale = Number(root.userData.bakedScale) > 0 ? Number(root.userData.bakedScale) : 1;
     this.rotation = 0; // quarter turns around y
     this.appliedRotation = 0;
     this.markersGroup = new THREE.Group();
@@ -983,6 +985,15 @@ export class Project {
    * The level with scale/rotation/placement baked into the vertices and surfaces in material extras.
    * Objects stay separate nodes with their own transform (so the game can move them) and their userData as extras.
    */
+  /** The scale against the originally imported model (what the Scale box shows). */
+  get realScale() {
+    return Math.round(this.bakedScale * this.scale * 1e6) / 1e6;
+  }
+
+  set realScale(value) {
+    this.scale = value / this.bakedScale;
+  }
+
   /** Export only the level around each hole (asked for, or needed because the level is too big for one hole area). */
   get trims() {
     if (this.terrain || !this.hasModel) return false;
@@ -1073,9 +1084,11 @@ export class Project {
     // Keep where the level sits in its game world, so more sections can still be added after reopening it. Only
     // while unscaled and unturned: the export is moved by the editor's placement alone.
     const origin = this.root.userData.worldOrigin;
-    if (!region && Array.isArray(origin) && this.scale === 1 && this.rotation === 0) {
+    // The scale of the source model the export is at, so reopening it shows the real scale (not 1).
+    out.userData = { bakedScale: this.realScale };
+    if (!region && Array.isArray(origin) && this.realScale === 1 && this.rotation === 0) {
       const p = this.pivot.position;
-      out.userData = { ...(this.root.userData.source ? { source: this.root.userData.source } : {}), ...(this.root.userData.map ? { map: this.root.userData.map } : {}), worldOrigin: [origin[0] - p.x, origin[1] - p.y, origin[2] - p.z] };
+      Object.assign(out.userData, { ...(this.root.userData.source ? { source: this.root.userData.source } : {}), ...(this.root.userData.map ? { map: this.root.userData.map } : {}), worldOrigin: [origin[0] - p.x, origin[1] - p.y, origin[2] - p.z] });
     }
     try {
       return await new GLTFExporter().parseAsync(out, { binary: true });
@@ -1104,6 +1117,7 @@ export class Project {
       root.add(piece);
     }
     if (pieces.length) {
+      root.userData.bakedScale = root.children[0]?.userData.bakedScale;
       root.traverse((o) => {
         for (const mat of materialsOf(o)) {
           mat.side = THREE.DoubleSide;

@@ -533,6 +533,34 @@ await test("close: back to the start screen, autosave offered", async () => {
   await page.close();
 });
 
+await test("scale survives export and reopening", async () => {
+  const dir = makeObjFixture();
+  const page = await freshPage(browser, url);
+  await page.setInputFiles("#import-files", fs.readdirSync(dir).map((f) => path.join(dir, f)));
+  await page.waitForFunction(() => window.__sbg.project, null, { timeout: 20000 });
+  await page.click('.tab[data-tab="model"]');
+  await page.fill("#scale", "2.5");
+  await page.dispatchEvent("#scale", "change");
+  await placeStartAndFlag(page);
+  const size = await page.evaluate(() => window.__sbg.project.size);
+  const file = await exportMap(page, "scaled.sbgmap");
+  await page.close();
+  const again = await freshPage(browser, url);
+  await again.setInputFiles("#open-file", file);
+  await again.waitForFunction(() => window.__sbg.project, null, { timeout: 20000 });
+  await again.click('.tab[data-tab="model"]');
+  assert((await again.inputValue("#scale")) === "2.5", `reopened scale shows ${await again.inputValue("#scale")}`);
+  const reopened = await again.evaluate(() => window.__sbg.project.size);
+  assert(Math.abs(reopened[0] - size[0]) <= 1 && Math.abs(reopened[1] - size[1]) <= 1, `size changed on reopen: ${size} vs ${reopened}`);
+  // Setting 5 doubles it (5 against the original), not 5 times the reopened size.
+  await again.fill("#scale", "5");
+  await again.dispatchEvent("#scale", "change");
+  const doubled = await again.evaluate(() => window.__sbg.project.size);
+  assert(Math.abs(doubled[0] - 40 - (size[0] - 40) * 2) <= 2, `scale 5 after 2.5: ${size} -> ${doubled}`);
+  assert(again.errors.length === 0, again.errors.join("; "));
+  await again.close();
+});
+
 await test("big level: each hole gets the piece around it, and reopening puts it back", async () => {
   const dir = makeObjFixture();
   const page = await freshPage(browser, url);

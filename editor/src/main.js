@@ -675,7 +675,7 @@ function modelPanel() {
   return `
     ${project.terrain ? "" : `
     <h3>Size</h3>
-    <div class="field"><label for="scale">Scale</label><input id="scale" type="number" min="0.0001" step="any" value="${+project.scale.toPrecision(3)}" /></div>
+    <div class="field"><label for="scale">Scale</label><input id="scale" type="number" min="0.0001" step="any" value="${+project.realScale.toPrecision(3)}" /></div>
     <div class="stats">${stat("Course area", `${sx} x ${sz} m`)}</div>
     ${Array.isArray(project.root.userData.worldOrigin) ? `<label class="btn btn-secondary small" tabindex="0" title="Another section of the same game world, placed where it really is">Add a section<input id="add-section" type="file" accept=".glb,.gltf" hidden /></label>
     <p class="hint">Sections of the same world line up by themselves. Holes can then be anywhere: each one takes the piece of the level around it.</p>` : ""}`}
@@ -735,7 +735,7 @@ function together(el) {
 
 function wireModel() {
   info.querySelector("#scale")?.addEventListener("change", (e) => {
-    project.scale = Math.max(0.0001, Number(e.target.value) || 1);
+    project.realScale = Math.max(0.0001, Number(e.target.value) || 1);
     project.applyTransform();
     frameBox(project.box);
     renderPanel();
