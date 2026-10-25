@@ -169,8 +169,9 @@ namespace SbgMaps
     }
 
     /// <summary>
-    /// Picks up maps added to or changed in the maps folder without restarting the game. Only on the title screen
-    /// and in the host's own driving range: a player in someone else's lobby uses the host's maps.
+    /// Picks up maps added to or changed in the maps folder without restarting the game. Only on the title screen:
+    /// match setup builds its hole list when the lobby loads, so holes added during a lobby would not match it, and
+    /// a player in someone else's lobby uses the host's maps anyway.
     /// </summary>
     internal static class MapWatcher
     {
@@ -182,8 +183,7 @@ namespace SbgMaps
             if (Time.realtimeSinceStartup < next)
                 return;
             next = Time.realtimeSinceStartup + IntervalSeconds;
-            bool canChange = SingletonBehaviour<MainMenu>.HasInstance || (NetworkServer.active && SingletonBehaviour<DrivingRangeManager>.HasInstance);
-            if (canChange)
+            if (SingletonBehaviour<MainMenu>.HasInstance)
                 CheckNow();
         }
 
@@ -194,8 +194,6 @@ namespace SbgMaps
                 if (!MapLibrary.RescanIfChanged())
                     return;
                 CustomCourse.UseLocalMaps();
-                if (!SingletonBehaviour<MainMenu>.HasInstance)
-                    DevTools.Say($"Maps reloaded: {MapLibrary.Maps.Count} installed");
             }
             catch (Exception e)
             {
