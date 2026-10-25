@@ -594,7 +594,13 @@ export class Project {
         // A cart-sized block facing the flag, as the game parks it.
         const cart = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.6, 2.6), new THREE.MeshStandardMaterial({ color: MARKERS.golfCarts.color, transparent: !active, opacity: active ? 1 : 0.35 }));
         cart.position.copy(fromMap(c)).y += 0.8;
-        if (h.cup) cart.rotation.y = yawToRotation((Math.atan2(h.cup.x - c.x, h.cup.z - c.z) * 180) / Math.PI);
+        const yaw = c.yaw ?? (h.cup ? (Math.atan2(h.cup.x - c.x, h.cup.z - c.z) * 180) / Math.PI : 0);
+        cart.rotation.y = yawToRotation(yaw);
+        // A nose on the front shows which way it faces.
+        const nose = new THREE.Mesh(new THREE.ConeGeometry(0.45, 1, 12), new THREE.MeshStandardMaterial({ color: 0xe8443a }));
+        nose.rotation.x = -Math.PI / 2;
+        nose.position.set(0, 0.2, -1.7);
+        cart.add(nose);
         this.markersGroup.add(cart);
       }
       for (const c of h.checkpoints) add(new THREE.OctahedronGeometry(1.5), MARKERS.checkpoints.color, c, 2);

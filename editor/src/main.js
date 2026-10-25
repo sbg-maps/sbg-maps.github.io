@@ -388,7 +388,7 @@ const PLACE_TOOLS = [
   { id: "tee", name: "Start", tip: "Click to place the Start: the tee, where players hit their first shot." },
   { id: "cup", name: "Flag", tip: "Click to place the Flag: the hole (cup) players are aiming for." },
   { id: "itemBoxes", name: "Item box", tip: "Click to add item boxes (up to 64 per hole)." },
-  { id: "golfCarts", name: "Golf cart", tip: "Click to park golf carts (anyone can drive them; they face the Flag). Needs mod 0.4.0." },
+  { id: "golfCarts", name: "Golf cart", tip: "Click to park a golf cart (it faces the Flag), or click and drag to aim it. Anyone can drive them. Needs mod 0.4.0." },
   { id: "redItemBoxes", name: "Red box", tip: "Click to add red item boxes: they give the better movement items (like spring boots). Needs mod 0.4.0." },
   { id: "checkpoints", name: "Checkpoint", tip: "Click to add checkpoints, in order from the Start to the Flag: players come back to the furthest one they reached." },
   { id: "bounds", name: "Play area", tip: "Click corners around the hole: balls that leave this area are out of bounds. Erase removes a corner." },
@@ -424,10 +424,11 @@ function startEditing(firstTab = "model") {
 function setTool(id) {
   tool = id;
   // Brush tools draw with the left button, so the view orbits with the right button instead.
-  controls.mouseButtons = BRUSH_TOOLS.has(id) || id === "path"
+  // Brushes, path drawing and golf carts (click-drag to aim) use the left button themselves.
+  controls.mouseButtons = BRUSH_TOOLS.has(id) || id === "path" || id === "golfCarts"
     ? { LEFT: null, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE }
     : { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
-  setLookButtons(BRUSH_TOOLS.has(id) || id === "path" ? [2] : [0, 2]);
+  setLookButtons(BRUSH_TOOLS.has(id) || id === "path" || id === "golfCarts" ? [2] : [0, 2]);
   brushCursor.visible = false;
   if (!toolbar.hidden) renderToolbar();
 }
@@ -453,6 +454,37 @@ brushCursor.visible = false;
 scene.add(brushCursor);
 
 let stroke = null; // { before, last: event, target }
+// Golf carts: press to put one down, drag to aim it (it faces where you let go); a plain click faces the Flag.
+let cartDrag = null;
+renderer.domElement.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0 || tool !== "golfCarts" || !project) return;
+  const hit = pick(e, project.pickTargets, (h) => project.isGround(h));
+  if (!hit) return;
+  const before = history.capture();
+  const h = project.hole;
+  (h.golfCarts ??= []).push(toMapPoint(hit.point));
+  cartDrag = { before, index: h.golfCarts.length - 1, x: e.clientX, y: e.clientY };
+  renderer.domElement.setPointerCapture(e.pointerId);
+  project.rebuildMarkers();
+});
+renderer.domElement.addEventListener("pointermove", (e) => {
+  if (!cartDrag) return;
+  if (Math.hypot(e.clientX - cartDrag.x, e.clientY - cartDrag.y) < 8) return;
+  const hit = pick(e, project.pickTargets);
+  const cart = project.hole.golfCarts[cartDrag.index];
+  if (!hit || !cart) return;
+  const p = toMapPoint(hit.point);
+  cart.yaw = Math.round(((Math.atan2(p.x - cart.x, p.z - cart.z) * 180) / Math.PI + 360) % 360);
+  project.rebuildMarkers();
+});
+renderer.domElement.addEventListener("pointerup", () => {
+  if (!cartDrag) return;
+  history.commit(cartDrag.before);
+  cartDrag = null;
+  renderPanel();
+});
+const toMapPoint = (v) => ({ x: Math.round(v.x * 100) / 100, y: Math.round(v.y * 100) / 100, z: Math.round(-v.z * 100) / 100 });
+
 renderer.domElement.addEventListener("pointermove", (e) => {
   if (!project?.terrain || !BRUSH_TOOLS.has(tool)) return;
   const hit = pick(e, [project.terrain.mesh]);
@@ -529,7 +561,7 @@ renderer.domElement.addEventListener("pointerup", (e) => {
 });
 renderer.domElement.addEventListener("pointerup", (e) => {
   if (!project || !downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 5 || e.button !== 0) return;
-  if (BRUSH_TOOLS.has(tool)) return;
+  if (BRUSH_TOOLS.has(tool) || tool === "golfCarts") return;
   const hit = pick(e, project.pickTargets, (h) => tool === "look" || project.isGround(h));
   if (!hit) return;
   if (tool === "look") {

@@ -6,7 +6,7 @@ export const CHANGES = [
     date: "2026-10-25",
     items: [
       "The <b>Player view</b> window can be resized: drag its top-left corner.",
-      "<b>Golf cart</b> tool: park real, drivable golf carts on a hole (up to 16). Needs mod 0.4.0.",
+      "<b>Golf cart</b> tool: park real, drivable golf carts on a hole (up to 16). Click to place one facing the Flag, or click and drag to aim it. Needs mod 0.4.0.",
       "<b>Sky</b> (Holes tab): give a hole the sky of any of the game's holes (desert, snow, city at night...) or your own 360 panorama picture. Needs mod 0.4.0.",
       "<b>Delete</b> key removes the selected object or cut-out piece (Ctrl+Z brings it back).",
       "Reopened maps show their real Scale. Before, a reopened map showed Scale 1 and typing the old number made it that much bigger again.",
