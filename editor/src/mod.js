@@ -51,3 +51,22 @@ export const MOD_VERSIONS = [
 export const MOD_VERSION = MOD_VERSIONS[0].version;
 export const downloadUrl = (version) =>
   `https://github.com/sbg-maps/sbg-maps.github.io/releases/download/mod-${version}/SbgMaps-${version}.zip`;
+
+// Which mod version this browser last downloaded from the mod page, so the editor can flag a newer one.
+const DOWNLOADED_KEY = "sbg.modDownloaded";
+export function downloadedVersion() {
+  try {
+    return localStorage.getItem(DOWNLOADED_KEY);
+  } catch {
+    return null;
+  }
+}
+export function markDownloaded(version) {
+  try {
+    localStorage.setItem(DOWNLOADED_KEY, version);
+  } catch {
+    // Only a reminder; nothing breaks without it.
+  }
+}
+/** "Oct 25" from "2026-10-25". */
+export const shortDate = (date) => new Date(`${date}T12:00:00`).toLocaleDateString("en", { month: "short", day: "numeric" });

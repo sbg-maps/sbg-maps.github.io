@@ -12,6 +12,7 @@ import { History } from "./history.js";
 import { SHAPES, spriteFromImage, circlePath, linePath } from "./shapes.js";
 import { put as storePut, get as storeGet } from "./storage.js";
 import { CHANGES } from "./changes.js";
+import { MOD_VERSION, MOD_VERSIONS, downloadedVersion, shortDate } from "./mod.js";
 import { SKIES } from "./skies.js";
 import { isFlying, setFlying, onFlyChange, flySpeed, setLookButtons, setLookBlocked } from "./fly.js";
 
@@ -1608,3 +1609,15 @@ showWhatsNew();
 
 // Test hook: lets the automated browser tests reach editor state.
 window.__sbg = { get project() { return project; }, history, autosave, THREE, frameBox, camera, controls };
+
+// Mod button: newest version and date; a "New" badge when this browser downloaded an older version.
+{
+  const link = document.getElementById("mod-link");
+  link.querySelector("#mod-version").textContent = MOD_VERSION;
+  link.querySelector("#mod-date").textContent = shortDate(MOD_VERSIONS[0].date);
+  const had = downloadedVersion();
+  const update = !!had && had !== MOD_VERSION;
+  link.querySelector(".mod-new").hidden = !update;
+  link.classList.toggle("has-update", update);
+  if (update) link.title = `Mod ${MOD_VERSION} is out (you have ${had})`;
+}

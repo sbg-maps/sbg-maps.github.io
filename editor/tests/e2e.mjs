@@ -168,6 +168,11 @@ await test("mod page offers the mod version in plugin/Plugin.cs", async () => {
   const href = await page.getAttribute("#download", "href");
   assert(href.endsWith(`/mod-${version}/SbgMaps-${version}.zip`), `download points at ${href}, mod is ${version}`);
   assert((await page.textContent(".version h3")).startsWith(version), "newest change entry is not the mod version");
+  // An older download in this browser: the editor's mod button shows the new version with a New badge.
+  await page.evaluate(() => localStorage.setItem("sbg.modDownloaded", "0.0.1"));
+  await page.goto(url);
+  await page.waitForSelector("#mod-link .mod-new:not([hidden])", { timeout: 15000 });
+  assert((await page.textContent("#mod-version")) === version, "editor mod button shows the wrong version");
   assert(page.errors.length === 0, page.errors.join("; "));
   await page.close();
 });

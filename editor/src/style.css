@@ -1195,3 +1195,40 @@ a.btn {
     color: var(--grass);
   }
 }
+
+/* Mod button in the editor header. */
+#mod-link {
+  gap: 6px;
+  position: relative;
+}
+
+#mod-link small {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+#mod-link .mod-new {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--flag);
+  color: var(--white);
+  font-size: 12px;
+  box-shadow: 0 2px 0 var(--flag-dark);
+  animation: mod-new 1.6s ease-in-out infinite;
+}
+
+@keyframes mod-new {
+  0%,
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+  50% {
+    transform: scale(1.15) rotate(-4deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #mod-link .mod-new {
+    animation: none;
+  }
+}

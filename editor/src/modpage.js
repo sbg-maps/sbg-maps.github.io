@@ -1,9 +1,12 @@
-import { MOD_VERSIONS, MOD_VERSION, downloadUrl } from "./mod.js";
+import { MOD_VERSIONS, MOD_VERSION, downloadUrl, downloadedVersion, markDownloaded } from "./mod.js";
 
 const download = document.getElementById("download");
 download.href = downloadUrl(MOD_VERSION);
 download.textContent = `Download mod ${MOD_VERSION}`;
-document.getElementById("download-note").textContent = `Released ${MOD_VERSIONS[0].date}.`;
+const had = downloadedVersion();
+document.getElementById("download-note").textContent =
+  had && had !== MOD_VERSION ? `Released ${MOD_VERSIONS[0].date}. You have ${had}.` : `Released ${MOD_VERSIONS[0].date}.`;
+download.addEventListener("click", () => markDownloaded(MOD_VERSION));
 
 const versions = document.getElementById("versions");
 for (const entry of MOD_VERSIONS) {
