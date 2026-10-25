@@ -371,7 +371,7 @@ const PLACE_TOOLS = [
   { id: "bounds", name: "Play area", tip: "Click corners around the hole: balls that leave this area are out of bounds. Erase removes a corner." },
   { id: "pov", name: "Player view", tip: "Click to stand there and see what a player sees (in the Player view window)." },
   { id: "golfer", name: "Golfer", tip: "Click to drop a golfer (player-sized) anywhere, to judge the scale. Not saved into the map." },
-  { id: "erase", name: "Erase", tip: "Click a marker or golfer to remove it." },
+  { id: "erase", name: "Erase", tip: "Click a marker or golfer to remove it. With any tool, right-click an object or marker to erase it." },
 ];
 const TERRAIN_TOOLS = [
   { id: "land", name: "Land", tip: "Drag to make land out of the sea (beaches appear by themselves). Right-drag to look around." },
@@ -484,6 +484,25 @@ onFrame(() => {
 
 // A click is a pointer press that did not move (so orbiting never places markers).
 let downAt = null;
+// Right-click (without dragging, which pans or looks around) erases the object or marker under the pointer.
+renderer.domElement.addEventListener("contextmenu", (e) => e.preventDefault());
+renderer.domElement.addEventListener("pointerup", (e) => {
+  if (!project || !downAt || e.button !== 2 || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 5) return;
+  const hit = pick(e, project.pickTargets);
+  if (!hit) return;
+  const owner = project.objects.find((o) => isInside(o, hit.object));
+  if (owner) {
+    if (owner === selectedObject) selectObject(null);
+    history.record(() => project.removeObject(owner));
+    project.rebuildMarkers();
+    setStatus(`Erased ${owner.name || "object"} (Ctrl+Z brings it back)`);
+  } else {
+    let erased = false;
+    history.record(() => (erased = project.erase(hit.point)));
+    setStatus(erased ? "Erased (Ctrl+Z brings it back)" : "Nothing to erase there");
+  }
+  renderPanel();
+});
 renderer.domElement.addEventListener("pointerup", (e) => {
   if (!project || !downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 5 || e.button !== 0) return;
   if (BRUSH_TOOLS.has(tool)) return;

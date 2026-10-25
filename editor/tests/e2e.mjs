@@ -221,6 +221,13 @@ await test("new level: sculpt, paint, undo/redo, objects, paths, export", async 
   await page.click('.add-shape[data-shape="jumppad"]');
   await page.fill("#obj-jump-speed", "30");
   await page.dispatchEvent("#obj-jump-speed", "change");
+  // Right-click (no drag) erases what is under the pointer; undo brings it back.
+  const objectsBefore = await page.evaluate(() => window.__sbg.project.objects.length);
+  const box = await canvasBox(page);
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: "right" });
+  assert((await page.evaluate(() => window.__sbg.project.objects.length)) === objectsBefore - 1, "right-click did not erase the object");
+  await page.keyboard.press("Control+z");
+  assert((await page.evaluate(() => window.__sbg.project.objects.length)) === objectsBefore, "undo did not bring the erased object back");
 
   terrainMap = await exportMap(page, "terrain.sbgmap");
   const { manifest, files, gltf } = readSbgmap(terrainMap);
