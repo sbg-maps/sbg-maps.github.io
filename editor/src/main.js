@@ -291,7 +291,7 @@ onFlyChange((on) => {
   flyBtn.classList.toggle("active", on);
   flyBtn.textContent = on ? "Stop flying" : "Fly";
   flyHint.hidden = !on;
-  flyHint.innerHTML = `<b>WASD</b> move, <b>E</b>/<b>Q</b> up/down, <b>Shift</b> faster, <b>drag</b> to look (right-drag with brushes), <b>wheel</b> speed (${flySpeed()} m/s), <b>Esc</b> stop`;
+  flyHint.innerHTML = `<b>WASD</b> move, <b>E</b>/<b>Q</b> up/down, <b>Shift</b> or <b>F</b> faster, <b>drag</b> to look (right- or middle-drag with brushes), <b>wheel</b> speed (${flySpeed()} m/s), <b>Esc</b> stop`;
 });
 
 // ---------- Hole picker ----------

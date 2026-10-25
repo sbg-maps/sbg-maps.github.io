@@ -1,5 +1,6 @@
 // Fly view: move the camera freely like a game spectator instead of orbiting around a point.
-// WASD moves, Q/E (or C/Space) go down/up, Shift is faster, dragging looks around, the wheel sets the speed.
+// WASD moves, Q/E (or C/Space) go down/up, Shift or F is faster, dragging looks around, the wheel sets the speed.
+// F exists because Firefox always opens its own menu on Shift + right-click, which pages cannot stop.
 // Clicks still reach the tools, so markers can be placed and land shaped while flying.
 import * as THREE from "three";
 import { camera, controls, renderer, onFrame } from "./scene.js";
@@ -63,7 +64,7 @@ const typing = (e) => ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)
 window.addEventListener("keydown", (e) => {
   if (!active || typing(e) || e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.code === "Escape") return setFlying(false);
-  if (!KEYS[e.code] && !e.code.startsWith("Shift")) return;
+  if (!KEYS[e.code] && !e.code.startsWith("Shift") && e.code !== "KeyF") return;
   held.add(e.code);
   e.preventDefault();
 });
@@ -72,7 +73,10 @@ window.addEventListener("blur", () => held.clear());
 
 const canvas = renderer.domElement;
 canvas.addEventListener("pointerdown", (e) => {
-  if (!active || !lookButtons.includes(e.button)) return;
+  if (!active) return;
+  // The middle button always looks around (and must not start the browser's autoscroll).
+  if (e.button === 1) e.preventDefault();
+  if (!lookButtons.includes(e.button) && e.button !== 1) return;
   look = { id: e.pointerId, x: e.clientX, y: e.clientY };
 });
 canvas.addEventListener("pointermove", (e) => {
@@ -100,6 +104,7 @@ canvas.addEventListener(
   { passive: false },
 );
 canvas.addEventListener("contextmenu", (e) => active && e.preventDefault());
+canvas.addEventListener("mousedown", (e) => active && e.button === 1 && e.preventDefault());
 
 onFrame((now) => {
   const dt = Math.min(0.1, lastTime ? (now - lastTime) / 1000 : 0);
@@ -113,6 +118,6 @@ onFrame((now) => {
   // Forward and sideways follow where the camera looks; up and down stay straight up and down.
   move.applyQuaternion(camera.quaternion);
   move.y += up;
-  const fast = held.has("ShiftLeft") || held.has("ShiftRight") ? 3 : 1;
+  const fast = held.has("ShiftLeft") || held.has("ShiftRight") || held.has("KeyF") ? 3 : 1;
   camera.position.addScaledVector(move.normalize(), speed * fast * dt);
 });

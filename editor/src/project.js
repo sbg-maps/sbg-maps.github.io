@@ -784,15 +784,10 @@ export class Project {
    */
   async exportGlb() {
     const out = new THREE.Scene();
-    const wasOverlay = this.surfaceOverlay;
-    this.setSurfaceOverlay(false);
-    // Only game-relevant fields go into the file (userData becomes glTF extras); keep editor-only data out.
-    const KEEP = ["surface", "invisible", "renderOnly", "climbable", "sm64Surface", "alphaBlend", "alphaMode"];
-    const savedUserData = this.materials.map(({ material }) => [material, material.userData, material.visible]);
-    for (const [m, data] of savedUserData) {
-      m.userData = Object.fromEntries(KEEP.filter((k) => data[k] !== undefined).map((k) => [k, data[k]]));
-      m.visible = true;
-    }
+    // Export copies of the materials as players see them, so the live ones (and the view) are never touched while
+    // the exporter runs; autosave runs this in the background while the mapper keeps editing.
+    const copies = new Map(this.materials.map((entry) => [entry.material, exportMaterial(entry)]));
+    const exportMaterialOf = (m) => (Array.isArray(m) ? m.map((x) => copies.get(x) ?? x) : copies.get(m) ?? m);
     // Camera-facing objects are exported with their real rotation, not the one they show right now.
     for (const o of this.objects) {
       const base = this.billboardBase.get(o);
@@ -818,19 +813,15 @@ export class Project {
       if (owner && !objects.has(owner) && this.objects.some((x) => !x.visible && isAncestor(x, o))) return; // hidden object
       const node = objects.has(owner) ? nodeFor.get(owner) : null;
       const matrix = node ? inverse.copy(owner.matrixWorld).invert().multiply(o.matrixWorld) : o.matrixWorld;
-      const mesh = new THREE.Mesh(o.geometry.clone().applyMatrix4(matrix), o.material);
+      const mesh = new THREE.Mesh(o.geometry.clone().applyMatrix4(matrix), exportMaterialOf(o.material));
       mesh.name = o.name;
       (node ?? out).add(mesh);
     });
     try {
       return await new GLTFExporter().parseAsync(out, { binary: true });
     } finally {
-      for (const [m, data, visible] of savedUserData) {
-        m.userData = data;
-        m.visible = visible;
-      }
-      this.setSurfaceOverlay(wasOverlay);
       out.traverse((o) => o.isMesh && o.geometry.dispose());
+      copies.forEach((m) => m.dispose());
     }
   }
 
@@ -930,4 +921,26 @@ async function toJpeg(data, w, h) {
   ctx.putImageData(image, 0, 0);
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
   return new Uint8Array(await blob.arrayBuffer());
+}
+
+/** Only game-relevant fields go into the file (material userData becomes glTF extras). */
+const EXPORT_EXTRAS = ["surface", "invisible", "renderOnly", "climbable", "sm64Surface", "alphaBlend", "alphaMode"];
+
+/** A copy of a material for export: its own textures and colours (not the surface view) and its drawing settings. */
+function exportMaterial({ material, original }) {
+  const m = material.clone();
+  const data = material.userData;
+  m.userData = Object.fromEntries(EXPORT_EXTRAS.filter((k) => data[k] !== undefined).map((k) => [k, data[k]]));
+  m.map = original.map;
+  m.vertexColors = original.vertexColors;
+  m.color.copy(original.color);
+  m.emissive?.setHex(0x000000); // the editor's selection highlight
+  m.visible = true;
+  const { alphaMode = "opaque", alphaCutoff = 0.5, opacity = 1, doubleSided = true } = data;
+  m.alphaTest = alphaMode === "cutout" ? alphaCutoff : 0;
+  m.transparent = alphaMode === "blend" || alphaMode === "add";
+  m.opacity = alphaMode === "blend" ? opacity : 1;
+  m.blending = THREE.NormalBlending;
+  m.side = doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+  return m;
 }
