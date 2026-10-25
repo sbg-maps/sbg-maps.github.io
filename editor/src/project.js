@@ -128,7 +128,7 @@ export class Project {
     });
     this.materials = [...seen.values()];
     // Levels converted from game sources carry a separate invisible collision mesh.
-    this.hasCollisionMesh = this.materials.some(({ material }) => material.userData.invisible);
+    this.hasCollisionMesh = this.materials.some(({ material }) => material.userData.invisible && !material.userData.renderOnly);
     this.refreshOverlay();
   }
 

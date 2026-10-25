@@ -6,6 +6,8 @@ export const CHANGES = [
     date: "2026-10-25",
     items: [
       "<b>Fly</b> button (top right of the view): fly around the map with WASD, look by dragging, Shift to go faster, the wheel sets the speed. Tools keep working while you fly.",
+      "Zipped models can be imported as they are. If the files hold several models, you pick which one to build on.",
+      "Levels ripped from GameCube and Wii games look right: no more white shadow layers over the textures or black light panels.",
     ],
   },
   {

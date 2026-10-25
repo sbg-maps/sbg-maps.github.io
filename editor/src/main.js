@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { loadFolder, loadZip, holeGrids, SURFACES } from "./mapfile.js";
-import { importModel } from "./importer.js";
+import { importModel, findModels, unpackZips } from "./importer.js";
 import { renderer, pick, pickCenter, hitMaterial, frameBox, scene, camera, controls, onFrame } from "./scene.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { HeightmapView } from "./viewer.js";
@@ -126,8 +126,12 @@ async function openMap(map) {
   setStatus(`${map.manifest.name} by ${map.manifest.author || "unknown"}`);
 }
 
-async function openModel(files) {
-  const { root, missing } = await importModel(files);
+async function openModel(picked) {
+  const files = await unpackZips([...picked]);
+  const models = findModels(files);
+  const model = models.length > 1 ? await chooseModel(models) : models[0];
+  if (models.length > 1 && !model) return setStatus("Import cancelled");
+  const { root, missing, layers } = await importModel(files, model);
   clear();
   empty.hidden = true;
   flyBtn.hidden = false;
@@ -136,7 +140,32 @@ async function openModel(files) {
   project.scale = niceScale(DEFAULT_LEVEL_SIZE / Math.max(size.x, size.z));
   project.applyTransform();
   startEditing();
-  setStatus(missing.length ? `Imported, but these files were missing: ${missing.join(", ")}` : `Imported ${root.name}`, missing.length > 0);
+  const extra = layers ? ` (left out ${layers} stacked shadow/light layers)` : "";
+  setStatus(missing.length ? `Imported, but these files were missing: ${missing.join(", ")}` : `Imported ${root.name}${extra}`, missing.length > 0);
+}
+
+/** Asks which of several model files to import; resolves to the File, or null if cancelled. */
+function chooseModel(models) {
+  const dialog = document.getElementById("pick-model");
+  const list = dialog.querySelector(".models");
+  const mb = (n) => (n / 1048576 >= 0.1 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.ceil(n / 1024)} KB`);
+  list.innerHTML = models.map((m, i) => `<button class="choice ${i ? "" : "active"}" data-i="${i}">${esc(m.name)} <small>${mb(m.size)}</small></button>`).join("");
+  dialog.hidden = false;
+  let chosen = 0;
+  return new Promise((resolve) => {
+    dialog.onclick = (e) => {
+      const choice = e.target.closest(".choice");
+      if (choice) {
+        chosen = Number(choice.dataset.i);
+        list.querySelectorAll(".choice").forEach((c) => c.classList.toggle("active", c === choice));
+      }
+      const done = e.target.closest("[data-act=import]") ? models[chosen] : e.target === dialog || e.target.closest("[data-act=cancel]") ? null : undefined;
+      if (done === undefined) return;
+      dialog.hidden = true;
+      dialog.onclick = null;
+      resolve(done);
+    };
+  });
 }
 
 function newLevel(sizeX, sizeZ, shape) {
@@ -157,14 +186,21 @@ async function openFiles(entries) {
   const files = entries.map((e) => e.file);
   const sbgmap = files.find((f) => /\.(sbgmap|zip)$/i.test(f.name));
   if (entries.some((e) => e.path.split("/").pop() === "map.json")) return openMap(await loadFolder(entries));
-  if (sbgmap && files.length === 1) return openMap(await loadZip(sbgmap));
+  if (sbgmap && files.length === 1) {
+    // A plain .zip can also be a zipped model.
+    const map = await loadZip(sbgmap).catch((e) => {
+      if (/\.zip$/i.test(sbgmap.name) && e.message.startsWith("No map.json")) return null;
+      throw e;
+    });
+    return map ? openMap(map) : openModel(files);
+  }
   return openModel(files);
 }
 
 const asEntries = (fileList) => [...fileList].map((file) => ({ file, path: file.webkitRelativePath || file.name }));
 document.getElementById("import-files").addEventListener("change", (e) => e.target.files.length && run("Importing", () => openModel(e.target.files)));
 document.getElementById("import-folder").addEventListener("change", (e) => e.target.files.length && run("Importing", () => openFiles(asEntries(e.target.files))));
-document.getElementById("open-file").addEventListener("change", (e) => e.target.files[0] && run("Opening", async () => openMap(await loadZip(e.target.files[0]))));
+document.getElementById("open-file").addEventListener("change", (e) => e.target.files[0] && run("Opening", () => openFiles(asEntries(e.target.files))));
 
 // New level dialog.
 const newDialog = document.getElementById("new-level");
@@ -740,7 +776,7 @@ function wireObjects() {
   info.querySelector("#add-prop").addEventListener("change", (e) =>
     e.target.files.length &&
     run("Adding model", async () => {
-      const { root, missing } = await importModel(e.target.files);
+      const { root, missing } = await importModel(await unpackZips([...e.target.files]));
       await addObject({ root, size: 10 }, root.name);
       if (missing.length) setStatus(`Added, but these files were missing: ${missing.join(", ")}`, true);
     }),

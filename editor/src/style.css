@@ -849,6 +849,16 @@ button.btn {
   cursor: pointer;
 }
 
+.choice-group.models {
+  flex-direction: column;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.choice-group.models .choice {
+  text-align: left;
+}
+
 .choice small {
   font-weight: 500;
   color: #6b8064;

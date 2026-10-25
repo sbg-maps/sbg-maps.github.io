@@ -6,19 +6,38 @@ import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
 import { ColladaLoader } from "three/addons/loaders/ColladaLoader.js";
+import { unzipSync } from "fflate";
 
 export const MODEL_EXTENSIONS = [".obj", ".glb", ".gltf", ".fbx", ".dae"];
 
 const ext = (name) => name.slice(name.lastIndexOf(".")).toLowerCase();
 const base = (path) => path.split(/[\\/]/).pop().toLowerCase();
 
+/** Model files among the picked files, biggest first (a download often has the level plus smaller extras). */
+export function findModels(files) {
+  return [...files].filter((f) => MODEL_EXTENSIONS.includes(ext(f.name))).sort((a, b) => b.size - a.size);
+}
+
+/** Replaces any .zip among the files with the files inside it (models are often shared zipped). */
+export async function unpackZips(files) {
+  const out = [];
+  for (const f of files) {
+    if (ext(f.name) !== ".zip") {
+      out.push(f);
+      continue;
+    }
+    const entries = unzipSync(new Uint8Array(await f.arrayBuffer()));
+    for (const [name, bytes] of Object.entries(entries)) if (!name.endsWith("/")) out.push(new File([bytes], name.split("/").pop()));
+  }
+  return out;
+}
+
 /**
- * Loads the first model file found in the picked files. Other files (mtl, textures, bin) are resolved by file name,
- * case-insensitively, so it works whatever folder layout the model came in.
+ * Loads a model from the picked files (the given one, or the biggest). Other files (mtl, textures, bin) are resolved
+ * by file name, case-insensitively, so it works whatever folder layout the model came in.
  */
-export async function importModel(fileList) {
+export async function importModel(fileList, modelFile = findModels(fileList)[0]) {
   const files = [...fileList];
-  const modelFile = files.find((f) => MODEL_EXTENSIONS.includes(ext(f.name)));
   if (!modelFile) throw new Error(`No model file found. Supported: ${MODEL_EXTENSIONS.join(", ")}`);
 
   const urls = new Map();
@@ -57,10 +76,42 @@ export async function importModel(fileList) {
     setTimeout(() => urls.forEach((u) => URL.revokeObjectURL(u)), 5000);
   }
   root.name = modelFile.name.replace(/\.[^.]+$/, "");
+  // glTF has proper multi-texture materials, and its stacked copies can be meant (invisible collision meshes).
+  const layers = [".glb", ".gltf"].includes(ext(modelFile.name)) ? 0 : dropTextureLayers(root);
   // glTF stores each texture's wrap mode; other formats assume repeating textures.
   normalizeMaterials(root, { keepWrap: [".glb", ".gltf"].includes(ext(modelFile.name)) });
-  return { root, missing: [...missing] };
+  return { root, missing: [...missing], layers };
 }
+
+/**
+ * Some game rips (GameCube/Wii/Switch tools exporting to .dae) split materials that blend several textures into
+ * one copy of the mesh per texture, stacked on the same triangles. The extra copies hold shadow or light overlays
+ * that would cover the real texture and flicker, so they are removed. Returns how many were removed.
+ */
+function dropTextureLayers(root) {
+  const seen = [];
+  const extra = [];
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    const pos = o.geometry.attributes.position;
+    const same = seen.find((s) => s.parent === o.parent && samePositions(s.geometry.attributes.position, pos) && sameMatrix(s, o));
+    if (same) extra.push(o);
+    else seen.push(o);
+  });
+  for (const o of extra) o.removeFromParent();
+  return extra.length;
+}
+
+function samePositions(a, b) {
+  if (a === b) return true;
+  if (a.count !== b.count || a.itemSize !== b.itemSize) return false;
+  const x = a.array;
+  const y = b.array;
+  for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
+  return true;
+}
+
+const sameMatrix = (a, b) => a.matrix.equals(b.matrix);
 
 async function loadObj(manager, files, modelUrl) {
   const loader = new OBJLoader(manager);
@@ -91,6 +142,32 @@ async function waitUntilIdle(progress, timeoutMs = 30000) {
     }
   }
 }
+
+/** True if the image is fully transparent and grey: a glow map that only works with additive blending. */
+function isGlowTexture(image) {
+  try {
+    const size = 32;
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(image, 0, 0, size, size);
+    const px = ctx.getImageData(0, 0, size, size).data;
+    for (let i = 0; i < px.length; i += 4) if (px[i + 3] !== 0) return false;
+    // Fully transparent pixels lose their colour when drawn, so look at the colour separately.
+    const opaque = document.createElement("canvas");
+    opaque.width = opaque.height = size;
+    const octx = opaque.getContext("2d", { willReadFrequently: true, alpha: false });
+    octx.drawImage(image, 0, 0, size, size);
+    return !hasColour(octx.getImageData(0, 0, size, size).data);
+  } catch {
+    return false;
+  }
+}
+
+const hasColour = (px) => {
+  for (let i = 0; i < px.length; i += 4) if (Math.max(px[i], px[i + 1], px[i + 2]) - Math.min(px[i], px[i + 1], px[i + 2]) > 8) return true;
+  return false;
+};
 
 export function materialsOf(object) {
   if (!object.material) return [];
@@ -124,6 +201,12 @@ function normalizeMaterials(root, { keepWrap = false } = {}) {
       });
       // glTF extras (surface, invisible collision, render-only) arrive as userData; keep them.
       out.userData = { ...m.userData };
+      // A grey texture with no alpha at all is a glow (light shafts, mist) that the game adds onto the picture.
+      // Drawn normally it is a dark panel, so it is left out: hidden and without collision.
+      if (map && isGlowTexture(map.image)) {
+        Object.assign(out.userData, { invisible: true, renderOnly: true });
+        out.visible = false;
+      }
       if (out.map) {
         out.map.colorSpace = THREE.SRGBColorSpace;
         if (!keepWrap) out.map.wrapS = out.map.wrapT = THREE.RepeatWrapping;

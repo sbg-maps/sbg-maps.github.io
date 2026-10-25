@@ -320,6 +320,43 @@ await test("import an OBJ with MTL and texture, export, reopen", async () => {
   await again.close();
 });
 
+await test("zipped game rip: pick the model, drop stacked layers and glow panels", async () => {
+  // Like a GameCube/Wii rip: the ground plus a stacked shadow copy of it, a glow panel (grey, no alpha), and a smaller extra model.
+  const quad = (y, first) => [`v -50 ${y} -50`, `v 50 ${y} -50`, `v 50 ${y} 50`, `v -50 ${y} 50`, `f ${first}/1 ${first + 1}/2 ${first + 2}/3`, `f ${first}/1 ${first + 2}/3 ${first + 3}/4`];
+  const big = ["mtllib rip.mtl", "vt 0 0", "vt 1 0", "vt 1 1", "vt 0 1", "o ground", "usemtl grass", ...quad(0, 1), "o ground_uv2", "usemtl shadow", ...quad(0, 5),
+    "o shaft", "usemtl glow", "v 0 0 0", "v 5 0 0", "v 5 30 0", "v 0 30 0", "f 9/1 10/2 11/3", "f 9/1 11/3 12/4"].join("\n");
+  const enc = (text) => new TextEncoder().encode(text);
+  const { zipSync } = await import("fflate");
+  const zip = path.join(tmp, "rip.zip");
+  fs.writeFileSync(zip, zipSync({
+    "Level/level.obj": enc(big),
+    "Level/extra.obj": enc(["v 0 0 0", "v 1 0 0", "v 0 0 1", "f 1 2 3"].join("\n")),
+    "Level/rip.mtl": enc("newmtl grass\nmap_Kd grass.png\nnewmtl shadow\nmap_Kd kage.png\nnewmtl glow\nmap_Kd light.png\n"),
+    "Level/grass.png": new Uint8Array(png(8, 8, [60, 180, 60, 255])),
+    "Level/kage.png": new Uint8Array(png(8, 8, [120, 120, 120, 255])),
+    "Level/light.png": new Uint8Array(png(8, 8, [70, 70, 70, 0])),
+  }));
+  const page = await freshPage(browser, url);
+  await page.setInputFiles("#open-file", zip); // a zipped model given to Open map works too
+  await page.waitForSelector("#pick-model:not([hidden])", { timeout: 20000 });
+  const choices = await page.$$eval("#pick-model .choice", (b) => b.map((x) => [x.textContent, x.classList.contains("active")]));
+  assert(choices.length === 2 && choices[0][0].startsWith("level.obj") && choices[0][1], `model choices: ${JSON.stringify(choices)}`);
+  await page.click('#pick-model [data-act="import"]');
+  await page.waitForFunction(() => window.__sbg.project, null, { timeout: 20000 });
+  const s = await page.evaluate(() => {
+    const p = window.__sbg.project;
+    const meshes = [];
+    p.root.traverse((o) => o.isMesh && meshes.push(o.name));
+    return { meshes, status: document.querySelector("#status").textContent, glow: p.materials.find((m) => m.material.name === "glow")?.material.visible, collision: p.hasCollisionMesh };
+  });
+  assert(!s.meshes.includes("ground_uv2") && s.meshes.includes("ground"), `stacked layer not removed: ${s.meshes}`);
+  assert(s.status.includes("left out 1"), `status: ${s.status}`);
+  assert(s.glow === false, "glow panel still drawn");
+  assert(!s.collision, "glow panel mistaken for a collision mesh");
+  assert(page.errors.length === 0, page.errors.join("; "));
+  await page.close();
+});
+
 if (fs.existsSync(OPTIONAL.sm64Glb)) {
   await test("SM64 decomp level keeps collision mesh, objects and wrap modes", async () => {
     const page = await freshPage(browser, url);
