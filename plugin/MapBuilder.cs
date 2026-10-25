@@ -161,8 +161,11 @@ namespace SbgMaps
             }
 
             var spawners = Object.FindObjectsByType<ItemSpawner>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-            PlaceOrRemove(spawners, def.itemBoxes, WorldOf, "item boxes");
-            var checkpoints = Object.FindObjectsByType<Checkpoint>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            PlaceOrRemove(WithCopies(spawners, def.itemBoxes.Count, 1), def.itemBoxes, WorldOf, "item boxes");
+            var checkpoints = WithCopies(Object.FindObjectsByType<Checkpoint>(FindObjectsInactive.Include, FindObjectsSortMode.None), def.checkpoints.Count, 2);
+            // Players keep the furthest checkpoint they touched: the map lists them from start to flag.
+            for (int i = 0; i < checkpoints.Length; i++)
+                Traverse.Create(checkpoints[i]).Field("order").SetValue(i);
             PlaceOrRemove(checkpoints, def.checkpoints, WorldOf, "checkpoints");
 
             var ocean = Object.FindFirstObjectByType<MainOutOfBoundsHazard>(FindObjectsInactive.Include);
@@ -191,14 +194,41 @@ namespace SbgMaps
             return b;
         }
 
+        /// <summary>Most item boxes or checkpoints a hole can have.</summary>
+        public const int MaxCopies = 64;
+
+        /// <summary>
+        /// The donor's networked objects of a kind, in the same order on every machine, plus copies when the map wants
+        /// more than the donor has. Mirror pairs scene objects between host and players by scene id, so each copy gets
+        /// an id derived from the donor's (same scene hash, a fixed pattern for the rest) that every machine computes alike.
+        /// </summary>
+        private static T[] WithCopies<T>(T[] found, int wanted, int kind) where T : Component
+        {
+            var objects = found.OrderBy(o => o.GetComponent<NetworkIdentity>()?.sceneId ?? 0UL).ToList();
+            if (objects.Count == 0)
+                return objects.ToArray();
+            var template = objects[0];
+            var templateId = template.GetComponent<NetworkIdentity>();
+            wanted = Mathf.Min(wanted, MaxCopies);
+            for (int i = objects.Count; i < wanted; i++)
+            {
+                var copy = Object.Instantiate(template.gameObject, template.transform.parent);
+                copy.name = $"{template.name} (SbgMaps {i + 1})";
+                if (templateId != null && copy.TryGetComponent<NetworkIdentity>(out var id))
+                    id.sceneId = (templateId.sceneId & 0xFFFFFFFF00000000UL) | (0x5B6D0000UL + (ulong)(kind << 12) + (ulong)i);
+                objects.Add(copy.GetComponent<T>());
+            }
+            return objects.ToArray();
+        }
+
         /// <summary>
         /// Moves donor objects onto the map's points. Spare ones are removed on the host once Mirror has spawned them,
-        /// which also removes them for clients. Maps can't have more than the donor has yet.
+        /// which also removes them for clients. There are enough of them (see WithCopies) up to MaxCopies.
         /// </summary>
         private static void PlaceOrRemove<T>(T[] objects, List<PointDef> points, System.Func<PointDef, Vector3> worldOf, string what) where T : Component
         {
             if (points.Count > objects.Length)
-                Plugin.Log.LogWarning($"MapBuilder: map has {points.Count} {what} but only {objects.Length} are supported for now; extra ones are ignored");
+                Plugin.Log.LogWarning($"MapBuilder: map has {points.Count} {what}, at most {objects.Length} are used");
             var spare = new List<GameObject>();
             for (int i = 0; i < objects.Length; i++)
             {

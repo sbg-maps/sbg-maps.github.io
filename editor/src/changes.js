@@ -6,6 +6,7 @@ export const CHANGES = [
     date: "2026-10-25",
     items: [
       "<b>Fly</b> button (top right of the view): fly around the map with WASD, look by dragging, Shift to go faster, the wheel sets the speed. Tools keep working while you fly.",
+      "Up to 64 item boxes and 64 checkpoints per hole (was 16 and 1). Checkpoints count in the order you place them, from the Start to the Flag. Needs mod 0.3.0.",
       "Zipped models can be imported as they are. If the files hold several models, you pick which one to build on.",
       "Levels ripped from GameCube and Wii games look right: no more white shadow layers over the textures or black light panels.",
     ],

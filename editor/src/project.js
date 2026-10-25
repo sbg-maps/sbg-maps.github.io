@@ -48,6 +48,8 @@ const PAD = 20;
 export const BASE_Y = 20;
 export const DEFAULT_WATER = 15;
 export const MAX_SIZE = 900;
+/** Most item boxes, and most checkpoints, the mod places in one hole. */
+export const MAX_PER_HOLE = 64;
 /** Song formats the game's audio engine (FMOD) plays. */
 export const SONG_TYPES = ["mp3", "ogg", "wav", "flac"];
 
@@ -492,10 +494,10 @@ export class Project {
       const label = `${h.name || `Hole ${i + 1}`}`;
       if (!h.tee) out.push(`${label}: place the Start (where players tee off).`);
       if (!h.cup) out.push(`${label}: place the Flag (the hole players aim for).`);
-      if (h.itemBoxes.length > 16) out.push(`${label}: at most 16 item boxes for now.`);
+      if (h.itemBoxes.length > MAX_PER_HOLE) out.push(`${label}: at most ${MAX_PER_HOLE} item boxes.`);
       const under = [h.tee && "the Start", h.cup && "the Flag"].filter((what, k) => what && [h.tee, h.cup][k].y < h.water);
       if (under.length) out.push(`${label}: ${under.join(" and ")} ${under.length > 1 ? "are" : "is"} under the water level (${h.water} m).`);
-      if (h.checkpoints.length > 1) out.push(`${label}: at most 1 checkpoint for now.`);
+      if (h.checkpoints.length > MAX_PER_HOLE) out.push(`${label}: at most ${MAX_PER_HOLE} checkpoints.`);
     });
     return out;
   }
