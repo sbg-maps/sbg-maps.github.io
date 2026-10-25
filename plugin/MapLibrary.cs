@@ -65,7 +65,12 @@ namespace SbgMaps
             return new HoleGrids(hole, ReadFile(hole.heightmap.file), hole.paintmap != null ? ReadFile(hole.paintmap.file) : null);
         }
 
-        public GlbReader.Model LoadModel() => Manifest.model?.file != null ? GlbReader.Read(ReadFile(Manifest.model.file)) : null;
+        /// <summary>The level model of a hole: its own (a piece cut out for it) or the map's shared one.</summary>
+        public GlbReader.Model LoadModel(int holeIndex)
+        {
+            string file = Manifest.holes[holeIndex].model?.file ?? Manifest.model?.file;
+            return file != null ? GlbReader.Read(ReadFile(file)) : null;
+        }
 
         /// <summary>
         /// Hash of the map's content (file names and bytes), the same whether it is a folder or a zip, so a folder
@@ -141,8 +146,8 @@ namespace SbgMaps
                     throw new InvalidDataException($"{where}: size must be [x, z] in metres");
                 if (h.size[0] > MapBuilder.MaxMapSize || h.size[1] > MapBuilder.MaxMapSize)
                     throw new InvalidDataException($"{where}: size {h.size[0]}x{h.size[1]} is larger than the {MapBuilder.MaxMapSize} m limit");
-                if (h.heightmap == null && m.model == null)
-                    throw new InvalidDataException($"{where}: needs a heightmap, or the map needs a model");
+                if (h.heightmap == null && m.model == null && h.model == null)
+                    throw new InvalidDataException($"{where}: needs a heightmap or a model (its own, or the map's)");
                 if (h.heightmap != null && (h.heightmap.width < 2 || h.heightmap.depth < 2))
                     throw new InvalidDataException($"{where}: heightmap needs at least 2x2 samples");
                 if (h.tee == null)

@@ -54,6 +54,8 @@ New maps, or a different number of holes, need a game restart because the course
 | `green` | [[x, z], ...] | Optional. Green polygon (raises the flag, putting rules). Default: 15 m circle around the cup. |
 | `returnPath` | [[x, z], ...] | Optional. Path that out-of-bounds balls are returned towards. Default: straight line from tee to cup. |
 | `music` | string | Optional. A song file in the map for this hole only, instead of the map's `music`. |
+| `model` | {file} | Optional. This hole's own level model, used instead of the map's `model`: the piece of a bigger level around this hole, in this hole's coordinates (like its points). Lets one map hold holes from far-apart parts of a big world. |
+| `origin` | [x, z] | Optional, with `model`. Where this hole's area sat in the level it was cut from; the editor uses it to put the pieces back together. |
 | `preview` | string | Optional. A picture of the hole in the map (.jpg or .png, about 608 x 400), shown when hovering the hole in match setup. The editor renders one per hole on export. |
 
 Heights (y) are world heights in metres. x and z are map coordinates in metres.

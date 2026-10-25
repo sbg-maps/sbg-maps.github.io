@@ -90,6 +90,8 @@ export class Project {
     this.music = null;
     /** Loudness per song (0 to 1); songs not listed play at full volume. */
     this.songVolumes = new Map();
+    /** Export only the level around each hole, as a piece per hole (always, when the level is bigger than the game allows). */
+    this.trimToHoles = false;
     /** Real rotations of camera-facing objects, which the editor turns toward the camera while showing them. */
     this.billboardBase = new WeakMap();
     this.collectMaterials();
@@ -796,7 +798,13 @@ export class Project {
   problems() {
     const out = [];
     const [sx, sz] = this.size;
-    if (sx > MAX_SIZE || sz > MAX_SIZE) out.push(`The level is ${sx} x ${sz} m; the game fits at most ${MAX_SIZE} x ${MAX_SIZE} m. Lower the scale.`);
+    if (!this.terrain && this.trims) {
+      this.holes.forEach((h, i) => {
+        const r = this.holeRegion(h);
+        if (r && (r.w > MAX_SIZE || r.h > MAX_SIZE))
+          out.push(`${h.name || `Hole ${i + 1}`}: its area (Start, Flag, play area, boxes and checkpoints) is ${r.w} x ${r.h} m; one hole fits at most ${MAX_SIZE} x ${MAX_SIZE} m.`);
+      });
+    } else if (sx > MAX_SIZE || sz > MAX_SIZE) out.push(`The level is ${sx} x ${sz} m; the game fits at most ${MAX_SIZE} x ${MAX_SIZE} m. Lower the scale.`);
     this.holes.forEach((h, i) => {
       const label = `${h.name || `Hole ${i + 1}`}`;
       if (!h.tee) out.push(`${label}: place the Start (where players tee off).`);
@@ -813,12 +821,17 @@ export class Project {
    * Builds the .sbgmap (zip) bytes: map.json plus level.glb and/or the terrain grids. With `previews`, each hole also
    * gets a picture for the game's match setup (left out of autosaves, which run often).
    */
-  async exportSbgmap({ previews = false } = {}) {
+  async exportSbgmap({ previews = false, forGame = false } = {}) {
     const files = {};
     const pictures = previews ? await this.renderPreviews() : [];
     pictures.forEach((bytes, i) => bytes && (files[`previews/hole${i + 1}.jpg`] = [bytes, { level: 0 }]));
     const withModel = !this.terrain || this.hasModel;
-    if (withModel) files["level.glb"] = new Uint8Array(await this.exportGlb());
+    // Big levels (several sections of a game world): each hole gets the piece of the level around it.
+    // Only for the downloaded map: autosaves keep the whole level.
+    const regions = forGame && this.trims ? this.holes.map((h) => this.holeRegion(h)) : null;
+    if (regions) {
+      for (let i = 0; i < regions.length; i++) if (regions[i]) files[`hole${i + 1}.glb`] = new Uint8Array(await this.exportGlb({ region: regions[i] }));
+    } else if (withModel) files["level.glb"] = new Uint8Array(await this.exportGlb());
     const grids = this.terrain?.exportGrids("terrain");
     if (grids) Object.assign(files, grids.files);
     const id = this.info.id || `${slug(this.info.author || "anon")}.${slug(this.info.name)}`;
@@ -830,11 +843,14 @@ export class Project {
       author: this.info.author,
       credits: this.info.credits || undefined,
       version: "1.0.0",
-      size: this.size,
-      model: withModel ? { file: "level.glb" } : undefined,
+      size: regions ? [Math.max(...regions.map((r) => r?.w ?? 1)), Math.max(...regions.map((r) => r?.h ?? 1))] : this.size,
+      model: withModel && !regions ? { file: "level.glb" } : undefined,
       music: this.music ?? undefined,
       songs: this.songVolumesFor(this.usedSongs()),
-      holes: this.holes.map((h, i) => ({
+      holes: this.holes.map((hole, i) => {
+        const r = regions?.[i];
+        const h = r ? shiftHole(hole, -r.x0, -r.z0) : hole;
+        return {
         name: h.name,
         par: h.par,
         difficulty: h.difficulty,
@@ -853,7 +869,9 @@ export class Project {
         bounds: h.bounds?.length >= 3 ? h.bounds.map((p) => [Math.round(p.x * 100) / 100, Math.round(p.z * 100) / 100]) : undefined,
         music: h.music ?? undefined,
         preview: pictures[i] ? `previews/hole${i + 1}.jpg` : undefined,
-      })),
+        ...(r ? { model: { file: `hole${i + 1}.glb` }, size: [r.w, r.h], origin: [r.x0, r.z0] } : {}),
+      };
+      }),
     };
     // Only songs something plays go in, stored as they are (they are compressed already).
     for (const name of this.usedSongs()) files[name] = [this.songs.get(name), { level: 0 }];
@@ -965,8 +983,50 @@ export class Project {
    * The level with scale/rotation/placement baked into the vertices and surfaces in material extras.
    * Objects stay separate nodes with their own transform (so the game can move them) and their userData as extras.
    */
-  async exportGlb() {
+  /** Export only the level around each hole (asked for, or needed because the level is too big for one hole area). */
+  get trims() {
+    if (this.terrain || !this.hasModel) return false;
+    const [sx, sz] = this.size;
+    return this.trimToHoles || sx > MAX_SIZE || sz > MAX_SIZE;
+  }
+
+  /**
+   * The area around a hole, in map coordinates: its play area (or Start and Flag with room around them) plus its
+   * boxes and checkpoints. {x0, z0, w, h}, or null without a Start and Flag.
+   */
+  holeRegion(h) {
+    if (!h.tee || !h.cup) return null;
+    const points = [h.tee, h.cup, ...h.itemBoxes, ...(h.redItemBoxes ?? []), ...h.checkpoints, ...(h.bounds ?? [])];
+    const margin = h.bounds?.length >= 3 ? 25 : 120;
+    const xs = points.map((p) => p.x);
+    const zs = points.map((p) => p.z);
+    const x0 = Math.floor(Math.min(...xs) - margin);
+    const z0 = Math.floor(Math.min(...zs) - margin);
+    return { x0, z0, w: Math.ceil(Math.max(...xs) + margin) - x0, h: Math.ceil(Math.max(...zs) + margin) - z0 };
+  }
+
+  /**
+   * Adds another section of the same game world (a .glb that says where it sits in that world) to the level, at its
+   * true place next to the first one.
+   */
+  addSection(section) {
+    const a = this.root.userData;
+    const b = section.userData;
+    if (!Array.isArray(a.worldOrigin) || !Array.isArray(b.worldOrigin))
+      throw new Error("These files don't say where they sit in their game world, so they can't be lined up (convert them again with the latest converter)");
+    if ((a.source ?? "") !== (b.source ?? "") || (a.map ?? "") !== (b.map ?? "")) throw new Error("That section is from another game or map");
+    section.position.set(b.worldOrigin[0] - a.worldOrigin[0], b.worldOrigin[1] - a.worldOrigin[1], b.worldOrigin[2] - a.worldOrigin[2]);
+    this.root.add(section);
+    this.collectMaterials();
+    this.applyTransform();
+  }
+
+  async exportGlb({ region = null } = {}) {
     const out = new THREE.Scene();
+    // In three.js coordinates a map point (x, z) is (x, -z); a region's corner moves to the origin.
+    const inRegion = (x, z) => !region || (x >= region.x0 && x <= region.x0 + region.w && -z >= region.z0 && -z <= region.z0 + region.h);
+    const shiftX = region ? -region.x0 : 0;
+    const shiftZ = region ? region.z0 : 0;
     // Export copies of the materials as players see them, so the live ones (and the view) are never touched while
     // the exporter runs; autosave runs this in the background while the mapper keeps editing.
     const copies = new Map(this.materials.map((entry) => [entry.material, exportMaterial(entry)]));
@@ -977,12 +1037,15 @@ export class Project {
       if (base) o.quaternion.copy(base);
     }
     this.pivot.updateMatrixWorld(true);
-    const objects = new Set(this.objects.filter((o) => o.visible));
+    const objects = new Set(this.objects.filter((o) => o.visible && inRegion(o.matrixWorld.elements[12], o.matrixWorld.elements[14])));
+    const skipped = new Set(this.objects.filter((o) => !objects.has(o)));
     const nodeFor = new Map();
     for (const obj of objects) {
       const node = new THREE.Group();
       node.name = obj.name;
       obj.matrixWorld.decompose(node.position, node.quaternion, node.scale);
+      node.position.x += shiftX;
+      node.position.z += shiftZ;
       node.userData = JSON.parse(JSON.stringify(obj.userData));
       out.add(node);
       nodeFor.set(obj, node);
@@ -993,13 +1056,27 @@ export class Project {
       // The object may be the mesh itself (single-part glTF nodes load that way) or one of its parents.
       let owner = o;
       while (owner && !objects.has(owner) && owner !== this.root) owner = owner.parent;
-      if (owner && !objects.has(owner) && this.objects.some((x) => !x.visible && isAncestor(x, o))) return; // hidden object
+      if (owner && !objects.has(owner) && this.objects.some((x) => (!x.visible || skipped.has(x)) && isAncestor(x, o))) return; // hidden or elsewhere
       const node = objects.has(owner) ? nodeFor.get(owner) : null;
       const matrix = node ? inverse.copy(owner.matrixWorld).invert().multiply(o.matrixWorld) : o.matrixWorld;
-      const mesh = new THREE.Mesh(o.geometry.clone().applyMatrix4(matrix), exportMaterialOf(o.material));
+      let geometry = o.geometry.clone().applyMatrix4(matrix);
+      if (region && !node) {
+        // Level triangles whose middle is in the hole's area, moved so the area starts at the origin.
+        geometry = keepTriangles(geometry, (a, b, c) => inRegion((a.x + b.x + c.x) / 3, (a.z + b.z + c.z) / 3));
+        if (!geometry) return;
+        geometry.translate(shiftX, 0, shiftZ);
+      }
+      const mesh = new THREE.Mesh(geometry, exportMaterialOf(o.material));
       mesh.name = o.name;
       (node ?? out).add(mesh);
     });
+    // Keep where the level sits in its game world, so more sections can still be added after reopening it. Only
+    // while unscaled and unturned: the export is moved by the editor's placement alone.
+    const origin = this.root.userData.worldOrigin;
+    if (!region && Array.isArray(origin) && this.scale === 1 && this.rotation === 0) {
+      const p = this.pivot.position;
+      out.userData = { ...(this.root.userData.source ? { source: this.root.userData.source } : {}), ...(this.root.userData.map ? { map: this.root.userData.map } : {}), worldOrigin: [origin[0] - p.x, origin[1] - p.y, origin[2] - p.z] };
+    }
     try {
       return await new GLTFExporter().parseAsync(out, { binary: true });
     } finally {
@@ -1017,6 +1094,23 @@ export class Project {
     const heightFiles = new Set(m.holes.map((h) => h.heightmap?.file).filter(Boolean));
     if (heightFiles.size > 1) return null;
     let root = new THREE.Group();
+    // Maps cut into a piece per hole: put the pieces back at their places in the level they came from.
+    const pieces = m.holes.filter((h) => h.model?.file && Array.isArray(h.origin));
+    for (const h of pieces) {
+      const bytes = map.files.get(h.model.file);
+      if (!bytes) throw new Error(`Missing ${h.model.file}`);
+      const piece = (await new GLTFLoader().parseAsync(bytes.slice().buffer, "")).scene;
+      piece.position.set(h.origin[0], 0, -h.origin[1]);
+      root.add(piece);
+    }
+    if (pieces.length) {
+      root.traverse((o) => {
+        for (const mat of materialsOf(o)) {
+          mat.side = THREE.DoubleSide;
+          mat.userData.surface ??= "rough";
+        }
+      });
+    }
     if (m.model?.file) {
       const bytes = map.files.get(m.model.file);
       if (!bytes) throw new Error(`Missing ${m.model.file}`);
@@ -1032,7 +1126,7 @@ export class Project {
     const terrainHole = m.holes.find((h) => h.heightmap);
     const terrain = terrainHole ? Terrain.fromHole({ ...terrainHole, size: terrainHole.size ?? m.size }, holeGrids(map, { ...terrainHole, size: terrainHole.size ?? m.size })) : null;
     const project = new Project(root, { id: m.id, name: m.name, author: m.author, credits: m.credits }, { terrain });
-    project.holes = m.holes.map((h) => ({
+    project.holes = m.holes.map((original) => (Array.isArray(original.origin) ? shiftHole(original, original.origin[0], original.origin[1]) : original)).map((h) => ({
       name: h.name,
       par: h.par,
       difficulty: h.difficulty ?? "none",
@@ -1208,4 +1302,34 @@ function splitGeometry(geometry, take) {
     return out;
   };
   return [build((t) => !take.has(t)), build((t) => take.has(t))];
+}
+
+/** A copy of a hole with all its points moved by (dx, dz); play area corners may be {x, z} or [x, z]. */
+function shiftHole(h, dx, dz) {
+  const move = (p) => (p ? { ...p, x: p.x + dx, z: p.z + dz } : p);
+  return {
+    ...h,
+    tee: move(h.tee),
+    cup: move(h.cup),
+    itemBoxes: (h.itemBoxes ?? []).map(move),
+    redItemBoxes: (h.redItemBoxes ?? []).map(move),
+    checkpoints: (h.checkpoints ?? []).map(move),
+    ...(h.bounds ? { bounds: h.bounds.map((p) => (Array.isArray(p) ? [p[0] + dx, p[1] + dz] : move(p))) } : {}),
+  };
+}
+
+/** The triangles of a geometry (any indexing) that pass a test on their corners, unindexed; null if none do. */
+function keepTriangles(geometry, keep) {
+  const flat = geometry.index ? geometry.toNonIndexed() : geometry;
+  const pos = flat.attributes.position;
+  const take = new Set();
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  for (let t = 0; t < pos.count / 3; t++) {
+    if (keep(a.fromBufferAttribute(pos, t * 3), b.fromBufferAttribute(pos, t * 3 + 1), c.fromBufferAttribute(pos, t * 3 + 2))) take.add(t);
+  }
+  if (!take.size) return null;
+  if (take.size === pos.count / 3) return flat;
+  return splitGeometry(flat, take)[1];
 }

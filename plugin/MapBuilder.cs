@@ -36,7 +36,7 @@ namespace SbgMaps
             var def = pack.Manifest.holes[holeIndex];
             Plugin.Log.LogInfo($"MapBuilder: building '{pack.Manifest.name}' hole {holeIndex + 1} '{def.name}' in '{scene.name}'");
             var grids = pack.LoadGrids(holeIndex);
-            var model = pack.LoadModel();
+            var model = pack.LoadModel(holeIndex);
 
             // The donor's own surfaces tell us which physics layer the ball treats as ground.
             var donorSurface = Object.FindObjectsByType<TerrainAddition>(FindObjectsInactive.Include, FindObjectsSortMode.None).FirstOrDefault();

@@ -51,6 +51,13 @@ namespace SbgMaps
         public string preview;
         /// <summary>Playable area in metres, [x, z]. Map-local coordinates run from (0,0) to size.</summary>
         public float[] size;
+        /// <summary>
+        /// Optional: this hole's own level model (a piece of a bigger level cut out around it), used instead of the
+        /// map's. Its coordinates are this hole's, like its points.
+        /// </summary>
+        public ModelDef model;
+        /// <summary>Where this hole's area sits in the level it was cut from [x, z] (for the editor to put pieces back).</summary>
+        public float[] origin;
         public GridDef heightmap;
         public GridDef paintmap;
         public float water = 5f;

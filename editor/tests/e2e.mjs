@@ -533,6 +533,41 @@ await test("close: back to the start screen, autosave offered", async () => {
   await page.close();
 });
 
+await test("big level: each hole gets the piece around it, and reopening puts it back", async () => {
+  const dir = makeObjFixture();
+  const page = await freshPage(browser, url);
+  await page.setInputFiles("#import-files", fs.readdirSync(dir).map((f) => path.join(dir, f)));
+  await page.waitForFunction(() => window.__sbg.project, null, { timeout: 20000 });
+  // Blow the 100 m quad up to 3 km: too big for one hole area.
+  const tee = await page.evaluate(() => {
+    const p = window.__sbg.project;
+    p.scale = 30;
+    p.applyTransform();
+    const h = p.hole;
+    h.tee = { x: 300, y: p.box.max.y, z: 300 };
+    h.cup = { x: 500, y: p.box.max.y, z: 450 };
+    p.rebuildMarkers();
+    return h.tee;
+  });
+  await page.click('.tab[data-tab="export"]');
+  assert(await page.isChecked("#trim"), "trim not forced for a level bigger than one hole area");
+  const file = await exportMap(page, "big.sbgmap");
+  const { manifest, files } = readSbgmap(file);
+  const hole = manifest.holes[0];
+  assert(!manifest.model && hole.model?.file === "hole1.glb" && files["hole1.glb"], `per-hole model missing: ${JSON.stringify({ model: manifest.model, hole: hole.model })}`);
+  assert(hole.size[0] <= 900 && hole.size[1] <= 900 && Array.isArray(hole.origin), `hole area: ${JSON.stringify(hole.size)} origin ${hole.origin}`);
+  assert(Math.abs(hole.tee.x + hole.origin[0] - tee.x) < 0.01 && Math.abs(hole.tee.z + hole.origin[1] - tee.z) < 0.01, "points not moved into the hole's area");
+  assert(files["hole1.glb"].length < 200000, `piece too big: ${files["hole1.glb"].length}`);
+  await page.close();
+  const again = await freshPage(browser, url);
+  await again.setInputFiles("#open-file", file);
+  await again.waitForFunction(() => window.__sbg.project?.hole.tee, null, { timeout: 20000 });
+  const back = await again.evaluate(() => window.__sbg.project.hole.tee);
+  assert(Math.abs(back.x - tee.x) < 0.01 && Math.abs(back.z - tee.z) < 0.01, `reopened tee moved: ${JSON.stringify(back)} vs ${JSON.stringify(tee)}`);
+  assert(again.errors.length === 0, again.errors.join("; "));
+  await again.close();
+});
+
 await test("fly view: move, look, place while flying, stop", async () => {
   const page = await freshPage(browser, url);
   await page.click("#new-level-btn");

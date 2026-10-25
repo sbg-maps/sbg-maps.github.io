@@ -4,7 +4,7 @@ import { importModel, findModels, unpackZips } from "./importer.js";
 import { renderer, pick, pickCenter, hitMaterial, frameBox, scene, camera, controls, onFrame } from "./scene.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { HeightmapView } from "./viewer.js";
-import { Project, MODEL_SURFACES, MARKERS, BASE_Y, MAX_PER_HOLE, ITEMS } from "./project.js";
+import { Project, MODEL_SURFACES, MARKERS, BASE_Y, MAX_PER_HOLE, MAX_SIZE, ITEMS } from "./project.js";
 import { golferInfo, loadGolferFile, restoreGolfer, onGolferChange } from "./golfer.js";
 import { PlayerView } from "./pov.js";
 import { Terrain } from "./terrain.js";
@@ -675,7 +675,9 @@ function modelPanel() {
     ${project.terrain ? "" : `
     <h3>Size</h3>
     <div class="field"><label for="scale">Scale</label><input id="scale" type="number" min="0.0001" step="any" value="${+project.scale.toPrecision(3)}" /></div>
-    <div class="stats">${stat("Course area", `${sx} x ${sz} m`)}</div>`}
+    <div class="stats">${stat("Course area", `${sx} x ${sz} m`)}</div>
+    ${Array.isArray(project.root.userData.worldOrigin) ? `<label class="btn btn-secondary small" tabindex="0" title="Another section of the same game world, placed where it really is">Add a section<input id="add-section" type="file" accept=".glb,.gltf" hidden /></label>
+    <p class="hint">Sections of the same world line up by themselves. Holes can then be anywhere: each one takes the piece of the level around it.</p>` : ""}`}
     <h3>Your golfer</h3>
     <p class="hint">${
       golferInfo().fromGame
@@ -737,6 +739,17 @@ function wireModel() {
     frameBox(project.box);
     renderPanel();
   });
+  info.querySelector("#add-section")?.addEventListener("change", (e) =>
+    e.target.files.length &&
+    run("Adding section", async () => {
+      const { root } = await importModel(await unpackZips([...e.target.files]));
+      project.addSection(root);
+      history.version++;
+      frameBox(project.box);
+      renderPanel();
+      setStatus(`Added ${root.name}`);
+    }),
+  );
   info.querySelector("#rotate")?.addEventListener("click", () => {
     project.rotation = (project.rotation + 1) % 4;
     project.applyTransform();
@@ -1134,6 +1147,17 @@ function wireHoles() {
   });
 }
 
+/** The "only the level around each hole" choice (forced on for levels bigger than one hole area). */
+function trimChoice() {
+  if (project.terrain || !project.hasModel) return "";
+  const [sx, sz] = project.size;
+  const big = sx > MAX_SIZE || sz > MAX_SIZE;
+  return `<label class="check"><input type="checkbox" id="trim" ${project.trims ? "checked" : ""} ${big ? "disabled" : ""} /> Only keep the level around each hole</label>
+    <p class="hint">${big
+      ? `The level is ${sx} x ${sz} m, bigger than one hole area (${MAX_SIZE} m), so each hole gets the piece of the level around its Start, Flag and play area.`
+      : "Each hole then gets just the piece of the level around its Start, Flag and play area: a smaller download and faster loading."} The editor keeps the whole level.</p>`;
+}
+
 /** Warnings (things that look wrong in game but still work), as a list, or nothing. */
 function warningList() {
   const warnings = project.warnings();
@@ -1149,6 +1173,7 @@ function exportPanel() {
     <div class="field"><label for="author">Author</label><input id="author" value="${esc(project.info.author)}" /></div>
     <div class="field"><label for="credits">Credits</label><textarea id="credits" rows="3" placeholder="e.g. Model by ...">${esc(project.info.credits)}</textarea></div>
     ${musicSection()}
+    ${trimChoice()}
     ${problems.length ? `<ul class="problems">${problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : `<p class="ok">Ready to play!</p>`}
     ${warningList()}
     <button class="btn btn-primary" id="export" ${problems.length ? "disabled" : ""}>Download .sbgmap</button>
@@ -1161,9 +1186,13 @@ function wireExport() {
   bind("#author", "author");
   bind("#credits", "credits");
   wireMusic();
+  info.querySelector("#trim")?.addEventListener("change", (e) => {
+    project.trimToHoles = e.target.checked;
+    renderPanel();
+  });
   info.querySelector("#export").addEventListener("click", () =>
     run("Exporting", async () => {
-      const bytes = await project.exportSbgmap({ previews: true });
+      const bytes = await project.exportSbgmap({ previews: true, forGame: true });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(new Blob([bytes], { type: "application/zip" }));
       a.download = `${(project.info.name || "map").replace(/[^\w.-]+/g, "_")}.sbgmap`;
