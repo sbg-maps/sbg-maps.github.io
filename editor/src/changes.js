@@ -5,6 +5,7 @@ export const CHANGES = [
     id: 3,
     date: "2026-10-25",
     items: [
+      "The Opacity slider for See-through materials now goes all the way down to 0% (invisible).",
       "<b>Cut piece</b> tool: click a floating island (or any separate piece of an imported level) to turn it into an object you can move, turn and resize. Handy when scaling a level spreads its islands too far apart.",
       "<b>Choose the items</b> in a hole's boxes (Holes tab): which items can come up and how often, for normal boxes and for red boxes. Needs mod 0.4.0.",
       "Red boxes in the game now look like the game's own red boxes. Needs mod 0.4.0.",

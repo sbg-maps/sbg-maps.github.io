@@ -708,7 +708,7 @@ function lookSettings(material, i) {
   return `<div class="mat-look">${many}
     <div class="choice-group alpha-modes">${ALPHA_MODES.map(([id, name, tip]) => `<button class="choice ${id === alphaMode ? "active" : ""}" data-mode="${id}" data-i="${i}" title="${tip}">${name}</button>`).join("")}</div>
     ${alphaMode === "cutout" ? slider("alpha-cutoff", "Cut below", alphaCutoff, 5, "Parts more see-through than this are cut away. Raise it if edges look fuzzy, lower it if thin parts vanish.") : ""}
-    ${alphaMode === "blend" ? slider("alpha-opacity", "Opacity", opacity, 5, "How solid it looks overall") : ""}
+    ${alphaMode === "blend" ? slider("alpha-opacity", "Opacity", opacity, 0, "How solid it looks overall (0% is fully invisible)") : ""}
 <div class="row">
     <label class="check" title="Show the back of each face too (needed for leaves and flat cut-outs)"><input type="checkbox" class="two-sided" data-i="${i}" ${doubleSided ? "checked" : ""} /> Two-sided</label>
     ${material.userData.invisible ? "" : `<label class="check" title="Players and balls pass through it (plants, flowers, grass tufts, light shafts)"><input type="checkbox" class="walk-through" data-i="${i}" ${material.userData.renderOnly ? "checked" : ""} /> Walk through</label>`}</div>
