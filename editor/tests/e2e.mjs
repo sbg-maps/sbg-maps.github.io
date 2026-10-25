@@ -397,6 +397,20 @@ await test("zipped game rip: pick the model, drop stacked layers, glow panels ad
     history.undo();
     return { taken: piece.taken, before, after, undone: p.objects.length, islandTris: islandMesh.geometry.attributes.position.count / 3 };
   });
+  // Cut area: an outline around the island takes just it, even from one solid mesh.
+  const area = await page.evaluate(() => {
+    const { project: p, THREE } = window.__sbg;
+    const box = new THREE.Box3().setFromObject(p.root.getObjectByName("island"));
+    const m = 1;
+    const outline = [
+      { x: box.min.x - m, z: -box.max.z - m },
+      { x: box.max.x + m, z: -box.max.z - m },
+      { x: box.max.x + m, z: -box.min.z + m },
+      { x: box.min.x - m, z: -box.min.z + m },
+    ];
+    return p.findArea(outline)?.taken ?? 0;
+  });
+  assert(area === 2, `cut area took ${area} triangles, expected the island's 2`);
   // A selected piece goes with the Delete key, and comes back with undo.
   const piecesBefore = await page.evaluate(() => window.__sbg.project.objects.length);
   await page.evaluate(() => {

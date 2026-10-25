@@ -290,6 +290,7 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     redo();
   } else if (e.key === "Escape" && tool === "path") setTool("look");
+  else if (e.key === "Enter" && tool === "area" && project?.cutOutline?.length >= 3) cutArea();
   else if ((e.key === "Delete" || e.key === "Backspace") && project && selectedObject && !isFlying()) {
     // Delete the selected object (or cut-out piece); undo brings it back.
     e.preventDefault();
@@ -393,6 +394,7 @@ const PLACE_TOOLS = [
   { id: "checkpoints", name: "Checkpoint", tip: "Click to add checkpoints, in order from the Start to the Flag: players come back to the furthest one they reached." },
   { id: "bounds", name: "Play area", tip: "Click corners around the hole: balls that leave this area are out of bounds. Erase removes a corner." },
   { id: "pov", name: "Player view", tip: "Click to stand there and see what a player sees (in the Player view window)." },
+  { id: "area", name: "Cut area", tip: "Click corners around a part of the level (seen from above), then Cut it out: everything inside becomes an object you can move, resize or delete. Works on solid meshes too." },
   { id: "piece", name: "Cut piece", tip: "Click a floating island (or any separate piece of an imported level) to cut it out as an object you can move, turn and resize. Ctrl+Z puts it back." },
   { id: "golfer", name: "Golfer", tip: "Click to drop a golfer (player-sized) anywhere, to judge the scale. Not saved into the map." },
   { id: "erase", name: "Erase", tip: "Click a marker or golfer to remove it. With any tool, right-click an object or marker to erase it." },
@@ -437,13 +439,36 @@ function renderToolbar() {
   const tools = project?.terrain ? [...PLACE_TOOLS.slice(0, 1), ...TERRAIN_TOOLS, ...PLACE_TOOLS.slice(1)] : PLACE_TOOLS;
   toolbar.innerHTML =
     tools.map((t) => `<button class="tool ${t.id === tool ? "active" : ""} ${BRUSH_TOOLS.has(t.id) ? "brush" : ""}" data-tool="${t.id}" title="${t.tip}">${t.name}</button>`).join("") +
-    (tool === "path" ? `<button class="tool active" data-tool="look" title="Stop drawing the path (Esc)">Done drawing</button>` : "");
-  toolbar.querySelectorAll("button").forEach((b) =>
+    (tool === "path" ? `<button class="tool active" data-tool="look" title="Stop drawing the path (Esc)">Done drawing</button>` : "") +
+    (tool === "area"
+      ? `<button class="tool active" id="cut-area" ${project?.cutOutline?.length >= 3 ? "" : "disabled"} title="Cut everything inside the outline out as an object">Cut it out (${project?.cutOutline?.length ?? 0} corners)</button><button class="tool" id="cut-clear" title="Start the outline again">Clear outline</button>`
+      : "");
+  toolbar.querySelector("#cut-area")?.addEventListener("click", cutArea);
+  toolbar.querySelector("#cut-clear")?.addEventListener("click", () => {
+    project.cutOutline = [];
+    project.rebuildMarkers();
+    renderToolbar();
+  });
+  toolbar.querySelectorAll("button[data-tool]").forEach((b) =>
     b.addEventListener("click", () => {
       setTool(b.dataset.tool);
       setStatus([...tools, { id: "look", tip: "" }].find((t) => t.id === tool)?.tip ?? "");
     }),
   );
+}
+
+/** Cuts everything inside the Cut area outline out of the level as one object. */
+function cutArea() {
+  const piece = project.findArea(project.cutOutline);
+  if (!piece) return setStatus("Nothing of the level is inside that outline", true);
+  let obj;
+  history.record(() => (obj = project.cutPiece(piece)), { meshes: [...piece.take.keys()] });
+  obj.name = "Cut area";
+  project.cutOutline = [];
+  setTool("look");
+  tab = "objects";
+  selectObject(obj);
+  setStatus(`Cut out ${piece.taken} triangles. Move, turn or resize them with the handles, Delete removes them; Ctrl+Z puts them back.`);
 }
 
 // Brush cursor.
@@ -578,6 +603,10 @@ renderer.domElement.addEventListener("pointerup", (e) => {
     renderPanel();
   } else if (tool === "pov") {
     playerView.standAt(hit.point);
+  } else if (tool === "area") {
+    (project.cutOutline ??= []).push({ x: hit.point.x, y: hit.point.y, z: -hit.point.z });
+    project.rebuildMarkers();
+    renderToolbar();
   } else if (tool === "piece") {
     const piece = project.findPiece(hit);
     if (!piece) return setStatus("That is not a separate piece: it is joined to most of the level (or is an object already)", true);

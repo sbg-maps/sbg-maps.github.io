@@ -5,6 +5,7 @@ export const CHANGES = [
     id: 4,
     date: "2026-10-25",
     items: [
+      "<b>Cut area</b> tool: click corners around any part of the level, then Cut it out. Everything inside becomes an object you can move, resize or delete, even when it is part of one solid mesh.",
       "The <b>Player view</b> window can be resized: drag its top-left corner.",
       "<b>Golf cart</b> tool: park real, drivable golf carts on a hole (up to 16). Click to place one facing the Flag, or click and drag to aim it. Needs mod 0.4.0.",
       "<b>Sky</b> (Holes tab): give a hole the sky of any of the game's holes (desert, snow, city at night...) or your own 360 panorama picture. Needs mod 0.4.0.",

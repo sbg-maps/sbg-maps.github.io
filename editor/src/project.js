@@ -326,6 +326,47 @@ export class Project {
     return { take, taken };
   }
 
+  /**
+   * Everything of the level whose triangles lie inside an outline (map points, seen from above), as a piece for
+   * cutPiece: works on solid meshes too, where findPiece would take the whole mesh. Null if nothing is inside.
+   */
+  findArea(outline) {
+    if (!outline || outline.length < 3) return null;
+    const inside = (x, z) => {
+      let hit = false;
+      for (let i = 0, j = outline.length - 1; i < outline.length; j = i++) {
+        const a = outline[i];
+        const b = outline[j];
+        if (a.z > z !== b.z > z && x < ((b.x - a.x) * (z - a.z)) / (b.z - a.z) + a.x) hit = !hit;
+      }
+      return hit;
+    };
+    this.root.updateMatrixWorld(true);
+    const take = new Map();
+    let taken = 0;
+    const v = new THREE.Vector3();
+    this.root.traverse((m) => {
+      if (!m.isMesh || !m.visible || this.objects.some((o) => isAncestor(o, m))) return;
+      const pos = m.geometry.attributes.position;
+      const index = m.geometry.index;
+      const count = (index ? index.count : pos.count) / 3;
+      for (let t = 0; t < count; t++) {
+        let cx = 0;
+        let cz = 0;
+        for (let k = 0; k < 3; k++) {
+          v.fromBufferAttribute(pos, index ? index.getX(t * 3 + k) : t * 3 + k).applyMatrix4(m.matrixWorld);
+          cx += v.x / 3;
+          cz += -v.z / 3;
+        }
+        if (!inside(cx, cz)) continue;
+        if (!take.has(m)) take.set(m, new Set());
+        take.get(m).add(t);
+        taken++;
+      }
+    });
+    return taken ? { take, taken } : null;
+  }
+
   /** Cuts a piece found by findPiece out of the level meshes into a new object, placed where it was. */
   cutPiece(piece) {
     const obj = new THREE.Group();
@@ -481,8 +522,7 @@ export class Project {
   }
 
   /** The active hole's play area: corner posts and a see-through fence along its edges (closed once it has 3 corners). */
-  addPlayArea(points) {
-    const color = MARKERS.bounds.color;
+  addPlayArea(points, color = MARKERS.bounds.color) {
     const post = new THREE.CylinderGeometry(0.5, 0.5, 8, 8);
     for (const p of points) {
       const m = new THREE.Mesh(post, new THREE.MeshBasicMaterial({ color }));
@@ -575,6 +615,8 @@ export class Project {
         this.markersGroup.add(arrow);
       }
       if (active && h.bounds?.length) this.addPlayArea(h.bounds);
+      // The outline being drawn with Cut area (editor only, never saved).
+      if (active && this.cutOutline?.length) this.addPlayArea(this.cutOutline, 0xff7a1a);
       if (h.cup) {
         add(new THREE.CylinderGeometry(0.15, 0.15, 6, 8), 0xeeeeee, h.cup, 3);
         add(new THREE.ConeGeometry(1, 2, 3), MARKERS.cup.color, h.cup, 5.5);
