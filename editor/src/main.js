@@ -147,7 +147,8 @@ async function openModel(picked) {
   closeBtn.hidden = false;
   project = new Project(root);
   const size = project.box.getSize(new THREE.Vector3());
-  project.scale = niceScale(DEFAULT_LEVEL_SIZE / Math.max(size.x, size.z));
+  // Converted game worlds are in metres already (and sections must keep one scale to line up): true size.
+  project.scale = Array.isArray(root.userData.worldOrigin) ? 1 : niceScale(DEFAULT_LEVEL_SIZE / Math.max(size.x, size.z));
   project.applyTransform();
   startEditing();
   const extra = layers ? ` (left out ${layers} stacked shadow/light layers)` : "";
