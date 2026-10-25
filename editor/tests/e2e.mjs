@@ -455,16 +455,18 @@ await test("fly view: move, look, place while flying, stop", async () => {
   assert(!(await page.isHidden("#fly-hint")), "fly hint not shown");
   const start = await cam();
   assert(!start.orbit, "orbit still on while flying");
-  await page.keyboard.down("w");
-  await page.waitForTimeout(500);
-  await page.keyboard.up("w");
+  // Hold each key until the camera has moved (CI machines draw few frames per second).
+  const hold = async (key, moved, arg) => {
+    await page.keyboard.down(key);
+    await page.waitForFunction(moved, arg, { timeout: 10000 }).catch(() => {});
+    await page.keyboard.up(key);
+  };
+  await hold("w", ([x, y, z]) => window.__sbg.camera.position.distanceTo(new window.__sbg.THREE.Vector3(x, y, z)) > 10, start.p);
   const moved = await cam();
   const dir = await page.evaluate(() => window.__sbg.camera.getWorldDirection(new window.__sbg.THREE.Vector3()).toArray());
   const along = moved.p.reduce((a, v, i) => a + (v - start.p[i]) * dir[i], 0);
   assert(along > 5, `W did not fly forward (${along.toFixed(2)} m)`);
-  await page.keyboard.down("e");
-  await page.waitForTimeout(300);
-  await page.keyboard.up("e");
+  await hold("e", (y) => window.__sbg.camera.position.y > y + 5, moved.p[1]);
   assert((await cam()).p[1] > moved.p[1] + 2, "E did not fly up");
   await page.click('button[data-tool="look"]');
   await dragView(page, [[0.5, 0.5], [0.6, 0.5]], 20);
