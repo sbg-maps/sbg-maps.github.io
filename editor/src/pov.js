@@ -21,7 +21,8 @@ export class PlayerView {
         <button class="pov-btn" data-act="right" title="Turn right">&rsaquo;</button>
         <button class="pov-btn" data-act="start" title="Back to the Start">Start</button>
         <button class="pov-btn" data-act="hide" title="Hide">&times;</button>
-      </div>`;
+      </div>
+      <div class="pov-resize" title="Drag to resize"></div>`;
     this.toggle = document.createElement("button");
     this.toggle.className = "pov-show";
     this.toggle.textContent = "Player view";
@@ -38,8 +39,49 @@ export class PlayerView {
       } else if (act === "hide") this.setVisible(false);
     });
     this.toggle.addEventListener("click", () => this.setVisible(true));
+    this.wireResize();
     onGolferChange(() => this.rebuildGolfer());
     afterRender((r) => this.render(r));
+  }
+
+  /**
+   * The window sits in the bottom-right corner, so its top-left corner is the handle: dragging it out makes the view
+   * bigger. The size is remembered in this browser.
+   */
+  wireResize() {
+    const handle = this.frame.querySelector(".pov-resize");
+    const key = "sbg-maps-player-view-width";
+    try {
+      const saved = Number(localStorage.getItem(key));
+      if (saved > 0) this.frame.style.width = `${saved}px`;
+    } catch {
+      // storage unavailable
+    }
+    handle.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      handle.setPointerCapture(e.pointerId);
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startW = this.frame.getBoundingClientRect().width;
+      const move = (ev) => {
+        // Moving left or up grows it (16:9 keeps the height in step).
+        const grow = Math.max(startX - ev.clientX, (startY - ev.clientY) * (16 / 9));
+        const max = viewport.clientWidth - 24;
+        this.frame.style.width = `${Math.round(Math.min(max, Math.max(200, startW + grow)))}px`;
+      };
+      const up = () => {
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", up);
+        try {
+          localStorage.setItem(key, String(Math.round(this.frame.getBoundingClientRect().width)));
+        } catch {
+          // storage unavailable
+        }
+      };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", up);
+    });
   }
 
   setVisible(on) {

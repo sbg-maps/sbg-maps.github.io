@@ -543,6 +543,24 @@ await test("heightmap map: view, then edit a hole as a level", async () => {
   await page.close();
 });
 
+await test("player view resizes from its corner", async () => {
+  const page = await freshPage(browser, url);
+  await page.click("#new-level-btn");
+  await page.click('[data-size="320x320"]');
+  await page.click('[data-act="create"]');
+  await page.waitForFunction(() => window.__sbg.project?.terrain, null, { timeout: 20000 });
+  const before = await (await page.$(".pov")).boundingBox();
+  const h = await (await page.$(".pov-resize")).boundingBox();
+  await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(h.x - 150, h.y - 20, { steps: 6 });
+  await page.mouse.up();
+  const after = await (await page.$(".pov")).boundingBox();
+  assert(after.width > before.width + 100 && Math.abs(after.x + after.width - (before.x + before.width)) < 2, `resize: ${JSON.stringify(before)} -> ${JSON.stringify(after)}`);
+  assert(page.errors.length === 0, page.errors.join("; "));
+  await page.close();
+});
+
 await test("close: back to the start screen, autosave offered", async () => {
   const page = await freshPage(browser, url);
   await page.click("#new-level-btn");

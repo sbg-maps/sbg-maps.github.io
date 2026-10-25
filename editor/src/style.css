@@ -669,6 +669,7 @@ button.btn {
 
 /* Picture-in-picture player view. The 3D view renders into this box, so it has no background. */
 .pov {
+  max-width: calc(100% - 24px);
   position: absolute;
   right: 12px;
   bottom: 12px;
@@ -1088,4 +1089,18 @@ button.btn {
 
 .item-weight small {
   color: var(--muted);
+}
+
+.pov-resize {
+  position: absolute;
+  top: -4px;
+  left: -4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 10px 0 10px 0;
+  background: var(--white);
+  border: 3px solid var(--grass-deep);
+  cursor: nwse-resize;
+  pointer-events: auto;
+  z-index: 3;
 }
