@@ -213,23 +213,31 @@ namespace SbgMaps
         {
             Maps.Clear();
             scanned = Signature();
+            // Several files can carry the same map id (a browser saves a re-download as "name (1).sbgmap"): the
+            // player's own maps win over downloaded ones, and among those the most recently changed file wins.
+            var loaded = new List<(MapPack pack, bool downloaded, DateTime changed)>();
             foreach (var path in Candidates())
             {
                 try
                 {
                     var pack = MapPack.Load(path);
-                    if (Maps.Any(m => m.Manifest.id == pack.Manifest.id))
-                    {
-                        Plugin.Log.LogWarning($"Skipping {path}: another map already uses id '{pack.Manifest.id}'");
-                        continue;
-                    }
-                    Maps.Add(pack);
-                    Plugin.Log.LogInfo($"Map '{pack.Manifest.name}' ({pack.Manifest.id}) with {pack.Manifest.holes.Count} hole(s), hash {pack.Hash.Substring(0, 12)}");
+                    bool downloaded = System.IO.Path.GetFullPath(path).StartsWith(System.IO.Path.GetFullPath(DownloadsFolder));
+                    var changed = Directory.Exists(path) ? Directory.GetFiles(path, "*", SearchOption.AllDirectories).Select(File.GetLastWriteTimeUtc).DefaultIfEmpty().Max() : File.GetLastWriteTimeUtc(path);
+                    loaded.Add((pack, downloaded, changed));
                 }
                 catch (Exception e)
                 {
                     Plugin.Log.LogError($"Could not load map {path}: {e.Message}");
                 }
+            }
+            foreach (var group in loaded.GroupBy(l => l.pack.Manifest.id))
+            {
+                var ordered = group.OrderBy(l => l.downloaded).ThenByDescending(l => l.changed).ToList();
+                var pack = ordered[0].pack;
+                Maps.Add(pack);
+                Plugin.Log.LogInfo($"Map '{pack.Manifest.name}' ({pack.Manifest.id}) with {pack.Manifest.holes.Count} hole(s), hash {pack.Hash.Substring(0, 12)}, from {System.IO.Path.GetFileName(pack.Path)}");
+                foreach (var other in ordered.Skip(1))
+                    Plugin.Log.LogWarning($"Not using {other.pack.Path}: '{pack.Path}' has the same map id '{pack.Manifest.id}' and is {(other.downloaded && !ordered[0].downloaded ? "your own copy" : "newer")}");
             }
             // Same order on every machine, so global hole indices line up between players.
             Maps.Sort((a, b) => string.CompareOrdinal(a.Manifest.id, b.Manifest.id));
