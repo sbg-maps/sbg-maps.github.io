@@ -32,8 +32,7 @@ namespace SbgMaps
             harmony.PatchAll();
             SceneManager.sceneLoaded += OnSceneLoaded;
             CustomCourse.InjectLate();
-            foreach (var name in new[] { "Universal Render Pipeline/Particles/Lit", "Universal Render Pipeline/Particles/Simple Lit", "Universal Render Pipeline/Particles/Unlit", "Universal Render Pipeline/Simple Lit", "Universal Render Pipeline/Unlit", "Universal Render Pipeline/Lit" })
-                Log.LogInfo($"Shader '{name}': {(Shader.Find(name) != null ? "available" : "missing")}");
+            Log.LogInfo($"Shader check: lit particles {(Shader.Find("Universal Render Pipeline/Particles/Lit") != null ? "available" : "missing")}; physics gravity {Physics.gravity}; player gravity factor {GameManager.PlayerMovementSettings?.BaseGravityFactor}");
                         Log.LogInfo($"{Name} {Version} loaded");
         }
 

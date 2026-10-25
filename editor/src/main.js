@@ -349,6 +349,7 @@ function editViewHole(index) {
       tee: withY(h.tee),
       cup: withY(h.cup),
       itemBoxes: (h.itemBoxes ?? []).map(withY),
+      redItemBoxes: (h.redItemBoxes ?? []).map(withY),
       checkpoints: (h.checkpoints ?? []).map(withY),
       ...(h.bounds?.length >= 3 ? { bounds: h.bounds.map(([x, z]) => withY({ x, z })) } : {}),
     },
@@ -365,6 +366,7 @@ const PLACE_TOOLS = [
   { id: "tee", name: "Start", tip: "Click to place the Start: the tee, where players hit their first shot." },
   { id: "cup", name: "Flag", tip: "Click to place the Flag: the hole (cup) players are aiming for." },
   { id: "itemBoxes", name: "Item box", tip: "Click to add item boxes (up to 64 per hole)." },
+  { id: "redItemBoxes", name: "Red box", tip: "Click to add red item boxes: they give the better movement items (like spring boots). Needs mod 0.3.0." },
   { id: "checkpoints", name: "Checkpoint", tip: "Click to add checkpoints, in order from the Start to the Flag: players come back to the furthest one they reached." },
   { id: "bounds", name: "Play area", tip: "Click corners around the hole: balls that leave this area are out of bounds. Erase removes a corner." },
   { id: "pov", name: "Player view", tip: "Click to stand there and see what a player sees (in the Player view window)." },
@@ -952,7 +954,7 @@ function holesPanel() {
       ${stat("Start to flag", length)}
       ${stat("Start (tee)", h.tee ? "placed" : "missing")}
       ${stat("Flag (cup)", h.cup ? "placed" : "missing")}
-      ${stat(MARKERS.itemBoxes.name + "es", `${h.itemBoxes.length} / ${MAX_PER_HOLE}`)}
+      ${stat(MARKERS.itemBoxes.name + "es", `${h.itemBoxes.length + (h.redItemBoxes?.length ?? 0)} / ${MAX_PER_HOLE}${h.redItemBoxes?.length ? ` (${h.redItemBoxes.length} red)` : ""}`)}
       ${stat(MARKERS.checkpoints.name + "s", `${h.checkpoints.length} / ${MAX_PER_HOLE}`)}
     </div>
     <h3>Play area</h3>

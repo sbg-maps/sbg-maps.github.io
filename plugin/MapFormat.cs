@@ -59,6 +59,8 @@ namespace SbgMaps
         public TeeDef tee;
         public PointDef cup;
         public List<PointDef> itemBoxes = new List<PointDef>();
+        /// <summary>Red item boxes: the better movement items (the game's "mobility" boxes).</summary>
+        public List<PointDef> redItemBoxes = new List<PointDef>();
         public List<PointDef> checkpoints = new List<PointDef>();
         /// <summary>Optional polygons/paths in map-local [x, z] pairs; sensible defaults are derived when missing.</summary>
         public List<float[]> bounds;

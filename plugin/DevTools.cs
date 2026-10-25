@@ -99,6 +99,13 @@ namespace SbgMaps
             Add<Checkpoint>("Checkpoint");
             Add<MainOutOfBoundsHazard>("MainOOB");
             Add<TerrainAddition>("TerrainAddition");
+            sb.AppendLine($"  Physics gravity={Physics.gravity} playerGravityFactor={GameManager.PlayerMovementSettings?.BaseGravityFactor} knockedOutFactor={GameManager.PlayerMovementSettings?.KnockOutGravityFactor} jumpPadCooldown={GameManager.HazardSettings?.JumpPadCooldown}");
+            var ballBody = Object.FindFirstObjectByType<GolfBall>()?.GetComponent<Rigidbody>();
+            if (ballBody != null)
+                sb.AppendLine($"  Ball rigidbody drag={ballBody.linearDamping} useGravity={ballBody.useGravity} mass={ballBody.mass}");
+            var playerBody = GameManager.LocalPlayerMovement != null ? GameManager.LocalPlayerMovement.GetComponent<Rigidbody>() : null;
+            if (playerBody != null)
+                sb.AppendLine($"  Player rigidbody drag={playerBody.linearDamping} useGravity={playerBody.useGravity} mass={playerBody.mass}");
             // Item box kinds the game has loaded (looking for the special red boxes).
             string PoolText(ItemPool pool) => pool == null ? "-" : $"'{pool.name}' [{string.Join(", ", pool.SpawnChances.Select(c => $"{c.item} {c.spawnChanceWeight:0.##}"))}]";
             foreach (var settings in Resources.FindObjectsOfTypeAll<ItemSpawnerSettings>())

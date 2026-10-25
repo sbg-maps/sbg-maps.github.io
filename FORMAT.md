@@ -45,8 +45,9 @@ New maps, or a different number of holes, need a game restart because the course
 | `greenRadius` | number | Model maps: ground within this many metres of the cup plays and looks like green. Default 10. |
 | `tee` | {x, y?, z, yaw?} | Where the teeing platforms go. With `y`, all platforms sit at that height. `yaw` is degrees clockwise from +z; by default the tee faces the cup. |
 | `cup` | {x, z} | The cup. The ground within 3 m of it is always painted green. |
-| `itemBoxes` | [{x, z}] | Item box positions. Up to 16 for now. |
-| `checkpoints` | [{x, z}] | Respawn checkpoints. Up to 1 for now. |
+| `itemBoxes` | [{x, z}] | Item box positions. Up to 64 together with `redItemBoxes`. |
+| `redItemBoxes` | [{x, z}] | Optional. Red item boxes, which give the better movement items. |
+| `checkpoints` | [{x, z}] | Respawn checkpoints, in order from the start to the flag. Up to 64. |
 | `bounds` | [[x, z], ...] | Optional. Playable-area polygon. Default: the whole `size` rectangle. |
 | `green` | [[x, z], ...] | Optional. Green polygon (raises the flag, putting rules). Default: 15 m circle around the cup. |
 | `returnPath` | [[x, z], ...] | Optional. Path that out-of-bounds balls are returned towards. Default: straight line from tee to cup. |

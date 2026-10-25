@@ -38,6 +38,7 @@ export const MARKERS = {
   tee: { name: "Start", color: 0xffffff },
   cup: { name: "Flag", color: 0xe8443a },
   itemBoxes: { name: "Item box", color: 0xf5c400 },
+  redItemBoxes: { name: "Red item box", color: 0xe8443a },
   checkpoints: { name: "Checkpoint", color: 0xb400dc },
   bounds: { name: "Play area corner", color: 0x3aa0ff },
 };
@@ -49,6 +50,12 @@ export const MARKERS = {
  */
 export const TEE_PLATFORMS = [-10.7, 10.7].map((x) => ({ x, z: 2.53 }));
 const PLATFORM_SIZE = { w: 15.08, h: 1.72, d: 5.1, top: 0.14 };
+
+/**
+ * How fast launched players fall (m/s per second): the game's physics gravity times its player gravity factor.
+ * Placeholder until measured in the game.
+ */
+const JUMP_GRAVITY = 9.81 * 2;
 
 /** Space around the model inside the map area, so tees and bounds are never at the very edge. */
 const PAD = 20;
@@ -333,6 +340,7 @@ export class Project {
     out.push([(p) => (h.tee = { ...h.tee, ...p }), h.tee]);
     out.push([(p) => (h.cup = p), h.cup]);
     h.itemBoxes.forEach((b, i) => out.push([(p) => (h.itemBoxes[i] = p), b]));
+    (h.redItemBoxes ?? []).forEach((b, i) => out.push([(p) => (h.redItemBoxes[i] = p), b]));
     h.checkpoints.forEach((c, i) => out.push([(p) => (h.checkpoints[i] = p), c]));
     (h.bounds ?? []).forEach((c, i) => out.push([(p) => (h.bounds[i] = p), c]));
     return out;
@@ -360,6 +368,7 @@ export class Project {
     consider(h.tee, () => (h.tee = null));
     consider(h.cup, () => (h.cup = null));
     h.itemBoxes.forEach((b, i) => consider(b, () => h.itemBoxes.splice(i, 1)));
+    (h.redItemBoxes ?? []).forEach((b, i) => consider(b, () => h.redItemBoxes.splice(i, 1)));
     h.checkpoints.forEach((c, i) => consider(c, () => h.checkpoints.splice(i, 1)));
     (h.bounds ?? []).forEach((c, i) => consider(c, () => h.bounds.splice(i, 1)));
     this.golfers.forEach((g, i) => consider(g, () => this.golfers.splice(i, 1)));
@@ -477,6 +486,7 @@ export class Project {
         }
       }
       for (const b of h.itemBoxes) add(new THREE.BoxGeometry(2, 2, 2), MARKERS.itemBoxes.color, b, 1.5);
+      for (const b of h.redItemBoxes ?? []) add(new THREE.BoxGeometry(2, 2, 2), MARKERS.redItemBoxes.color, b, 1.5);
       for (const c of h.checkpoints) add(new THREE.OctahedronGeometry(1.5), MARKERS.checkpoints.color, c, 2);
       if (active && h.tee && h.cup) {
         const line = new THREE.Line(
@@ -512,7 +522,26 @@ export class Project {
       line.renderOrder = 5;
       this.markersGroup.add(line);
     }
-    // Water plane for the active hole.
+    // Jump pads: the flight and where it comes down.
+    for (const pad of this.objects) {
+      if (!pad.visible || pad.userData.object !== "jumppad") continue;
+      const flight = this.jumpFlight(pad);
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(flight.points), new THREE.LineDashedMaterial({ color: 0xff7a1a, dashSize: 1.2, gapSize: 0.6, depthTest: false }));
+      line.computeLineDistances();
+      line.renderOrder = 5;
+      this.markersGroup.add(line);
+      if (flight.landing) {
+        const ring = new THREE.Mesh(
+          new THREE.RingGeometry(2.2, 3, 40),
+          new THREE.MeshBasicMaterial({ color: flight.inWater ? 0x3aa0ff : 0xff7a1a, side: THREE.DoubleSide, transparent: true, opacity: 0.9, depthTest: false }),
+        );
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.copy(flight.landing).y += 0.15;
+        ring.renderOrder = 5;
+        this.markersGroup.add(ring);
+      }
+    }
+        // Water plane for the active hole.
     const h = this.hole;
     if (h) {
       const [sx, sz] = this.size;
@@ -572,10 +601,10 @@ export class Project {
   }
 
   /** First visible level or object surface along a ray (three.js coordinates). */
-  firstHit(origin, dir, far) {
+  firstHit(origin, dir, far, ignore = null) {
     const ray = new THREE.Raycaster(origin, dir, 0, far);
     return ray.intersectObjects([this.pivot, this.terrain?.mesh].filter(Boolean), true).find((hit) => {
-      for (let o = hit.object; o; o = o.parent) if (!o.visible) return false;
+      for (let o = hit.object; o; o = o.parent) if (!o.visible || o === ignore) return false;
       const mats = Array.isArray(hit.object.material) ? hit.object.material : [hit.object.material];
       const group = hit.object.geometry.groups?.find((g) => hit.faceIndex * 3 >= g.start && hit.faceIndex * 3 < g.start + g.count);
       return mats[group?.materialIndex ?? 0]?.visible !== false;
@@ -607,6 +636,51 @@ export class Project {
     return false;
   }
 
+  /**
+   * Where a player launched by a jump pad flies (three.js coordinates): the arc and the first spot it meets the level,
+   * an object or the water. Air drag is left out, so real flights end a little shorter.
+   */
+  jumpFlight(pad) {
+    const d = pad.userData;
+    pad.updateMatrixWorld(true);
+    const key = `${pad.matrixWorld.elements.join(",")}|${d.launchSpeed}|${d.launchPitch}|${this.hole?.water}|${this.shapeVersion}`;
+    this.flightCache ??= new WeakMap();
+    const cached = this.flightCache.get(pad);
+    if (cached?.key === key) return cached.flight;
+    const box = new THREE.Box3().setFromObject(pad);
+    const start = new THREE.Vector3((box.min.x + box.max.x) / 2, box.max.y + 0.9, (box.min.z + box.max.z) / 2);
+    // Forward is the pad's -z (map +z), flattened; pitch tilts it up.
+    const forward = new THREE.Vector3(0, 0, -1).transformDirection(pad.matrixWorld).setY(0);
+    if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
+    forward.normalize();
+    const pitch = THREE.MathUtils.degToRad(d.launchPitch ?? 65);
+    const v = forward.multiplyScalar(Math.cos(pitch) * (d.launchSpeed ?? 22)).setY(Math.sin(pitch) * (d.launchSpeed ?? 22));
+    const water = this.hole?.water ?? -Infinity;
+    const points = [start.clone()];
+    const p = start.clone();
+    const step = 0.05;
+    let landing = null;
+    let inWater = false;
+    for (let t = 0; t < 12 && !landing; t += step) {
+      const next = p.clone().addScaledVector(v, step);
+      v.y -= JUMP_GRAVITY * step;
+      const dir = next.clone().sub(p);
+      const length = dir.length();
+      const hit = length > 0 ? this.firstHit(p, dir.normalize(), length, pad) : null;
+      if (hit) {
+        landing = hit.point;
+      } else if (next.y <= water) {
+        landing = p.clone().lerp(next, (p.y - water) / Math.max(1e-6, p.y - next.y));
+        inWater = true;
+      }
+      p.copy(landing ?? next);
+      points.push(p.clone());
+    }
+    const flight = { points, landing, inWater };
+    this.flightCache.set(pad, { key, flight });
+    return flight;
+  }
+
   /** Things that work but look wrong in game; they don't stop the export. */
   warnings() {
     const out = [];
@@ -625,7 +699,7 @@ export class Project {
       const label = `${h.name || `Hole ${i + 1}`}`;
       if (!h.tee) out.push(`${label}: place the Start (where players tee off).`);
       if (!h.cup) out.push(`${label}: place the Flag (the hole players aim for).`);
-      if (h.itemBoxes.length > MAX_PER_HOLE) out.push(`${label}: at most ${MAX_PER_HOLE} item boxes.`);
+      if (h.itemBoxes.length + (h.redItemBoxes?.length ?? 0) > MAX_PER_HOLE) out.push(`${label}: at most ${MAX_PER_HOLE} item boxes (red ones included).`);
       const under = [h.tee && "the Start", h.cup && "the Flag"].filter((what, k) => what && [h.tee, h.cup][k].y < h.water);
       if (under.length) out.push(`${label}: ${under.join(" and ")} ${under.length > 1 ? "are" : "is"} under the water level (${h.water} m).`);
       if (h.checkpoints.length > MAX_PER_HOLE) out.push(`${label}: at most ${MAX_PER_HOLE} checkpoints.`);
@@ -670,6 +744,7 @@ export class Project {
         tee: h.tee ? round(h.tee) : undefined,
         cup: h.cup ? round(h.cup) : undefined,
         itemBoxes: h.itemBoxes.map(round),
+        redItemBoxes: h.redItemBoxes?.length ? h.redItemBoxes.map(round) : undefined,
         checkpoints: h.checkpoints.map(round),
         bounds: h.bounds?.length >= 3 ? h.bounds.map((p) => [Math.round(p.x * 100) / 100, Math.round(p.z * 100) / 100]) : undefined,
         music: h.music ?? undefined,
@@ -862,6 +937,7 @@ export class Project {
       tee: h.tee,
       cup: h.cup,
       itemBoxes: h.itemBoxes ?? [],
+      redItemBoxes: h.redItemBoxes ?? [],
       checkpoints: h.checkpoints ?? [],
       // Play area corners carry a height only for drawing; the game uses x and z.
       ...(h.bounds?.length >= 3 ? { bounds: h.bounds.map(([x, z]) => ({ x, y: terrain ? terrain.heightAt(x, z) : (h.cup?.y ?? h.tee?.y ?? BASE_Y), z })) } : {}),

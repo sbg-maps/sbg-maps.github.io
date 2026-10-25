@@ -94,5 +94,6 @@ function addMarkers(group, hole, grids) {
   marker(new THREE.CylinderGeometry(0.15, 0.15, 6, 8), 0xeeeeee, at(hole.cup, 3));
   marker(new THREE.ConeGeometry(1, 2, 3), 0xdd2222, at(hole.cup, 5.5));
   for (const b of hole.itemBoxes ?? []) marker(new THREE.BoxGeometry(2, 2, 2), 0xf5c400, at(b, 1.5));
+  for (const b of hole.redItemBoxes ?? []) marker(new THREE.BoxGeometry(2, 2, 2), 0xe8443a, at(b, 1.5));
   for (const c of hole.checkpoints ?? []) marker(new THREE.OctahedronGeometry(1.5), 0xb400dc, at(c, 2));
 }
