@@ -413,6 +413,7 @@ button.btn {
   position: absolute;
   top: 12px;
   left: 12px;
+  max-width: calc(100% - 170px); /* room for the Fly button */
   z-index: 2;
   display: flex;
   flex-wrap: wrap;
@@ -929,4 +930,39 @@ button.btn {
 .whats-new li {
   margin-bottom: 6px;
   line-height: 1.35;
+}
+
+.fly-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  padding: 8px 16px;
+  border: 3px solid var(--grass-deep);
+  border-radius: 999px;
+  background: var(--white);
+  color: var(--grass-deep);
+  font: 700 14px/1 var(--ui-font);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+}
+
+.fly-btn.active {
+  background: var(--grass);
+  color: var(--white);
+  text-shadow: 0 2px 0 var(--grass-deep);
+}
+
+.fly-hint {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  z-index: 2;
+  max-width: min(420px, calc(100% - 24px));
+  padding: 6px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--grass-deep);
+  font: 500 13px/1.4 var(--ui-font);
+  pointer-events: none;
 }

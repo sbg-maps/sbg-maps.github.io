@@ -36,7 +36,8 @@ const afterRenderCallbacks = new Set();
 export const afterRender = (fn) => afterRenderCallbacks.add(fn);
 
 renderer.setAnimationLoop((t) => {
-  controls.update();
+  // Disabled while flying (it would turn the camera back to its orbit point).
+  if (controls.enabled) controls.update();
   for (const fn of frameCallbacks) fn(t);
   renderer.render(scene, camera);
   for (const fn of afterRenderCallbacks) fn(renderer);
@@ -80,6 +81,7 @@ export function frameBox(box) {
   const size = box.getSize(new THREE.Vector3()).length();
   controls.target.copy(center);
   camera.position.copy(center).add(new THREE.Vector3(size * 0.15, size * 0.55, size * 0.7));
+  camera.lookAt(center);
   camera.far = Math.max(20000, size * 10);
   camera.updateProjectionMatrix();
 }

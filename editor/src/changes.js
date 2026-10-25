@@ -2,6 +2,13 @@
 // Write for players: what they can do now in the editor, not how it works, and not mod or game news. Bump `id` for every new entry.
 export const CHANGES = [
   {
+    id: 2,
+    date: "2026-10-25",
+    items: [
+      "<b>Fly</b> button (top right of the view): fly around the map with WASD, look by dragging, Shift to go faster, the wheel sets the speed. Tools keep working while you fly.",
+    ],
+  },
+  {
     id: 1,
     date: "2026-10-24",
     items: [

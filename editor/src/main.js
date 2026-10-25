@@ -12,11 +12,14 @@ import { History } from "./history.js";
 import { SHAPES, spriteFromImage, circlePath, linePath } from "./shapes.js";
 import { put as storePut, get as storeGet } from "./storage.js";
 import { CHANGES } from "./changes.js";
+import { isFlying, setFlying, onFlyChange, flySpeed, setLookButtons, setLookBlocked } from "./fly.js";
 
 const status = document.getElementById("status");
 const holeSelect = document.getElementById("hole-select");
 const info = document.getElementById("info");
 const empty = document.getElementById("empty");
+const flyBtn = document.getElementById("fly-btn");
+const flyHint = document.getElementById("fly-hint");
 const toolbar = document.getElementById("toolbar");
 const dropOverlay = document.getElementById("drop");
 
@@ -53,7 +56,7 @@ restoreGolfer();
 const gizmo = new TransformControls(camera, renderer.domElement);
 let gizmoBefore = null;
 gizmo.addEventListener("dragging-changed", (e) => {
-  controls.enabled = !e.value;
+  controls.enabled = !e.value && !isFlying();
   if (e.value) gizmoBefore = history.capture();
   else {
     history.commit(gizmoBefore);
@@ -61,6 +64,7 @@ gizmo.addEventListener("dragging-changed", (e) => {
   }
 });
 gizmo.addEventListener("objectChange", () => project?.rebuildMarkers());
+setLookBlocked(() => gizmo.dragging);
 scene.add(gizmo.getHelper());
 
 function setStatus(text, isError = false) {
@@ -109,6 +113,7 @@ async function openMap(map) {
   const opened = await Project.fromMap(map);
   clear();
   empty.hidden = true;
+  flyBtn.hidden = false;
   if (opened) {
     project = opened;
     startEditing();
@@ -125,6 +130,7 @@ async function openModel(files) {
   const { root, missing } = await importModel(files);
   clear();
   empty.hidden = true;
+  flyBtn.hidden = false;
   project = new Project(root);
   const size = project.box.getSize(new THREE.Vector3());
   project.scale = niceScale(DEFAULT_LEVEL_SIZE / Math.max(size.x, size.z));
@@ -136,6 +142,7 @@ async function openModel(files) {
 function newLevel(sizeX, sizeZ, shape) {
   clear();
   empty.hidden = true;
+  flyBtn.hidden = false;
   project = Project.newLevel(sizeX, sizeZ, { name: "My level" }, shape, newSeed());
   project.levelShape = shape;
   startEditing("terrain");
@@ -221,6 +228,19 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     redo();
   } else if (e.key === "Escape" && tool === "path") setTool("look");
+});
+
+// ---------- Fly view ----------
+
+flyBtn.addEventListener("click", () => {
+  flyBtn.blur(); // so Space flies up instead of pressing the button again
+  setFlying(!isFlying(), camera.position.distanceTo(controls.target) * 2);
+});
+onFlyChange((on) => {
+  flyBtn.classList.toggle("active", on);
+  flyBtn.textContent = on ? "Stop flying" : "Fly";
+  flyHint.hidden = !on;
+  flyHint.innerHTML = `<b>WASD</b> move, <b>E</b>/<b>Q</b> up/down, <b>Shift</b> faster, <b>drag</b> to look (right-drag with brushes), <b>wheel</b> speed (${flySpeed()} m/s), <b>Esc</b> stop`;
 });
 
 // ---------- Hole picker ----------
@@ -330,6 +350,7 @@ function setTool(id) {
   controls.mouseButtons = BRUSH_TOOLS.has(id) || id === "path"
     ? { LEFT: null, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE }
     : { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+  setLookButtons(BRUSH_TOOLS.has(id) || id === "path" ? [2] : [0, 2]);
   brushCursor.visible = false;
   if (!toolbar.hidden) renderToolbar();
 }
