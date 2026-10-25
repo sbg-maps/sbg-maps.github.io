@@ -373,7 +373,7 @@ const PLACE_TOOLS = [
   { id: "tee", name: "Start", tip: "Click to place the Start: the tee, where players hit their first shot." },
   { id: "cup", name: "Flag", tip: "Click to place the Flag: the hole (cup) players are aiming for." },
   { id: "itemBoxes", name: "Item box", tip: "Click to add item boxes (up to 64 per hole)." },
-  { id: "redItemBoxes", name: "Red box", tip: "Click to add red item boxes: they give the better movement items (like spring boots). Needs mod 0.3.0." },
+  { id: "redItemBoxes", name: "Red box", tip: "Click to add red item boxes: they give the better movement items (like spring boots). Needs mod 0.4.0." },
   { id: "checkpoints", name: "Checkpoint", tip: "Click to add checkpoints, in order from the Start to the Flag: players come back to the furthest one they reached." },
   { id: "bounds", name: "Play area", tip: "Click corners around the hole: balls that leave this area are out of bounds. Erase removes a corner." },
   { id: "pov", name: "Player view", tip: "Click to stand there and see what a player sees (in the Player view window)." },
@@ -1105,7 +1105,7 @@ function exportPanel() {
     ${problems.length ? `<ul class="problems">${problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : `<p class="ok">Ready to play!</p>`}
     ${warningList()}
     <button class="btn btn-primary" id="export" ${problems.length ? "disabled" : ""}>Download .sbgmap</button>
-    <p class="hint">Put the file in <b>Super Battle Golf/SbgMaps/maps/</b>. Your holes show up under <b>Custom Maps</b> (from mod 0.3.0 without restarting the game).</p>`;
+    <p class="hint">Put the file in <b>Super Battle Golf/SbgMaps/maps/</b>. Your holes show up under <b>Custom Maps</b> (from mod 0.4.0 without restarting the game).</p>`;
 }
 
 function wireExport() {
