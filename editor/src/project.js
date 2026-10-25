@@ -4,7 +4,7 @@ import { zipSync, strToU8 } from "fflate";
 import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { scene, renderer, fromMap, toMap, disposeObject } from "./scene.js";
-import { materialsOf } from "./importer.js";
+import { materialsOf, hasCutoutAlpha } from "./importer.js";
 import { makeGolfer, yawToRotation } from "./golfer.js";
 import { Terrain, setContours } from "./terrain.js";
 import { holeGrids } from "./mapfile.js";
@@ -41,6 +41,14 @@ export const MARKERS = {
   checkpoints: { name: "Checkpoint", color: 0xb400dc },
   bounds: { name: "Play area corner", color: 0x3aa0ff },
 };
+
+/**
+ * The game's start area (from the hole the mod builds on): two platforms side by side in front of the Start point,
+ * facing the Flag. Offsets in metres: x to the right, z forward; size is width, height and depth; the top sits 0.14 m
+ * above the platform's position. The mod raises them onto the highest ground under their corners (up to 3 m).
+ */
+export const TEE_PLATFORMS = [-10.7, 10.7].map((x) => ({ x, z: 2.53 }));
+const PLATFORM_SIZE = { w: 15.08, h: 1.72, d: 5.1, top: 0.14 };
 
 /** Space around the model inside the map area, so tees and bounds are never at the very edge. */
 const PAD = 20;
@@ -126,7 +134,8 @@ export class Project {
         if (!seen.has(m)) {
           m.userData.surface ??= m.userData.renderOnly ? "none" : "rough";
           // How the texture's alpha is drawn; imported files and older maps say it in their own ways.
-          m.userData.alphaMode ??= m.userData.alphaBlend || (m.transparent && !(m.alphaTest > 0)) ? "blend" : m.alphaTest > 0 ? "cutout" : "opaque";
+          m.userData.alphaMode ??=
+            m.userData.alphaBlend || (m.transparent && !(m.alphaTest > 0)) ? "blend" : m.alphaTest > 0 || (m.map?.image && hasCutoutAlpha(m.map.image)) ? "cutout" : "opaque";
           m.userData.alphaCutoff ??= m.alphaTest > 0 ? m.alphaTest : 0.5;
           m.userData.opacity ??= m.userData.alphaMode === "blend" ? m.opacity : 1;
           m.userData.doubleSided ??= m.side === THREE.DoubleSide;
@@ -426,15 +435,25 @@ export class Project {
         if (active) {
           // A golfer at the start shows how big the level is to players.
           const golfer = makeGolfer();
-          const yaw0 = h.tee.yaw ?? (h.cup ? (Math.atan2(h.cup.x - h.tee.x, h.cup.z - h.tee.z) * 180) / Math.PI : 0);
+          const yaw0 = this.teeYaw(h);
           golfer.position.copy(fromMap(h.tee));
           golfer.position.x += Math.cos((yaw0 * Math.PI) / 180) * 3.5;
           golfer.position.z += Math.sin((yaw0 * Math.PI) / 180) * 3.5;
           golfer.rotation.y = yawToRotation(yaw0);
           this.markersGroup.add(golfer);
         }
+        for (const p of this.teePlatforms(h)) {
+          const box = new THREE.Mesh(
+            new THREE.BoxGeometry(PLATFORM_SIZE.w, PLATFORM_SIZE.h, PLATFORM_SIZE.d),
+            new THREE.MeshStandardMaterial({ color: p.clash ? 0xe8443a : 0xf2efe6, transparent: true, opacity: active ? 0.75 : 0.3, roughness: 0.8 }),
+          );
+          box.position.copy(fromMap({ x: p.x, z: p.z }, p.y + PLATFORM_SIZE.top - PLATFORM_SIZE.h / 2));
+          box.rotation.y = yawToRotation(p.yaw) + Math.PI;
+          box.userData.platform = true;
+          this.markersGroup.add(box);
+        }
         // Arrow showing which way players face at the start.
-        const yaw = h.tee.yaw ?? (h.cup ? (Math.atan2(h.cup.x - h.tee.x, h.cup.z - h.tee.z) * 180) / Math.PI : 0);
+        const yaw = this.teeYaw(h);
         const dir = new THREE.Vector3(Math.sin((yaw * Math.PI) / 180), 0, -Math.cos((yaw * Math.PI) / 180));
         const arrow = new THREE.ArrowHelper(dir, fromMap(h.tee).setY(h.tee.y + 1.2), 8, 0xffffff, 3, 2);
         this.markersGroup.add(arrow);
@@ -502,6 +521,95 @@ export class Project {
       water.userData.isWater = true;
       this.markersGroup.add(water);
     }
+  }
+
+  /** Which way players face at the start, in map degrees (0 = +z). */
+  teeYaw(h) {
+    return h.tee.yaw ?? (h.cup ? (Math.atan2(h.cup.x - h.tee.x, h.cup.z - h.tee.z) * 180) / Math.PI : 0);
+  }
+
+  /**
+   * Where the game puts the start platforms of a hole (map coordinates, platform height as the mod places them),
+   * and whether the level or an object pokes through one (`clash`). Remembered until the Start or the level moves.
+   */
+  teePlatforms(h) {
+    if (!h.tee) return [];
+    const yaw = this.teeYaw(h);
+    const key = `${h.tee.x}|${h.tee.y}|${h.tee.z}|${yaw}|${this.scale}|${this.rotation}|${this.shapeVersion}`;
+    this.platformCache ??= new WeakMap();
+    const cached = this.platformCache.get(h);
+    if (cached?.key === key) return cached.platforms;
+    const rad = (yaw * Math.PI) / 180;
+    const right = { x: Math.cos(rad), z: -Math.sin(rad) };
+    const fwd = { x: Math.sin(rad), z: Math.cos(rad) };
+    const at = (cx, cz, dx, dz) => ({ x: cx + right.x * dx + fwd.x * dz, z: cz + right.z * dx + fwd.z * dz });
+    const { w, d, top } = PLATFORM_SIZE;
+    const platforms = TEE_PLATFORMS.map((o) => {
+      const c = at(h.tee.x, h.tee.z, o.x, o.z);
+      const corners = [[0, 0], [w / 2, d / 2], [-w / 2, d / 2], [w / 2, -d / 2], [-w / 2, -d / 2]].map(([dx, dz]) => at(c.x, c.z, dx, dz));
+      let y = h.tee.y;
+      for (const p of corners) {
+        const g = this.surfaceBelow(p, h.tee.y + 3);
+        if (g <= h.tee.y + 3) y = Math.max(y, g);
+      }
+      return { ...c, y, yaw, clash: this.clashes(c, at, y + top) };
+    });
+    this.platformCache.set(h, { key, platforms });
+    return platforms;
+  }
+
+  /** Bumped when the level's shape changes (sculpting), so cached checks run again. */
+  shapeVersion = 0;
+
+  /** Highest visible surface under a map point, looking down from `fromY` (map coordinates). */
+  surfaceBelow(p, fromY) {
+    const hit = this.firstHit(fromMap({ x: p.x, z: p.z }, fromY), new THREE.Vector3(0, -1, 0), 1e5);
+    return hit ? hit.point.y : -Infinity;
+  }
+
+  /** First visible level or object surface along a ray (three.js coordinates). */
+  firstHit(origin, dir, far) {
+    const ray = new THREE.Raycaster(origin, dir, 0, far);
+    return ray.intersectObjects([this.pivot, this.terrain?.mesh].filter(Boolean), true).find((hit) => {
+      for (let o = hit.object; o; o = o.parent) if (!o.visible) return false;
+      const mats = Array.isArray(hit.object.material) ? hit.object.material : [hit.object.material];
+      const group = hit.object.geometry.groups?.find((g) => hit.faceIndex * 3 >= g.start && hit.faceIndex * 3 < g.start + g.count);
+      return mats[group?.materialIndex ?? 0]?.visible !== false;
+    }) ?? null;
+  }
+
+  /** Does anything stick up through a platform whose top is at `topY` (bumps, walls, objects)? */
+  clashes(c, at, topY) {
+    const { w, d } = PLATFORM_SIZE;
+    const tolerance = 0.3;
+    // Bumps: look down onto the top from a little above it, across the whole platform.
+    for (let i = 0; i <= 6; i++)
+      for (let j = 0; j <= 2; j++) {
+        const p = at(c.x, c.z, -w / 2 + (w * i) / 6, -d / 2 + (d * j) / 2);
+        const hit = this.firstHit(fromMap(p, topY + 4), new THREE.Vector3(0, -1, 0), 4 - tolerance);
+        if (hit) return true;
+      }
+    // Walls and objects: look along the edges and across, a little above the top.
+    const edges = [[[-w / 2, -d / 2], [w / 2, -d / 2]], [[-w / 2, d / 2], [w / 2, d / 2]], [[-w / 2, -d / 2], [-w / 2, d / 2]], [[w / 2, -d / 2], [w / 2, d / 2]], [[-w / 2, -d / 2], [w / 2, d / 2]], [[-w / 2, d / 2], [w / 2, -d / 2]]];
+    for (const height of [0.5, 1.5]) {
+      for (const [[ax, az], [bx, bz]] of edges) {
+        const a = fromMap(at(c.x, c.z, ax, az), topY + height);
+        const b = fromMap(at(c.x, c.z, bx, bz), topY + height);
+        const dir = b.clone().sub(a);
+        const length = dir.length();
+        if (this.firstHit(a, dir.normalize(), length)) return true;
+      }
+    }
+    return false;
+  }
+
+  /** Things that work but look wrong in game; they don't stop the export. */
+  warnings() {
+    const out = [];
+    this.holes.forEach((h, i) => {
+      if (this.teePlatforms(h).some((p) => p.clash)) out.push(`${h.name || `Hole ${i + 1}`}: the start platforms (red) run into the level or an object. Move the Start or turn it.`);
+    });
+    return out;
   }
 
   /** Problems that would stop a hole from working in game. */

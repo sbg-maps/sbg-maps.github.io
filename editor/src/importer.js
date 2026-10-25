@@ -143,6 +143,31 @@ async function waitUntilIdle(progress, timeoutMs = 30000) {
   }
 }
 
+/**
+ * True if the image has see-through parts and solid parts (leaves, petals, fences): it should be cut out, or the
+ * see-through parts show as black.
+ */
+export function hasCutoutAlpha(image) {
+  try {
+    const size = 64;
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(image, 0, 0, size, size);
+    const px = ctx.getImageData(0, 0, size, size).data;
+    let clear = 0;
+    let solid = 0;
+    for (let i = 3; i < px.length; i += 4) {
+      if (px[i] < 100) clear++;
+      else if (px[i] > 200) solid++;
+    }
+    const n = px.length / 4;
+    return clear > n * 0.02 && solid > n * 0.02;
+  } catch {
+    return false;
+  }
+}
+
 /** True if the image is fully transparent and grey: a glow map that only works with additive blending. */
 function isGlowTexture(image) {
   try {

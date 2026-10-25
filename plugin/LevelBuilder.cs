@@ -281,9 +281,17 @@ namespace SbgMaps
             bool hasCollisionMesh = model.Materials.Any(m => m.Invisible);
 
             // Visual ground: drawn triangles. Collision ground: the invisible mesh, or the drawn one if there is none.
-            var visual = new Sampler(prims.Where(p => !(MatOf(p)?.Invisible ?? false) && ((MatOf(p)?.RenderOnly ?? false) || Surfaces.ContainsKey(MatOf(p)?.Surface ?? "rough") && (MatOf(p)?.Surface ?? "rough") != "none")), zone);
+            // Solid opaque ground first, then drawn-only, then cut-out, then see-through layers.
+            int Rank(int index)
+            {
+                var m = index >= 0 && index < model.Materials.Count ? model.Materials[index] : null;
+                if (m == null)
+                    return 0;
+                return (m.AlphaBlend || m.Additive ? 3 : m.AlphaMask ? 2 : 0) + (m.RenderOnly ? 1 : 0);
+            }
+            var visual = new Sampler(prims.Where(p => !(MatOf(p)?.Invisible ?? false) && ((MatOf(p)?.RenderOnly ?? false) || Surfaces.ContainsKey(MatOf(p)?.Surface ?? "rough") && (MatOf(p)?.Surface ?? "rough") != "none")), zone, Rank);
             // Props built into the ground at the cup have no separate collision mesh: their drawn mesh is their collision.
-            var collision = hasCollisionMesh ? new Sampler(prims.Where(p => (MatOf(p)?.Invisible ?? false) || props.Contains(p) && !(MatOf(p)?.RenderOnly ?? false)), zone) : visual;
+            var collision = hasCollisionMesh ? new Sampler(prims.Where(p => (MatOf(p)?.Invisible ?? false) || props.Contains(p) && !(MatOf(p)?.RenderOnly ?? false)), zone, Rank) : visual;
 
             BuildApronMesh(ctx, parent, zone, visual, drawn: true, collides: !hasCollisionMesh);
             if (hasCollisionMesh)
@@ -369,10 +377,15 @@ namespace SbgMaps
 
             private readonly List<(Vertex a, Vertex b, Vertex c, int material)> tris = new List<(Vertex, Vertex, Vertex, int)>();
             private readonly float cupY;
+            private readonly System.Func<int, int> rank;
+            /// <summary>Surfaces this close in height count as one spot (ground plus decals or blend layers on it).</summary>
+            private const float LayerGap = 0.08f;
 
-            public Sampler(IEnumerable<GlbReader.Primitive> prims, CupZone zone)
+            /// <param name="rank">Which material wins where layers are stacked: lower is preferred.</param>
+            public Sampler(IEnumerable<GlbReader.Primitive> prims, CupZone zone, System.Func<int, int> rank)
             {
                 cupY = zone.Cup.y;
+                this.rank = rank;
                 float reach = ApronHalf + 0.5f;
                 foreach (var p in prims)
                     for (int t = 0; t < p.Indices.Length; t += 3)
@@ -394,6 +407,7 @@ namespace SbgMaps
             {
                 Hit? best = null;
                 float bestDy = float.MaxValue;
+                int bestRank = int.MaxValue;
                 foreach (var (a, b, c, material) in tris)
                 {
                     // Barycentric coordinates in XZ.
@@ -413,10 +427,15 @@ namespace SbgMaps
                         Uv = a.Uv * u + b.Uv * v + c.Uv * w,
                     };
                     // Prefer the ground closest to the cup's height (not a bridge above or a cave below).
+                    // Where layers lie on top of each other (decals, blend layers), take the plain ground, so the
+                    // apron is one material instead of a patchwork of whichever layer happened to be on top.
                     float dy = Mathf.Abs(vert.Pos.y - cupY);
-                    if (dy < bestDy)
+                    int r = rank(material);
+                    bool sameSpot = Mathf.Abs(dy - bestDy) <= LayerGap;
+                    if (sameSpot ? r < bestRank : dy < bestDy)
                     {
                         bestDy = dy;
+                        bestRank = r;
                         best = new Hit { Vertex = vert, Material = material };
                     }
                 }

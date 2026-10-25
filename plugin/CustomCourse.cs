@@ -181,7 +181,7 @@ namespace SbgMaps
             // A fresh copy of the donor carries no course yet.
             Traverse.Create(hole).Property("ParentCourse").SetValue(null);
             string label = $"SBGMAPS_{pack.Manifest.id}_{i}";
-            Strings.Add(label, string.IsNullOrWhiteSpace(def.name) ? $"{pack.Manifest.name} {i + 1}" : def.name);
+            Strings.Add(label, DisplayName(pack, i));
             var t = Traverse.Create(hole);
             t.Property("LocalizedName").SetValue(new LocalizedString("UI", label));
             t.Property("Par").SetValue(Mathf.Max(1, def.par));
@@ -192,6 +192,19 @@ namespace SbgMaps
             t.Property("ScreenshotsThumbnail").SetValue(preview != null ? new List<Sprite> { preview } : new List<Sprite>());
             holeCache[key] = hole;
             return hole;
+        }
+
+        /// <summary>
+        /// The hole's name in the game's lists. Holes left at the editor's default name ("Hole 1") show the map's name
+        /// instead, so holes of different maps can be told apart.
+        /// </summary>
+        public static string DisplayName(MapPack pack, int i)
+        {
+            string name = pack.Manifest.holes[i].name;
+            bool unnamed = string.IsNullOrWhiteSpace(name) || System.Text.RegularExpressions.Regex.IsMatch(name.Trim(), @"^Hole \d+$");
+            if (!unnamed)
+                return name;
+            return pack.Manifest.holes.Count > 1 ? $"{pack.Manifest.name} {i + 1}" : pack.Manifest.name;
         }
 
         private static Sprite LoadPreview(MapPack pack, string file)

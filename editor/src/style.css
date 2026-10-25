@@ -589,6 +589,15 @@ button.btn {
   font-size: 14px;
 }
 
+.warnings {
+  margin: 8px 0 12px;
+  padding: 8px 12px 8px 28px;
+  border-radius: 12px;
+  background: #fff3c4;
+  color: #6b5200;
+  font-size: 14px;
+}
+
 .ok {
   margin: 8px 0 12px;
   padding: 8px 12px;

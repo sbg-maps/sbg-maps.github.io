@@ -61,6 +61,10 @@ gizmo.addEventListener("dragging-changed", (e) => {
   else {
     history.commit(gizmoBefore);
     gizmoBefore = null;
+    if (project) {
+      project.shapeVersion++;
+      project.rebuildMarkers();
+    }
   }
 });
 gizmo.addEventListener("objectChange", () => project?.rebuildMarkers());
@@ -247,10 +251,21 @@ async function readEntry(entry, prefix) {
 
 // Undo/redo.
 function undo() {
-  if (history.undo()) setStatus("Undone");
+  if (!history.undo()) return;
+  setStatus("Undone");
+  reshaped();
 }
 function redo() {
-  if (history.redo()) setStatus("Redone");
+  if (!history.redo()) return;
+  setStatus("Redone");
+  reshaped();
+}
+/** The level may have changed shape: checks that depend on it run again. */
+function reshaped() {
+  if (!project) return;
+  project.shapeVersion++;
+  project.rebuildMarkers();
+  renderPanel();
 }
 document.getElementById("undo").addEventListener("click", undo);
 document.getElementById("redo").addEventListener("click", redo);
@@ -434,6 +449,7 @@ window.addEventListener("pointerup", () => {
   if (!stroke) return;
   history.commit(stroke.before, { terrain: true });
   stroke = null;
+  project.shapeVersion++;
   project.rebuildMarkers();
 });
 onFrame((now) => {
@@ -649,7 +665,9 @@ function lookSettings(material, i) {
     <div class="choice-group alpha-modes">${ALPHA_MODES.map(([id, name, tip]) => `<button class="choice ${id === alphaMode ? "active" : ""}" data-mode="${id}" data-i="${i}" title="${tip}">${name}</button>`).join("")}</div>
     ${alphaMode === "cutout" ? slider("alpha-cutoff", "Cut below", alphaCutoff, 5, "Parts more see-through than this are cut away. Raise it if edges look fuzzy, lower it if thin parts vanish.") : ""}
     ${alphaMode === "blend" ? slider("alpha-opacity", "Opacity", opacity, 5, "How solid it looks overall") : ""}
+<div class="row">
     <label class="check" title="Show the back of each face too (needed for leaves and flat cut-outs)"><input type="checkbox" class="two-sided" data-i="${i}" ${doubleSided ? "checked" : ""} /> Two-sided</label>
+    ${material.userData.invisible ? "" : `<label class="check" title="Players and balls pass through it (plants, flowers, grass tufts, light shafts)"><input type="checkbox" class="walk-through" data-i="${i}" ${material.userData.renderOnly ? "checked" : ""} /> Walk through</label>`}</div>
   </div>`;
 }
 
@@ -711,6 +729,15 @@ function wireModel() {
       }),
     );
   info.querySelectorAll(".two-sided").forEach((c) => c.addEventListener("change", () => look(c, { doubleSided: c.checked })));
+  info.querySelectorAll(".walk-through").forEach((c) =>
+    c.addEventListener("change", () => {
+      const { material } = project.materials[Number(c.dataset.i)];
+      if (c.checked) material.userData.renderOnly = true;
+      else delete material.userData.renderOnly;
+      history.version++;
+      renderPanel();
+    }),
+  );
   info.querySelectorAll(".material").forEach((row) =>
     row.addEventListener("click", (e) => {
       if (!["SELECT", "INPUT", "LABEL"].includes(e.target.tagName)) selectMaterial(project.materials[Number(row.dataset.i)].material);
@@ -896,7 +923,9 @@ function holesPanel() {
       <button class="btn btn-primary small" id="add-hole">Add hole</button>
       <button class="btn btn-secondary small" id="remove-hole" ${project.holes.length < 2 ? "disabled" : ""}>Remove this hole</button>
     </div>
-    <div class="field"><label for="hole-name">Name</label><input id="hole-name" value="${esc(h.name)}" /></div>
+    <div class="field"><label for="hole-name">Hole name</label><input id="hole-name" value="${esc(h.name)}" /></div>
+    <p class="hint">Shown in the game's hole list. The map's own name (and file name) is set in the Export tab.</p>
+    ${warningList()}
     <div class="field"><label for="par">Par</label><input id="par" type="number" min="1" max="9" value="${h.par}" /></div>
     <div class="field"><label for="difficulty">Difficulty</label><select id="difficulty">${["none", "beginner", "intermediate", "expert"]
       .map((d) => `<option ${d === h.difficulty ? "selected" : ""}>${d}</option>`)
@@ -978,17 +1007,25 @@ function wireHoles() {
   });
 }
 
+/** Warnings (things that look wrong in game but still work), as a list, or nothing. */
+function warningList() {
+  const warnings = project.warnings();
+  return warnings.length ? `<ul class="warnings">${warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : "";
+}
+
 // Export
 function exportPanel() {
   const problems = project.problems();
   return `
     <div class="field"><label for="map-name">Map name</label><input id="map-name" value="${esc(project.info.name)}" /></div>
+    <p class="hint">The name of the whole map: the file is named after it. Each hole has its own name in the Holes tab, which is what the game's hole list shows.</p>
     <div class="field"><label for="author">Author</label><input id="author" value="${esc(project.info.author)}" /></div>
     <div class="field"><label for="credits">Credits</label><textarea id="credits" rows="3" placeholder="e.g. Model by ...">${esc(project.info.credits)}</textarea></div>
     ${musicSection()}
     ${problems.length ? `<ul class="problems">${problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : `<p class="ok">Ready to play!</p>`}
+    ${warningList()}
     <button class="btn btn-primary" id="export" ${problems.length ? "disabled" : ""}>Download .sbgmap</button>
-    <p class="hint">Put the file in <b>Super Battle Golf/SbgMaps/maps/</b> and restart the game. Your holes show up under <b>Custom Maps</b>.</p>`;
+    <p class="hint">Put the file in <b>Super Battle Golf/SbgMaps/maps/</b>. Your holes show up under <b>Custom Maps</b> (from mod 0.3.0 without restarting the game).</p>`;
 }
 
 function wireExport() {
