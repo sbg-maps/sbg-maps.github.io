@@ -82,23 +82,12 @@ namespace SbgMaps
                 .Method("ServerStartNextMatch", new[] { typeof(bool) })
                 .GetValue(false);
 
-        public static void DumpGameplayObjects()
+        /// <summary>
+        /// Game values the editor and mod copy (gravity, item pools, jump pad launches), as log lines.
+        /// </summary>
+        public static string GameFacts()
         {
-            var sb = new StringBuilder($"Gameplay objects in '{SceneManager.GetActiveScene().name}':\n");
-            void Add<T>(string label) where T : Component
-            {
-                foreach (var c in Object.FindObjectsByType<T>(FindObjectsInactive.Include, FindObjectsSortMode.None))
-                {
-                    var id = c.GetComponent<NetworkIdentity>();
-                    sb.AppendLine($"  {label} '{c.name}' pos={c.transform.position} rot={c.transform.eulerAngles} active={c.gameObject.activeInHierarchy} sceneId={(id ? id.sceneId.ToString("X") : "-")}");
-                }
-            }
-            Add<GolfTeeingPlatform>("Tee");
-            Add<GolfHole>("Hole");
-            Add<ItemSpawner>("ItemSpawner");
-            Add<Checkpoint>("Checkpoint");
-            Add<MainOutOfBoundsHazard>("MainOOB");
-            Add<TerrainAddition>("TerrainAddition");
+            var sb = new StringBuilder();
             sb.AppendLine($"  Physics gravity={Physics.gravity} playerGravityFactor={GameManager.PlayerMovementSettings?.BaseGravityFactor} knockedOutFactor={GameManager.PlayerMovementSettings?.KnockOutGravityFactor} jumpPadCooldown={GameManager.HazardSettings?.JumpPadCooldown}");
             var ballBody = Object.FindFirstObjectByType<GolfBall>()?.GetComponent<Rigidbody>();
             if (ballBody != null)
@@ -127,6 +116,38 @@ namespace SbgMaps
                     bounds.Encapsulate(r.bounds);
                 sb.AppendLine($"  JumpPad '{pad.name}' pos={pad.transform.position} rot={pad.transform.eulerAngles} size={bounds.size} {Jump("playerJump")} {Jump("divingPlayerJump")} {Jump("knockedOutPlayerJump")} {Jump("ballJump")} {Jump("defaultJump")}");
             }
+            return sb.ToString();
+        }
+
+        private static readonly System.Collections.Generic.HashSet<string> factsLogged = new System.Collections.Generic.HashSet<string>();
+
+        /// <summary>Logs the game values once per hole, a moment after it loads, so nobody has to press F8 for them.</summary>
+        public static System.Collections.IEnumerator LogFactsOnce(string sceneName)
+        {
+            if (!factsLogged.Add(sceneName))
+                yield break;
+            yield return new WaitForSeconds(3f);
+            Plugin.Log.LogInfo($"Game facts in '{sceneName}':\n{GameFacts()}");
+        }
+
+        public static void DumpGameplayObjects()
+        {
+            var sb = new StringBuilder($"Gameplay objects in '{SceneManager.GetActiveScene().name}':\n");
+            void Add<T>(string label) where T : Component
+            {
+                foreach (var c in Object.FindObjectsByType<T>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+                {
+                    var id = c.GetComponent<NetworkIdentity>();
+                    sb.AppendLine($"  {label} '{c.name}' pos={c.transform.position} rot={c.transform.eulerAngles} active={c.gameObject.activeInHierarchy} sceneId={(id ? id.sceneId.ToString("X") : "-")}");
+                }
+            }
+            Add<GolfTeeingPlatform>("Tee");
+            Add<GolfHole>("Hole");
+            Add<ItemSpawner>("ItemSpawner");
+            Add<Checkpoint>("Checkpoint");
+            Add<MainOutOfBoundsHazard>("MainOOB");
+            Add<TerrainAddition>("TerrainAddition");
+            sb.Append(GameFacts());
             foreach (var visuals in Resources.FindObjectsOfTypeAll<ItemSpawnerVisuals>())
                 sb.AppendLine($"  ItemSpawnerVisuals '{visuals.name}' type={HarmonyLib.Traverse.Create(visuals).Field("type").GetValue()} scene='{visuals.gameObject.scene.name}'");
             // Player size, for the editor's scale reference golfer.

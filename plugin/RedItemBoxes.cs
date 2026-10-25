@@ -12,8 +12,9 @@ namespace SbgMaps
     internal static class RedItemBoxes
     {
         /// <summary>
-        /// What red boxes give, with weights. A first guess from what players see (spring boots, the rocket driver);
-        /// replace with the game's own "Mobility item spawner settings" pool once it is logged (F8 on a hole with red boxes).
+        /// What red boxes give: spring boots and the rocket driver (the fire club), as players see in the game. Equal
+        /// weights until the game's own "Mobility item spawner settings" pool shows up in the log (it is logged by
+        /// itself on holes that have red boxes).
         /// </summary>
         private static readonly (ItemType item, float weight)[] Pool =
         {

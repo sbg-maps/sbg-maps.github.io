@@ -51,6 +51,8 @@ namespace SbgMaps
                 HoleMusic.OnSceneLoaded();
             CustomCourse.InjectLate();
             HoleSync.OnSceneLoaded(scene);
+            if (mode == LoadSceneMode.Single && scene.name != "Main menu")
+                StartCoroutine(DevTools.LogFactsOnce(scene.name));
         }
 
         private void Update()
