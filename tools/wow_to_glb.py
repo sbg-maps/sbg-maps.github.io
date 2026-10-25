@@ -22,6 +22,9 @@ centre of the cut-out area and `ground` the lowest terrain height in it, so the 
 Models are placed as the client does: MDDF/MODF positions are in "placement" space P (x = 32 tiles - Wy,
 y = up, z = 32 tiles - Wx), rotated Y(b - 90) * Z(-a) * X(c) in P around a model whose native z-up axes are
 first turned into P by (x, y, z) -> (x, z, -y).
+The root scene extras record where the file sits in the map, {"source": "wow", "map": <map>, "worldOrigin":
+[-cy, ground, -cx] * 0.9144}: glTF world position = local position + worldOrigin, the glTF world frame being
+(-Wy, Wz, -Wx) * 0.9144, so areas of the same map placed at their worldOrigin line up as in the game.
 """
 import argparse
 import array
@@ -1067,6 +1070,8 @@ def main():
 
     if textures.missing:
         print(f"{len(textures.missing)} textures missing or undecodable, e.g. {sorted(textures.missing)[:3]}")
+    writer.gltf["scenes"][0]["extras"] = {"source": "wow", "map": map_name,
+                                          "worldOrigin": [-cy * YARD, ground * YARD, -cx * YARD]}
     writer.gltf["asset"]["extras"] = {"wowMap": map_name, "wowBox": list(box), "groundYards": ground,
                                       "centre": [cx, cy], "frame": "glTF = (-(Wy - cy), Wz - ground, -(Wx - cx)) * 0.9144"}
     writer.write(args.out)
