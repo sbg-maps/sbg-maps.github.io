@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text;
 using HarmonyLib;
 using Mirror;
@@ -99,8 +100,26 @@ namespace SbgMaps
             Add<MainOutOfBoundsHazard>("MainOOB");
             Add<TerrainAddition>("TerrainAddition");
             // Item box kinds the game has loaded (looking for the special red boxes).
+            string PoolText(ItemPool pool) => pool == null ? "-" : $"'{pool.name}' [{string.Join(", ", pool.SpawnChances.Select(c => $"{c.item} {c.spawnChanceWeight:0.##}"))}]";
             foreach (var settings in Resources.FindObjectsOfTypeAll<ItemSpawnerSettings>())
-                sb.AppendLine($"  ItemSpawnerSettings '{settings.name}' pools={settings.ItemPoolsDefaults?.Count} aheadOfBall={(settings.AheadOfBallItemPoolDefaults != null ? settings.AheadOfBallItemPoolDefaults.name : "-")}");
+            {
+                sb.AppendLine($"  ItemSpawnerSettings '{settings.name}' respawn={settings.RespawnTime} pickUpRadius={settings.PickUpRadius} aheadOfBall={PoolText(settings.AheadOfBallItemPoolDefaults)}");
+                foreach (var data in settings.ItemPoolsDefaults ?? new System.Collections.Generic.List<ItemSpawnerSettings.ItemPoolData>())
+                    sb.AppendLine($"    pool from {data.minDistanceBehindLeader} m behind: {PoolText(data.pool)}");
+            }
+            foreach (var pad in Object.FindObjectsByType<JumpPad>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                var t = Traverse.Create(pad);
+                string Jump(string field)
+                {
+                    var j = t.Field(field);
+                    return $"{field} pitch={j.Field("pitch").GetValue()} speed={j.Field("speed").GetValue()}";
+                }
+                var bounds = new Bounds(pad.transform.position, Vector3.zero);
+                foreach (var r in pad.GetComponentsInChildren<Renderer>(true))
+                    bounds.Encapsulate(r.bounds);
+                sb.AppendLine($"  JumpPad '{pad.name}' pos={pad.transform.position} rot={pad.transform.eulerAngles} size={bounds.size} {Jump("playerJump")} {Jump("divingPlayerJump")} {Jump("knockedOutPlayerJump")} {Jump("ballJump")} {Jump("defaultJump")}");
+            }
             foreach (var visuals in Resources.FindObjectsOfTypeAll<ItemSpawnerVisuals>())
                 sb.AppendLine($"  ItemSpawnerVisuals '{visuals.name}' type={HarmonyLib.Traverse.Create(visuals).Field("type").GetValue()} scene='{visuals.gameObject.scene.name}'");
             // Player size, for the editor's scale reference golfer.
