@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System;
 using System.Linq;
 using Mirror;
@@ -135,6 +136,20 @@ namespace SbgMaps
             // "Vertigo" (a vanilla hole by scene or hole name) or "map <map id> <hole number>"; "shots" takes screenshots.
             var words = lines[0].Split(' ');
             screenshots = lines.Contains("shots");
+            if (words[0] == "skies")
+            {
+                // Visit every vanilla hole once to save its sky (SkyThemes), then quit.
+                skyTour = GameManager.AllCourses.allHoles
+                    .Where(h => h != null && !h.name.StartsWith("sbgmaps:") && h.Scene.Name != GameManager.DrivingRangeHoleData.Scene.Name)
+                    .GroupBy(h => h.Scene.Name).Select(g => g.First()).ToList();
+                Plugin.Log.LogInfo($"Autorun: saving the skies of {skyTour.Count} holes: {string.Join(", ", skyTour.Select(h => h.Scene.Name))}");
+                pendingVanilla = "";
+                pendingMap = "";
+                pendingSince = Time.realtimeSinceStartup;
+                readySince = -1f;
+                SingletonBehaviour<MainMenu>.Instance.StartHost();
+                return;
+            }
             quitAfterFacts = !screenshots;
             pendingSince = Time.realtimeSinceStartup;
             readySince = -1f;
@@ -153,9 +168,28 @@ namespace SbgMaps
         }
 
         private static bool screenshots;
+        private static List<HoleData> skyTour;
+        private static int skiesSaved;
 
         public static void OnFactsLogged()
         {
+            if (skyTour != null)
+            {
+                SkyThemes.SaveCurrent(UnityEngine.SceneManagement.SceneManager.GetActiveScene().name);
+                if (++skiesSaved >= skyTour.Count)
+                {
+                    Plugin.Log.LogInfo("Autorun: all skies saved, quitting");
+                    Application.Quit();
+                    return;
+                }
+                // Each hole is its own one-hole course: end this one (back to the driving range) and start the next.
+                pendingVanilla = "";
+                pendingMap = "";
+                pendingSince = Time.realtimeSinceStartup;
+                readySince = -1f;
+                CourseManager.EndCourse();
+                return;
+            }
             if (screenshots)
             {
                 screenshots = false;
@@ -228,6 +262,14 @@ namespace SbgMaps
                     ? GameManager.AllCourses.allHoles.FirstOrDefault(h => h != null && (h.Scene.Name == pendingVanilla || h.name == pendingVanilla))
                     : GameManager.AllCourses.allHoles.LastOrDefault(h => h != null && h.name == name);
                 pendingVanilla = null;
+                if (skyTour != null)
+                {
+                    var tour = MatchSetupMenu.CustomCourseData;
+                    tour.OverrideHoles(new[] { skyTour[skiesSaved] });
+                    CourseManager.ServerSetCourse(tour);
+                    CourseManager.StartCourse();
+                    return;
+                }
                 if (hole == null)
                 {
                     DevTools.Say($"Map '{mapId}' hole {pendingHole + 1} is not in the custom course");

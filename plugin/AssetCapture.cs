@@ -28,6 +28,8 @@ namespace SbgMaps
         public class Part
         {
             public string path;
+            /// <summary>Placement relative to the captured root: position, rotation (quaternion), scale.</summary>
+            public float[] position, rotation, scale;
             public MeshData mesh;
             public List<MaterialData> materials = new List<MaterialData>();
         }
@@ -76,7 +78,17 @@ namespace SbgMaps
             var look = new Look();
             foreach (var renderer in root.GetComponentsInChildren<Renderer>(true))
             {
-                var part = new Part { path = PathOf(root, renderer.transform) };
+                var t = renderer.transform;
+                var localRotation = Quaternion.Inverse(root.rotation) * t.rotation;
+                var lossy = t.lossyScale;
+                var rootScale = root.lossyScale;
+                var part = new Part
+                {
+                    path = PathOf(root, t),
+                    position = V(root.InverseTransformPoint(t.position)),
+                    rotation = new[] { localRotation.x, localRotation.y, localRotation.z, localRotation.w },
+                    scale = V(new Vector3(lossy.x / rootScale.x, lossy.y / rootScale.y, lossy.z / rootScale.z)),
+                };
                 if (renderer.TryGetComponent<MeshFilter>(out var filter) && filter.sharedMesh != null)
                     part.mesh = SaveMesh(filter.sharedMesh);
                 foreach (var m in renderer.sharedMaterials)
@@ -86,6 +98,34 @@ namespace SbgMaps
             }
             File.WriteAllText(Path.Combine(Folder, name + ".json"), JsonConvert.SerializeObject(look, Formatting.Indented));
             Plugin.Log.LogInfo($"Saved the look '{name}' ({look.parts.Count} parts) to {Folder}");
+        }
+
+        private static float[] V(Vector3 v) => new[] { v.x, v.y, v.z };
+
+        /// <summary>
+        /// Builds a saved look as new objects under parent (meshes with their materials, placed as saved).
+        /// Particle effects are left out. False if nothing could be built (e.g. a shader the game has not loaded).
+        /// </summary>
+        public static bool BuildLook(Look look, Transform parent)
+        {
+            int built = 0;
+            foreach (var part in look.parts)
+            {
+                if (part.mesh == null || part.position == null)
+                    continue;
+                var mats = part.materials.Select(m => MaterialFor(m, null)).ToArray();
+                if (mats.Length == 0 || mats.Any(m => m == null))
+                    continue;
+                var go = new GameObject(part.path);
+                go.transform.SetParent(parent, false);
+                go.transform.localPosition = new Vector3(part.position[0], part.position[1], part.position[2]);
+                go.transform.localRotation = new Quaternion(part.rotation[0], part.rotation[1], part.rotation[2], part.rotation[3]);
+                go.transform.localScale = new Vector3(part.scale[0], part.scale[1], part.scale[2]);
+                go.AddComponent<MeshFilter>().sharedMesh = MeshFor(part.mesh);
+                go.AddComponent<MeshRenderer>().sharedMaterials = mats;
+                built++;
+            }
+            return built > 0;
         }
 
         public static string PathOf(Transform root, Transform t)
@@ -208,6 +248,13 @@ namespace SbgMaps
             };
         }
 
+        /// <summary>A material's settings and textures (saved next to it) for rebuilding later.</summary>
+        public static MaterialData SaveMaterialData(string lookName, Material m)
+        {
+            Directory.CreateDirectory(Folder);
+            return SaveMaterial(lookName, m);
+        }
+
         private static MaterialData SaveMaterial(string lookName, Material m)
         {
             var data = new MaterialData { name = m.name.Replace(" (Instance)", ""), shader = m.shader.name, renderQueue = m.renderQueue, keywords = m.shaderKeywords };
@@ -305,7 +352,10 @@ namespace SbgMaps
                 return cached;
             var shader = Shader.Find(data.shader) ?? basedOn?.shader;
             if (shader == null)
+            {
+                Plugin.Log.LogWarning($"Shader '{data.shader}' is not loaded here; '{data.name}' can't be rebuilt");
                 return basedOn;
+            }
             var m = basedOn != null && basedOn.shader == shader ? new Material(basedOn) : new Material(shader);
             m.name = data.name + " (SbgMaps)";
             foreach (var kv in data.colors)

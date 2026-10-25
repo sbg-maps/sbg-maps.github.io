@@ -163,6 +163,7 @@ namespace SbgMaps
             yield return new WaitForSeconds(3f);
             Plugin.Log.LogInfo($"Game facts in '{sceneName}':\n{GameFacts()}");
             RedItemBoxes.CaptureLookIfHere();
+            MapJumpPad.CaptureLookIfHere();
             if (sceneName != "Driving range")
                 MapPicker.OnFactsLogged();
         }

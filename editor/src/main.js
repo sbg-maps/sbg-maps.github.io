@@ -287,6 +287,16 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     redo();
   } else if (e.key === "Escape" && tool === "path") setTool("look");
+  else if ((e.key === "Delete" || e.key === "Backspace") && project && selectedObject && !isFlying()) {
+    // Delete the selected object (or cut-out piece); undo brings it back.
+    e.preventDefault();
+    const o = selectedObject;
+    selectObject(null);
+    history.record(() => project.removeObject(o));
+    project.rebuildMarkers();
+    renderPanel();
+    setStatus(`Deleted ${o.name || "object"} (Ctrl+Z brings it back)`);
+  }
 });
 
 // ---------- Fly view ----------

@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Collections.Generic;
 using FMODUnity;
 using UnityEngine;
@@ -31,6 +32,66 @@ namespace SbgMaps
             pad.speed = Mathf.Clamp((float?)extras?["launchSpeed"] ?? GamePlayerSpeed, 0f, 250f);
             pad.pitch = Mathf.Clamp((float?)extras?["launchPitch"] ?? GamePlayerPitch, 0f, 180f);
             pad.AddTrigger();
+            pad.UseGameLook();
+        }
+
+        public const string LookName = "jump-pad";
+
+        /// <summary>Saves the game's jump pad look while a hole that has one is loaded (once per computer).</summary>
+        public static void CaptureLookIfHere()
+        {
+            if (AssetCapture.Has(LookName))
+                return;
+            var pad = Object.FindFirstObjectByType<JumpPad>(FindObjectsInactive.Include);
+            if (pad == null)
+                return;
+            try
+            {
+                AssetCapture.Save(LookName, pad.transform);
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogWarning($"Could not save the jump pad look: {e}");
+            }
+        }
+
+        /// <summary>
+        /// Swaps the map's stand-in pad for the game's own pad look (saved from the game), sized to the stand-in's
+        /// footprint. The stand-in keeps colliding; only its drawing is turned off.
+        /// </summary>
+        private void UseGameLook()
+        {
+            var look = AssetCapture.Load(LookName);
+            if (look == null)
+                return;
+            var holder = new GameObject("game jump pad look");
+            holder.transform.SetParent(transform, false);
+            if (!AssetCapture.BuildLook(look, holder.transform))
+            {
+                Object.Destroy(holder);
+                return;
+            }
+            var mine = GetComponentsInChildren<MeshRenderer>(true).Where(r => !r.transform.IsChildOf(holder.transform)).ToList();
+            var bounds = new Bounds();
+            bool any = false;
+            foreach (var r in mine)
+            {
+                if (!any)
+                    bounds = r.bounds;
+                else
+                    bounds.Encapsulate(r.bounds);
+                any = true;
+            }
+            var gameBounds = new Bounds(holder.transform.position, Vector3.zero);
+            foreach (var r in holder.GetComponentsInChildren<MeshRenderer>(true))
+                gameBounds.Encapsulate(r.bounds);
+            if (any && gameBounds.size.x > 0.01f && gameBounds.size.z > 0.01f)
+            {
+                float fit = Mathf.Max(bounds.size.x, bounds.size.z) / Mathf.Max(gameBounds.size.x, gameBounds.size.z);
+                holder.transform.localScale *= fit;
+            }
+            foreach (var r in mine)
+                r.enabled = false;
         }
 
         /// <summary>A trigger box over the top of the pad's meshes, in the pad's own space.</summary>

@@ -397,6 +397,22 @@ await test("zipped game rip: pick the model, drop stacked layers, glow panels ad
     history.undo();
     return { taken: piece.taken, before, after, undone: p.objects.length, islandTris: islandMesh.geometry.attributes.position.count / 3 };
   });
+  // A selected piece goes with the Delete key, and comes back with undo.
+  const piecesBefore = await page.evaluate(() => window.__sbg.project.objects.length);
+  await page.evaluate(() => {
+    const { project: p, history, THREE } = window.__sbg;
+    const islandMesh = p.root.getObjectByName("island");
+    const centre = new THREE.Box3().setFromObject(islandMesh).getCenter(new THREE.Vector3());
+    const hit = new THREE.Raycaster(centre.clone().setY(centre.y + 50), new THREE.Vector3(0, -1, 0)).intersectObject(islandMesh, true)[0];
+    const piece = p.findPiece(hit);
+    history.record(() => p.cutPiece(piece), { meshes: [...piece.take.keys()] });
+  });
+  await page.click('.tab[data-tab="objects"]');
+  await page.click(".object:last-child .mat-name");
+  await page.keyboard.press("Delete");
+  assert((await page.evaluate(() => window.__sbg.project.objects.length)) === piecesBefore, "Delete did not remove the selected piece");
+  await page.keyboard.press("Control+z");
+  assert((await page.evaluate(() => window.__sbg.project.objects.length)) === piecesBefore + 1, "undo did not bring the deleted piece back");
   assert(cut.taken === 2 && cut.after === cut.before + 1 && cut.undone === cut.before && cut.islandTris === 2, `cut piece: ${JSON.stringify(cut)}`);
   // Shift+click picks several materials; a change to one applies to all of them.
   await page.click('.tab[data-tab="model"]');
