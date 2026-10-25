@@ -14,7 +14,7 @@ namespace SbgMaps
     {
         public const string Guid = "loafer.sbgmaps";
         public const string Name = "SbgMaps";
-        public const string Version = "0.4.0";
+        public const string Version = "0.4.1";
 
         internal static ManualLogSource Log;
         internal static Plugin Instance;
@@ -54,7 +54,11 @@ namespace SbgMaps
             CustomCourse.InjectLate();
             HoleSync.OnSceneLoaded(scene);
             if (mode == LoadSceneMode.Single && scene.name != "Main menu")
+            {
                 StartCoroutine(DevTools.LogFactsOnce(scene.name));
+                if (scene.name != "Driving range")
+                    StartCoroutine(SkyThemes.SaveWhenVanilla(scene.name));
+            }
         }
 
         private void Update()

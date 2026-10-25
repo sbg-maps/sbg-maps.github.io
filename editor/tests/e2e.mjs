@@ -160,6 +160,18 @@ await test("page loads without errors", async () => {
   await page.close();
 });
 
+await test("mod page offers the mod version in plugin/Plugin.cs", async () => {
+  const plugin = fs.readFileSync(path.resolve(here, "../../plugin/Plugin.cs"), "utf8");
+  const version = plugin.match(/Version = "([^"]+)"/)[1];
+  const page = await freshPage(browser, url + "mod/");
+  await page.waitForSelector(".version h3");
+  const href = await page.getAttribute("#download", "href");
+  assert(href.endsWith(`/mod-${version}/SbgMaps-${version}.zip`), `download points at ${href}, mod is ${version}`);
+  assert((await page.textContent(".version h3")).startsWith(version), "newest change entry is not the mod version");
+  assert(page.errors.length === 0, page.errors.join("; "));
+  await page.close();
+});
+
 let terrainMap;
 await test("new level: sculpt, paint, undo/redo, objects, paths, export", async () => {
   const page = await freshPage(browser, url);

@@ -46,6 +46,22 @@ namespace SbgMaps
 
         // ---------- saving ----------
 
+        /// <summary>
+        /// Saves a vanilla hole's sky a moment after it loads, so maps can use the skies of the holes people have played
+        /// (the public mod download ships without the game's skies). Custom holes on the donor scene are skipped.
+        /// </summary>
+        public static System.Collections.IEnumerator SaveWhenVanilla(string scene)
+        {
+            if (File.Exists(FileFor(scene)))
+                yield break;
+            yield return new WaitForSeconds(3f);
+            if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name != scene)
+                yield break;
+            if (scene == MapBuilder.DonorScene && !string.IsNullOrEmpty(HoleSync.Current.mapId))
+                yield break;
+            SaveCurrent(scene);
+        }
+
         /// <summary>Saves the current scene's sky and air, if it has not been saved before.</summary>
         public static void SaveCurrent(string scene)
         {
@@ -81,6 +97,7 @@ namespace SbgMaps
                 foreach (var volume in UnityEngine.Object.FindObjectsByType<UnityEngine.Rendering.Volume>(FindObjectsSortMode.None).Where(v => v.isGlobal && v.sharedProfile != null))
                     foreach (var component in volume.sharedProfile.components)
                         theme.volumes.Add(SaveVolume(component));
+                Directory.CreateDirectory(AssetCapture.Folder);
                 File.WriteAllText(FileFor(scene), JsonConvert.SerializeObject(theme, Formatting.Indented));
                 Plugin.Log.LogInfo($"Saved the sky of '{scene}' ({theme.volumes.Count} volume settings)");
             }
