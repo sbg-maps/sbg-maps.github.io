@@ -467,6 +467,9 @@ await test("music, volume, play area and hole picture: add, export, reopen", asy
   await page.check('.items-own[data-key="items"]');
   await page.fill('.item-weight input[data-key="items"][data-item="Coffee"]', "40");
   await page.dispatchEvent('.item-weight input[data-key="items"][data-item="Coffee"]', "change");
+  // Park a golf cart.
+  await page.click('button[data-tool="golfCarts"]');
+  await clickView(page, 0.5, 0.55);
   await page.check('.items-own[data-key="redItems"]');
   // A vanilla hole's sky, then a picture of our own on top.
   await page.selectOption("#sky", "Mirage");
@@ -486,6 +489,7 @@ await test("music, volume, play area and hole picture: add, export, reopen", asy
   const { manifest, files } = readSbgmap(file);
   assert(manifest.music === "music/Main_Theme.wav", `map song: ${manifest.music}`);
   assert(files["music/Main_Theme.wav"]?.length === wav.length, "song file missing from the map");
+  assert(manifest.holes[0].golfCarts?.length === 1, `golf carts: ${JSON.stringify(manifest.holes[0].golfCarts)}`);
   assert(manifest.holes[0].sky === "Mirage" && manifest.holes[0].skyImage === "sky/my_sky.png" && files["sky/my_sky.png"]?.length > 50, `sky: ${manifest.holes[0].sky} ${manifest.holes[0].skyImage}`);
   assert(manifest.holes[0].items?.Coffee === 40 && manifest.holes[0].items?.SpringBoots === 20, `box items: ${JSON.stringify(manifest.holes[0].items)}`);
   assert(manifest.holes[0].redItems?.SpringBoots === 50 && manifest.holes[0].redItems?.RocketDriver === 50, `red box items: ${JSON.stringify(manifest.holes[0].redItems)}`);

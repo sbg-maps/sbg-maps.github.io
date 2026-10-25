@@ -39,6 +39,7 @@ export const MARKERS = {
   cup: { name: "Flag", color: 0xe8443a },
   itemBoxes: { name: "Item box", color: 0xf5c400 },
   redItemBoxes: { name: "Red item box", color: 0xe8443a },
+  golfCarts: { name: "Golf cart", color: 0xf2efe6 },
   checkpoints: { name: "Checkpoint", color: 0xb400dc },
   bounds: { name: "Play area corner", color: 0x3aa0ff },
 };
@@ -441,6 +442,7 @@ export class Project {
     out.push([(p) => (h.cup = p), h.cup]);
     h.itemBoxes.forEach((b, i) => out.push([(p) => (h.itemBoxes[i] = p), b]));
     (h.redItemBoxes ?? []).forEach((b, i) => out.push([(p) => (h.redItemBoxes[i] = p), b]));
+    (h.golfCarts ?? []).forEach((b, i) => out.push([(p) => (h.golfCarts[i] = p), b]));
     h.checkpoints.forEach((c, i) => out.push([(p) => (h.checkpoints[i] = p), c]));
     (h.bounds ?? []).forEach((c, i) => out.push([(p) => (h.bounds[i] = p), c]));
     return out;
@@ -469,6 +471,7 @@ export class Project {
     consider(h.cup, () => (h.cup = null));
     h.itemBoxes.forEach((b, i) => consider(b, () => h.itemBoxes.splice(i, 1)));
     (h.redItemBoxes ?? []).forEach((b, i) => consider(b, () => h.redItemBoxes.splice(i, 1)));
+    (h.golfCarts ?? []).forEach((b, i) => consider(b, () => h.golfCarts.splice(i, 1)));
     h.checkpoints.forEach((c, i) => consider(c, () => h.checkpoints.splice(i, 1)));
     (h.bounds ?? []).forEach((c, i) => consider(c, () => h.bounds.splice(i, 1)));
     this.golfers.forEach((g, i) => consider(g, () => this.golfers.splice(i, 1)));
@@ -587,6 +590,13 @@ export class Project {
       }
       for (const b of h.itemBoxes) add(new THREE.BoxGeometry(2, 2, 2), MARKERS.itemBoxes.color, b, 1.5);
       for (const b of h.redItemBoxes ?? []) add(new THREE.BoxGeometry(2, 2, 2), MARKERS.redItemBoxes.color, b, 1.5);
+      for (const c of h.golfCarts ?? []) {
+        // A cart-sized block facing the flag, as the game parks it.
+        const cart = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.6, 2.6), new THREE.MeshStandardMaterial({ color: MARKERS.golfCarts.color, transparent: !active, opacity: active ? 1 : 0.35 }));
+        cart.position.copy(fromMap(c)).y += 0.8;
+        if (h.cup) cart.rotation.y = yawToRotation((Math.atan2(h.cup.x - c.x, h.cup.z - c.z) * 180) / Math.PI);
+        this.markersGroup.add(cart);
+      }
       for (const c of h.checkpoints) add(new THREE.OctahedronGeometry(1.5), MARKERS.checkpoints.color, c, 2);
       if (active && h.tee && h.cup) {
         const line = new THREE.Line(
@@ -817,6 +827,7 @@ export class Project {
       const under = [h.tee && "the Start", h.cup && "the Flag"].filter((what, k) => what && [h.tee, h.cup][k].y < h.water);
       if (under.length) out.push(`${label}: ${under.join(" and ")} ${under.length > 1 ? "are" : "is"} under the water level (${h.water} m).`);
       if (h.checkpoints.length > MAX_PER_HOLE) out.push(`${label}: at most ${MAX_PER_HOLE} checkpoints.`);
+      if ((h.golfCarts?.length ?? 0) > 16) out.push(`${label}: at most 16 golf carts.`);
     });
     return out;
   }
@@ -867,6 +878,7 @@ export class Project {
         cup: h.cup ? round(h.cup) : undefined,
         itemBoxes: h.itemBoxes.map(round),
         redItemBoxes: h.redItemBoxes?.length ? h.redItemBoxes.map(round) : undefined,
+        golfCarts: h.golfCarts?.length ? h.golfCarts.map(round) : undefined,
         items: itemWeights(h.items),
         redItems: itemWeights(h.redItems),
         checkpoints: h.checkpoints.map(round),
@@ -1023,7 +1035,7 @@ export class Project {
    */
   holeRegion(h) {
     if (!h.tee || !h.cup) return null;
-    const points = [h.tee, h.cup, ...h.itemBoxes, ...(h.redItemBoxes ?? []), ...h.checkpoints, ...(h.bounds ?? [])];
+    const points = [h.tee, h.cup, ...h.itemBoxes, ...(h.redItemBoxes ?? []), ...(h.golfCarts ?? []), ...h.checkpoints, ...(h.bounds ?? [])];
     const margin = h.bounds?.length >= 3 ? 25 : 120;
     const xs = points.map((p) => p.x);
     const zs = points.map((p) => p.z);
@@ -1166,6 +1178,7 @@ export class Project {
       cup: h.cup,
       itemBoxes: h.itemBoxes ?? [],
       redItemBoxes: h.redItemBoxes ?? [],
+      golfCarts: h.golfCarts ?? [],
       ...(h.items ? { items: { ...h.items } } : {}),
       ...(h.redItems ? { redItems: { ...h.redItems } } : {}),
       checkpoints: h.checkpoints ?? [],
@@ -1346,6 +1359,7 @@ function shiftHole(h, dx, dz) {
     cup: move(h.cup),
     itemBoxes: (h.itemBoxes ?? []).map(move),
     redItemBoxes: (h.redItemBoxes ?? []).map(move),
+    golfCarts: (h.golfCarts ?? []).map(move),
     checkpoints: (h.checkpoints ?? []).map(move),
     ...(h.bounds ? { bounds: h.bounds.map((p) => (Array.isArray(p) ? [p[0] + dx, p[1] + dz] : move(p))) } : {}),
   };

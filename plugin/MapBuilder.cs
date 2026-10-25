@@ -186,6 +186,8 @@ namespace SbgMaps
                 ocean.transform.position = new Vector3(p.x, def.water, p.z);
             }
 
+            if (def.golfCarts != null && def.golfCarts.Count > 0)
+                GolfCarts.SpawnWhenReady(def.golfCarts.Select(p => (WorldOf(p), p.yaw)).ToList(), cupPos);
             var levelBounds = SetBounds(def, origin, cupPos, teePos);
             RebuildBoundsWall(levelBounds, (x, z) => GroundY(x - origin.x, z - origin.y));
             SetOverviewCamera(teePos, cupPos);

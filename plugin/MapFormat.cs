@@ -72,6 +72,8 @@ namespace SbgMaps
         public List<PointDef> itemBoxes = new List<PointDef>();
         /// <summary>Red item boxes: the better movement items (the game's "mobility" boxes).</summary>
         public List<PointDef> redItemBoxes = new List<PointDef>();
+        /// <summary>Optional: golf carts parked at the start of the hole, facing the cup (or their own yaw).</summary>
+        public List<PointDef> golfCarts = new List<PointDef>();
         /// <summary>Optional: what normal boxes give, item name to weight (default: the game's own pools by distance).</summary>
         public Dictionary<string, float> items;
         /// <summary>Optional: what red boxes give, item name to weight (default: spring boots and the rocket driver).</summary>
@@ -111,6 +113,8 @@ namespace SbgMaps
         /// <summary>World height. Optional: when missing it comes from the ground below.</summary>
         public float? y;
         public float z;
+        /// <summary>Optional facing in degrees (0 = map +z), for things that have one (golf carts).</summary>
+        public float? yaw;
     }
 
     /// <summary>Surface ids used in paintmaps. Stable on our side, mapped to the game's enum by name.</summary>

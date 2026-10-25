@@ -49,6 +49,7 @@ New maps, or a different number of holes, need a game restart because the course
 | `redItemBoxes` | [{x, z}] | Optional. Red item boxes, which give the better movement items. |
 | `items` | {item: weight} | Optional. What normal boxes give, e.g. `{"Coffee": 40, "SpringBoots": 20}`; chance is weight / total. Default: the game's own pools, better items for players further behind. Item names are the game's (`Coffee`, `SpringBoots`, `RocketDriver` (fire club), `GolfCart`, `Landmine`, `DuelingPistol`, `ElephantGun`, `Airhorn`, `Electromagnet`, `RocketLauncher`, `FreezeBomb`, `SmokeBomb`, `FlashCamera`, `Thunderstorm`, `Railgun`, `OrbitalLaser`, `JumboBurger`). |
 | `redItems` | {item: weight} | Optional. What red boxes give. Default: `{"SpringBoots": 50, "RocketDriver": 50}`, like the game's. |
+| `golfCarts` | [{x, z, yaw?}] | Optional. Golf carts parked on the hole (the game's own, drivable), facing the cup unless `yaw` is given. Up to 16. |
 | `checkpoints` | [{x, z}] | Respawn checkpoints, in order from the start to the flag. Up to 64. |
 | `bounds` | [[x, z], ...] | Optional. Playable-area polygon. Default: the whole `size` rectangle. |
 | `green` | [[x, z], ...] | Optional. Green polygon (raises the flag, putting rules). Default: 15 m circle around the cup. |
