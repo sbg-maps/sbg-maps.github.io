@@ -120,10 +120,7 @@ namespace SbgMaps
                     builder.StampHoles(cupPos, cupCutout);
             }
             else
-            {
-                // Model maps: the terrain is only sea floor, but the shot preview still reads its paint at the cup.
-                builder.Paint(new Rect(cupPos.x, cupPos.z, 0f, 0f), 4f, (wx, wz) => TerrainLayer.Green);
-            }
+                MirrorLevelIntoTerrain(terrain, builder, area, groundMask, cupPos);
 
             if (cup != null)
             {
@@ -189,6 +186,45 @@ namespace SbgMaps
             ForceTerrainDataRegeneration();
 
             Plugin.Log.LogInfo($"MapBuilder: done (tee {teePos}, cup {cupPos}, {def.itemBoxes.Count} item boxes, water {def.water})");
+        }
+
+        /// <summary>
+        /// Model maps: the swing power bar works out where shots land, and on what, from the terrain grid only (heights
+        /// and paint), never from meshes. So the terrain, otherwise bare sea floor under the level, is shaped to the
+        /// level's top surface and painted with its surfaces, then hidden: it only feeds those estimates.
+        /// </summary>
+        private static void MirrorLevelIntoTerrain(Terrain terrain, TerrainBuilder builder, Rect area, int groundMask, Vector3 cupPos)
+        {
+            Physics.SyncTransforms();
+            var started = Time.realtimeSinceStartup;
+            RaycastHit hit;
+            bool Top(float wx, float wz) => Physics.Raycast(new Vector3(wx, 3000f, wz), Vector3.down, out hit, 6000f, groundMask, QueryTriggerInteraction.Ignore);
+            builder.Sculpt(area, 1f, (wx, wz) => Top(wx, wz) ? hit.point.y : SeaFloorHeight, SeaFloorHeight);
+            var layers = new Dictionary<Collider, TerrainLayer>();
+            builder.Paint(area, 0f, (wx, wz) =>
+            {
+                // The shot preview also reads the paint right at the cup: always green there.
+                if ((new Vector2(wx, wz) - new Vector2(cupPos.x, cupPos.z)).sqrMagnitude < 9f)
+                    return TerrainLayer.Green;
+                if (!Top(wx, wz))
+                    return TerrainLayer.OutOfBounds;
+                if (!layers.TryGetValue(hit.collider, out var layer))
+                {
+                    var addition = hit.collider.GetComponent<TerrainAddition>();
+                    layer = addition != null ? Traverse.Create(addition).Field("terrainLayer").GetValue<TerrainLayer>() : TerrainLayer.Rough;
+                    layers[hit.collider] = layer;
+                }
+                return layer;
+            });
+            // Players and balls only ever touch the level itself.
+            terrain.drawHeightmap = false;
+            terrain.drawTreesAndFoliage = false;
+            var collider = terrain.GetComponent<TerrainCollider>();
+            if (collider != null)
+                collider.enabled = false;
+            if (terrain.GetComponent("TerrainGrassRenderer") is Behaviour grass)
+                grass.enabled = false;
+            Plugin.Log.LogInfo($"MapBuilder: level copied into the hidden terrain for shot estimates in {Time.realtimeSinceStartup - started:F1} s");
         }
 
         /// <summary>How far above its collider the cup's grass plate is drawn.</summary>
