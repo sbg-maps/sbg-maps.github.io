@@ -126,7 +126,10 @@ namespace SbgMaps
             }
 
             if (cup != null)
+            {
                 cup.transform.position = cupPos;
+                LiftCupPlate(cup);
+            }
 
             var teePos = new Vector3(origin.x + def.tee.x, def.tee.y ?? GroundY(def.tee.x, def.tee.z), origin.y + def.tee.z);
             var toCup = Vector3.ProjectOnPlane(cupPos - teePos, Vector3.up);
@@ -186,6 +189,32 @@ namespace SbgMaps
             ForceTerrainDataRegeneration();
 
             Plugin.Log.LogInfo($"MapBuilder: done (tee {teePos}, cup {cupPos}, {def.itemBoxes.Count} item boxes, water {def.water})");
+        }
+
+        /// <summary>How far above its collider the cup's grass plate is drawn.</summary>
+        private const float CupPlateLift = 0.03f;
+
+        /// <summary>
+        /// The game's cup brings a grass plate around the hole. Vanilla ground lies a little below it; ours is exactly
+        /// level with it, so the two flicker. The plate is drawn a few centimetres higher by a copy of its look on a
+        /// child; its collider stays where it is, so the ball rolls on the same surface as before.
+        /// </summary>
+        private static void LiftCupPlate(GolfHole cup)
+        {
+            var filter = cup.GetComponent<MeshFilter>();
+            var renderer = cup.GetComponent<MeshRenderer>();
+            if (filter == null || renderer == null || !renderer.enabled || cup.transform.Find("SbgMaps plate look") != null)
+                return;
+            var look = new GameObject("SbgMaps plate look");
+            look.layer = cup.gameObject.layer;
+            look.transform.SetParent(cup.transform, false);
+            look.transform.position = cup.transform.position + Vector3.up * CupPlateLift;
+            look.AddComponent<MeshFilter>().sharedMesh = filter.sharedMesh;
+            var copy = look.AddComponent<MeshRenderer>();
+            copy.sharedMaterials = renderer.sharedMaterials;
+            copy.shadowCastingMode = renderer.shadowCastingMode;
+            copy.receiveShadows = renderer.receiveShadows;
+            renderer.enabled = false;
         }
 
         private static Bounds PlatformBounds(Component platform)
