@@ -41,6 +41,7 @@
     <Reference Include="$(Managed)/Unity.InputSystem.dll" Private="false" />
     <Reference Include="$(Managed)/UnityEngine.AssetBundleModule.dll" Private="false" />
     <Reference Include="$(Managed)/UnityEngine.UI.dll" Private="false" />
+    <Reference Include="$(Managed)/UnityEngine.ScreenCaptureModule.dll" Private="false" />
     <Reference Include="$(Managed)/UnityEngine.UIModule.dll" Private="false" />
     <Reference Include="$(Managed)/Unity.TextMeshPro.dll" Private="false" />
   </ItemGroup>

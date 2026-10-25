@@ -100,6 +100,7 @@ namespace SbgMaps
                 float cupY = def.cup.y ?? def.water;
                 LevelBuilder.Build(model, new Vector3(origin.x, 0f, origin.y), new Vector3(origin.x + def.cup.x, cupY, origin.y + def.cup.z),
                     def.greenRadius, groundLayer, parent.transform, opening);
+                LightLikeTheScene(parent);
                 Plugin.Log.LogInfo($"MapBuilder: built level model with {model.Primitives.Count} parts");
             }
             var cupPos = WorldOf(def.cup);
@@ -225,6 +226,21 @@ namespace SbgMaps
             if (terrain.GetComponent("TerrainGrassRenderer") is Behaviour grass)
                 grass.enabled = false;
             Plugin.Log.LogInfo($"MapBuilder: level copied into the hidden terrain for shot estimates in {Time.realtimeSinceStartup - started:F1} s");
+        }
+
+        /// <summary>
+        /// Unity lights moving and unbaked objects from the scene's light probes, sampled at the centre of each
+        /// renderer's bounds. Those probes were baked for the donor hole, and a part spanning half the level samples
+        /// them somewhere inside the old terrain, which turns it dark and murky. The scene's overall ambient light and
+        /// sky reflections light everything the same instead.
+        /// </summary>
+        private static void LightLikeTheScene(GameObject root)
+        {
+            foreach (var r in root.GetComponentsInChildren<Renderer>(true))
+            {
+                r.lightProbeUsage = UnityEngine.Rendering.LightProbeUsage.Off;
+                r.reflectionProbeUsage = UnityEngine.Rendering.ReflectionProbeUsage.Off;
+            }
         }
 
         /// <summary>How far above its collider the cup's grass plate is drawn.</summary>

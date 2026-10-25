@@ -128,23 +128,59 @@ namespace SbgMaps
             string file = System.IO.Path.Combine(BepInEx.Paths.GameRootPath, "SbgMaps", "autorun.txt");
             if (!System.IO.File.Exists(file))
                 return;
-            string hole = System.IO.File.ReadAllText(file).Trim();
+            var lines = System.IO.File.ReadAllLines(file).Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
             System.IO.File.Delete(file);
-            if (string.IsNullOrEmpty(hole))
+            if (lines.Count == 0)
                 return;
-            Plugin.Log.LogInfo($"Autorun: hosting '{hole}', then quitting");
-            pendingVanilla = hole;
-            quitAfterFacts = true;
-            pendingMap = "";
+            // "Vertigo" (a vanilla hole by scene or hole name) or "map <map id> <hole number>"; "shots" takes screenshots.
+            var words = lines[0].Split(' ');
+            screenshots = lines.Contains("shots");
+            quitAfterFacts = !screenshots;
             pendingSince = Time.realtimeSinceStartup;
             readySince = -1f;
+            if (words[0] == "map" && words.Length >= 3 && int.TryParse(words[2], out int number))
+            {
+                pendingMap = words[1];
+                pendingHole = number - 1;
+            }
+            else
+            {
+                pendingVanilla = lines[0];
+                pendingMap = "";
+            }
+            Plugin.Log.LogInfo($"Autorun: hosting '{lines[0]}'{(screenshots ? " for screenshots" : "")}, then quitting");
             SingletonBehaviour<MainMenu>.Instance.StartHost();
         }
 
+        private static bool screenshots;
+
         public static void OnFactsLogged()
         {
+            if (screenshots)
+            {
+                screenshots = false;
+                Plugin.Instance.StartCoroutine(TakeShots());
+                return;
+            }
             if (!quitAfterFacts)
                 return;
+            Plugin.Log.LogInfo("Autorun: done, quitting");
+            Application.Quit();
+        }
+
+        /// <summary>A few screenshots while the hole plays its intro and after, saved to SbgMaps/shots, then quits.</summary>
+        private static System.Collections.IEnumerator TakeShots()
+        {
+            string folder = System.IO.Path.Combine(BepInEx.Paths.GameRootPath, "SbgMaps", "shots");
+            System.IO.Directory.CreateDirectory(folder);
+            string scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+            for (int i = 1; i <= 4; i++)
+            {
+                string path = System.IO.Path.Combine(folder, $"{scene}-{i}.png");
+                ScreenCapture.CaptureScreenshot(path);
+                Plugin.Log.LogInfo($"Autorun: screenshot {path}");
+                yield return new WaitForSecondsRealtime(4f);
+            }
             Plugin.Log.LogInfo("Autorun: done, quitting");
             Application.Quit();
         }
