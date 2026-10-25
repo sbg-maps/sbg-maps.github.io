@@ -93,6 +93,17 @@ namespace SbgMaps
                 Apply(collection, holes, initialize: true);
         }
 
+        /// <summary>Puts every installed map in the course again (after maps were added or changed on disk).</summary>
+        public static void UseLocalMaps()
+        {
+            var collection = GameManager.AllCourses;
+            if (collection == null || collection.allHoles.Count == 0)
+                return;
+            Attach(collection);
+            if (MapLibrary.Maps.Count > 0 || course != null)
+                Apply(collection, LocalHoles(), initialize: true);
+        }
+
         private static List<(MapPack, int)> LocalHoles() =>
             MapLibrary.Maps.SelectMany(p => Enumerable.Range(0, p.Manifest.holes.Count).Select(i => (p, i))).ToList();
 

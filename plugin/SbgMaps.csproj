@@ -40,10 +40,13 @@
     <Reference Include="$(Managed)/UnityEngine.TerrainPhysicsModule.dll" Private="false" />
     <Reference Include="$(Managed)/Unity.InputSystem.dll" Private="false" />
     <Reference Include="$(Managed)/UnityEngine.AssetBundleModule.dll" Private="false" />
+    <Reference Include="$(Managed)/UnityEngine.UI.dll" Private="false" />
+    <Reference Include="$(Managed)/UnityEngine.UIModule.dll" Private="false" />
+    <Reference Include="$(Managed)/Unity.TextMeshPro.dll" Private="false" />
   </ItemGroup>
 
   <!-- Copy the built plugin straight into the game's BepInEx/plugins folder. -->
-  <Target Name="DeployToGame" AfterTargets="Build">
+  <Target Name="DeployToGame" AfterTargets="Build" Condition="'$(NoDeploy)' != 'true'">
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)/BepInEx/scripts" />
   </Target>
 

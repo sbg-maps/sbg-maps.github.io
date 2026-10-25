@@ -34,8 +34,18 @@ namespace SbgMaps
                 return true;
             try
             {
-                var hole = GameManager.AllCourses.allHoles[___currentHoleGlobalIndex];
-                if (!CustomCourse.TryGetMapHole(hole, out var pack, out int index))
+                // The host names the custom hole (HoleSync); hole numbers can differ between players with other maps installed.
+                var selected = HoleSync.Current;
+                MapPack pack;
+                int index;
+                if (!string.IsNullOrEmpty(selected.mapId))
+                {
+                    pack = MapLibrary.Find(selected.mapId);
+                    index = selected.holeIndex;
+                    if (pack == null || index < 0 || index >= pack.Manifest.holes.Count)
+                        return true;
+                }
+                else if (!CustomCourse.TryGetMapHole(GameManager.AllCourses.allHoles[___currentHoleGlobalIndex], out pack, out index))
                     return true;
                 string file = pack.Manifest.holes[index].music ?? pack.Manifest.music;
                 if (string.IsNullOrEmpty(file))

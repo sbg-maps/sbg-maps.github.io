@@ -164,16 +164,51 @@ namespace SbgMaps
         /// <summary>Maps received from hosts.</summary>
         public static string DownloadsFolder => System.IO.Path.Combine(MapsFolder, "downloaded");
 
+        /// <summary>Map files and folders, the player's own first (so they win over a downloaded copy with the same id).</summary>
+        private static IEnumerable<string> Candidates()
+        {
+            Directory.CreateDirectory(MapsFolder);
+            Directory.CreateDirectory(DownloadsFolder);
+            return Directory.GetDirectories(MapsFolder).Where(d => File.Exists(System.IO.Path.Combine(d, "map.json")))
+                .Concat(Directory.GetFiles(MapsFolder, "*.sbgmap"))
+                .Concat(Directory.GetFiles(DownloadsFolder, "*.sbgmap"))
+                .ToList();
+        }
+
+        private static string scanned;
+
+        /// <summary>Names, sizes and times of every map file, so a cheap check tells whether anything changed.</summary>
+        private static string Signature()
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (var path in Candidates())
+            {
+                var files = Directory.Exists(path) ? Directory.GetFiles(path, "*", SearchOption.AllDirectories) : new[] { path };
+                foreach (var f in files)
+                {
+                    var info = new FileInfo(f);
+                    sb.Append(f).Append('|').Append(info.Length).Append('|').Append(info.LastWriteTimeUtc.Ticks).Append('\n');
+                }
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>Scans again if maps were added, removed or changed since the last scan. True if it did.</summary>
+        public static bool RescanIfChanged()
+        {
+            string now = Signature();
+            if (now == scanned)
+                return false;
+            Plugin.Log.LogInfo("The maps folder changed, loading maps again");
+            Scan();
+            return true;
+        }
+
         public static void Scan()
         {
             Maps.Clear();
-            Directory.CreateDirectory(MapsFolder);
-            Directory.CreateDirectory(DownloadsFolder);
-            // The player's own maps first, so they win over a downloaded copy with the same id.
-            var candidates = Directory.GetDirectories(MapsFolder).Where(d => File.Exists(System.IO.Path.Combine(d, "map.json")))
-                .Concat(Directory.GetFiles(MapsFolder, "*.sbgmap"))
-                .Concat(Directory.GetFiles(DownloadsFolder, "*.sbgmap"));
-            foreach (var path in candidates)
+            scanned = Signature();
+            foreach (var path in Candidates())
             {
                 try
                 {

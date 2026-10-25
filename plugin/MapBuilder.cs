@@ -172,7 +172,8 @@ namespace SbgMaps
                 ocean.transform.position = new Vector3(p.x, def.water, p.z);
             }
 
-            SetBounds(def, origin, cupPos, teePos);
+            var levelBounds = SetBounds(def, origin, cupPos, teePos);
+            RebuildBoundsWall(levelBounds, (x, z) => GroundY(x - origin.x, z - origin.y));
             SetOverviewCamera(teePos, cupPos);
             ForceTerrainDataRegeneration();
 
@@ -231,21 +232,21 @@ namespace SbgMaps
                     NetworkServer.Destroy(o);
         }
 
-        private static void SetBounds(HoleDef def, Vector2 origin, Vector3 cupPos, Vector3 teePos)
+        /// <summary>Points the game's level, green and return-path splines at this hole. Returns the level bounds (world XZ).</summary>
+        private static List<Vector2> SetBounds(HoleDef def, Vector2 origin, Vector3 cupPos, Vector3 teePos)
         {
+            IEnumerable<Vector2> Local(List<float[]> pts) => pts.Select(p => new Vector2(origin.x + p[0], origin.y + p[1]));
+
+            var level = (def.bounds != null && def.bounds.Count >= 3
+                ? Local(def.bounds)
+                : new[] { origin, origin + new Vector2(def.size[0], 0f), origin + def.Size, origin + new Vector2(0f, def.size[1]) }).ToList();
             var manager = Object.FindFirstObjectByType<BoundsManager>();
             if (manager == null)
             {
                 Plugin.Log.LogWarning("MapBuilder: no BoundsManager");
-                return;
+                return level;
             }
             var t = Traverse.Create(manager);
-
-            IEnumerable<Vector2> Local(List<float[]> pts) => pts.Select(p => new Vector2(origin.x + p[0], origin.y + p[1]));
-
-            var level = def.bounds != null && def.bounds.Count >= 3
-                ? Local(def.bounds)
-                : new[] { origin, origin + new Vector2(def.size[0], 0f), origin + def.Size, origin + new Vector2(0f, def.size[1]) };
             ReplaceSpline(t.Field("levelBounds").GetValue<SplineContainer>(), level, closed: true);
 
             var green = def.green != null && def.green.Count >= 3
@@ -257,6 +258,67 @@ namespace SbgMaps
                 ? Local(def.returnPath)
                 : new[] { new Vector2(teePos.x, teePos.z), new Vector2(cupPos.x, cupPos.z) };
             ReplaceSpline(t.Field("returnSplines").GetValue<SplineContainer>(), ret, closed: false);
+            return level;
+        }
+
+        private const float WallStep = 2f;
+
+        /// <summary>
+        /// The see-through wall players meet at the edge of the level is a mesh made for the donor hole's bounds.
+        /// Replace it with one along this hole's bounds, standing on the ground, as tall as the donor's.
+        /// </summary>
+        private static void RebuildBoundsWall(List<Vector2> world, System.Func<float, float, float> groundAt)
+        {
+            var wall = Object.FindFirstObjectByType<LevelBoundsWall>(FindObjectsInactive.Include);
+            var renderer = wall != null ? Traverse.Create(wall).Field("renderer").GetValue<MeshRenderer>() : null;
+            var filter = renderer != null ? renderer.GetComponent<MeshFilter>() : null;
+            if (filter == null || world.Count < 3)
+            {
+                Plugin.Log.LogWarning("MapBuilder: no level bounds wall to move");
+                return;
+            }
+            float height = filter.sharedMesh != null ? Mathf.Clamp(filter.sharedMesh.bounds.size.y * filter.transform.lossyScale.y, 5f, 60f) : 10f;
+            var tr = filter.transform;
+            var verts = new List<Vector3>();
+            var uvs = new List<Vector2>();
+            var tris = new List<int>();
+            float along = 0f;
+            for (int e = 0; e < world.Count; e++)
+            {
+                Vector2 a = world[e], b = world[(e + 1) % world.Count];
+                float len = Vector2.Distance(a, b);
+                int steps = Mathf.Max(1, Mathf.CeilToInt(len / WallStep));
+                int first = verts.Count;
+                for (int s = 0; s <= steps; s++)
+                {
+                    var p = Vector2.Lerp(a, b, s / (float)steps);
+                    // A little below the ground, so slopes between samples do not leave a gap under the wall.
+                    float y = groundAt(p.x, p.y) - 1f;
+                    float u = (along + len * s / steps) / height;
+                    verts.Add(tr.InverseTransformPoint(new Vector3(p.x, y, p.y)));
+                    verts.Add(tr.InverseTransformPoint(new Vector3(p.x, y + height + 1f, p.y)));
+                    uvs.Add(new Vector2(u, 0f));
+                    uvs.Add(new Vector2(u, 1f));
+                }
+                for (int s = 0; s < steps; s++)
+                {
+                    int i = first + s * 2;
+                    // Both sides, so it shows from inside and outside.
+                    tris.AddRange(new[] { i, i + 1, i + 2, i + 2, i + 1, i + 3 });
+                    tris.AddRange(new[] { i, i + 2, i + 1, i + 2, i + 3, i + 1 });
+                }
+                along += len;
+            }
+            var mesh = new Mesh { name = "SbgMaps level bounds wall", indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
+            mesh.SetVertices(verts);
+            mesh.SetUVs(0, uvs);
+            mesh.SetTriangles(tris, 0);
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            filter.sharedMesh = mesh;
+            if (renderer.TryGetComponent<MeshCollider>(out var collider))
+                collider.sharedMesh = mesh;
+            Plugin.Log.LogInfo($"MapBuilder: level bounds wall rebuilt ({along:F0} m around, {height:F0} m tall)");
         }
 
         /// <summary>Replaces a container's splines with one straight-edged spline through the given world XZ points.</summary>

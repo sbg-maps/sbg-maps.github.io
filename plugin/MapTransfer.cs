@@ -85,6 +85,11 @@ namespace SbgMaps
         /// its send buffer, and that dropped players before).
         /// </summary>
         private const int Window = 512 * 1024;
+        /// <summary>
+        /// Most map data handed to one player per frame. Mirror packs everything sent to a player in a frame into one
+        /// Steam message, and Steam refuses messages over 512 KB; the game's transport then drops that player.
+        /// </summary>
+        private const int MaxBytesPerFrame = 128 * 1024;
         private const int AckEvery = 8;
         /// <summary>Give up on a player who confirms nothing for this long.</summary>
         private const float StallSeconds = 30f;
@@ -329,14 +334,16 @@ namespace SbgMaps
                     DevTools.Say($"Could not send map '{id}' to {PlayerName(conn)}; they can install it by hand");
                     yield break;
                 }
-                // Keep at most a window of unconfirmed data on the way.
-                while (i < total && (i - acked) * ChunkSize < Window)
+                // Keep at most a window of unconfirmed data on the way, and little enough per frame.
+                int sentThisFrame = 0;
+                while (i < total && (i - acked) * ChunkSize < Window && sentThisFrame < MaxBytesPerFrame)
                 {
                     int offset = i * ChunkSize;
                     int length = Math.Min(ChunkSize, bytes.Length - offset);
                     var data = new byte[length];
                     Buffer.BlockCopy(bytes, offset, data, 0, length);
                     conn.Send(new MapChunkMessage { id = id, index = i, total = total, data = data });
+                    sentThisFrame += length;
                     i++;
                 }
                 yield return null;

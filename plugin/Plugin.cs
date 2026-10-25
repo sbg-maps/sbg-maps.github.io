@@ -14,7 +14,7 @@ namespace SbgMaps
     {
         public const string Guid = "loafer.sbgmaps";
         public const string Name = "SbgMaps";
-        public const string Version = "0.2.0";
+        public const string Version = "0.3.0";
 
         internal static ManualLogSource Log;
         internal static Plugin Instance;
@@ -57,9 +57,15 @@ namespace SbgMaps
             // Steam comes up a moment after the main menu loads; raise its send limits before any lobby is hosted.
             SteamQueue.RaiseLimits();
             DevTools.Update();
+            MapPicker.Update();
+            MapWatcher.Update();
         }
 
-        private void OnGUI() => MapTransfer.DrawProgress();
+        private void OnGUI()
+        {
+            MapTransfer.DrawProgress();
+            MapPicker.OnGUI();
+        }
     }
 
     [HarmonyPatch(typeof(CourseCollection), nameof(CourseCollection.RuntimeInitialize))]
