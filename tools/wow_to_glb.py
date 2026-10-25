@@ -55,6 +55,13 @@ ARCHIVE_ORDER = ["patch-3", "patch-2", "patch", "wmo", "texture", "terrain", "mo
 PRESETS = {
     # Stormwind City with a ring of Elwynn Forest around it, in W coordinates (x north, y west), yards.
     "stormwind": {"map": "Azeroth", "box": (-9300.0, -40.0, -8200.0, 1180.0)},
+    # Open questing areas.
+    # Elwynn Forest: Goldshire, Northshire Abbey and the forest and farms between.
+    "elwynn": {"map": "Azeroth", "box": (-9750.0, -500.0, -8800.0, 450.0)},
+    # Westfall: Sentinel Hill, the Saldean and Furlbrow farms and the coast road.
+    "westfall": {"map": "Azeroth", "box": (-10950.0, 650.0, -10050.0, 1550.0)},
+    # Mulgore: Bloodhoof Village and the plains around it.
+    "mulgore": {"map": "Kalimdor", "box": (-2800.0, -800.0, -1900.0, 100.0)},
 }
 
 FOLIAGE = re.compile(r"tree|bush|shrub|plant|leaf|leaves|foliage|flower|grass|ivy|vine|fern|hedge|weed|canopy", re.I)
