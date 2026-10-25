@@ -1,6 +1,9 @@
 // The game mod, for the mod page (mod/index.html). Newest version first.
-// For every mod release: bump Version in plugin/Plugin.cs (+0.0.1 for small changes), add an entry here with the same
-// version, then run tools/publish_mod.sh, which uploads the zip that `download` points at.
+// For every mod release: bump Version in plugin/Plugin.cs, add an entry here with the same version, then run
+// tools/publish_mod.sh, which uploads the zip that `download` points at. Semantic versioning (major.minor.patch):
+//   major: older mods can no longer play new maps or join new lobbies (map format or network messages changed)
+//   minor: new features that still work alongside older maps
+//   patch: bug fixes only
 // Write for players: what they get in the game, a line each.
 export const MOD_VERSIONS = [
   {
