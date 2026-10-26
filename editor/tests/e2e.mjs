@@ -217,8 +217,16 @@ await test("new level: sculpt, paint, undo/redo, objects, paths, export", async 
   await page.click("#path-line");
   // Draw two extra points.
   await page.click("#path-draw");
-  await clickView(page, 0.6, 0.55);
-  await clickView(page, 0.62, 0.6);
+  // The islands are random, so a spot can be sea: try spots until two points land (waiting, as slow machines draw few frames).
+  const points = () => page.evaluate(() => window.__sbg.project.objects[0].userData.path.length);
+  const spots = [[0.6, 0.55], [0.62, 0.6], [0.4, 0.55], [0.45, 0.62], [0.55, 0.45], [0.42, 0.45], [0.5, 0.66], [0.58, 0.66]];
+  for (let added = 0; added < 2 && spots.length; ) {
+    const before = await points();
+    const [x, y] = spots.shift();
+    await clickView(page, x, y);
+    await page.waitForFunction((n) => window.__sbg.project.objects[0].userData.path.length > n, before, { timeout: 3000 }).catch(() => {});
+    if ((await points()) > before) added++;
+  }
   await page.keyboard.press("Escape");
   const pts = await page.evaluate(() => window.__sbg.project.objects[0].userData.path.length);
   assert(pts === 4, `expected 4 path points, got ${pts}`);
@@ -359,6 +367,41 @@ await test("zips: a map zipped with its folder, a zipped .sbgmap, zips in zips, 
   assert(typeof said === "string" && said.includes("only .zip"), `rar message: ${said}`);
 });
 
+await test("a level in parts: many OBJ files in one zip import together", async () => {
+  const enc = (text) => new TextEncoder().encode(text);
+  const { zipSync } = await import("fflate");
+  const files = {};
+  // Four rooms side by side, each its own OBJ with its own MTL and texture, in shared level coordinates.
+  for (let i = 0; i < 4; i++) {
+    const x = i * 20;
+    files[`Asylum/m${i}.obj`] = enc([`mtllib m${i}.mtl`, "vt 0 0", "vt 1 0", "vt 1 1", "vt 0 1", `usemtl room${i}`,
+      `v ${x} 0 0`, `v ${x + 20} 0 0`, `v ${x + 20} 0 20`, `v ${x} 0 20`, "f 1/1 3/3 2/2", "f 1/1 4/4 3/3"].join("\n"));
+    files[`Asylum/m${i}.mtl`] = enc(`newmtl room${i}\nmap_Kd room${i}.png\n`);
+    files[`Asylum/room${i}.png`] = new Uint8Array(png(8, 8, [40 * i, 120, 60, 255]));
+  }
+  // A sky dome around it all, like map rips often have: left out.
+  files["Asylum/sky.obj"] = enc(["v -3000 -500 -3000", "v 3000 -500 -3000", "v 0 2000 3000", "f 1 2 3"].join("\n"));
+  const zip = path.join(tmp, "parts.zip");
+  fs.writeFileSync(zip, zipSync(files));
+  const page = await freshPage(browser, url);
+  await page.setInputFiles("#import-files", zip);
+  await page.waitForSelector("#pick-model:not([hidden])", { timeout: 20000 });
+  assert(await page.$eval("#pick-model .choice.active", (b) => b.dataset.i === "all"), "All together is not the default for a level in parts");
+  await page.click('#pick-model [data-act="import"]');
+  await page.waitForFunction(() => window.__sbg.project, null, { timeout: 30000 });
+  const s = await page.evaluate(() => {
+    const p = window.__sbg.project;
+    const size = p.box.getSize(new window.__sbg.THREE.Vector3());
+    return { name: p.root.name, parts: p.root.children.length, materials: p.materials.length, textured: p.materials.filter((m) => m.material.map).length, ratio: size.x / size.z };
+  });
+  assert(s.name === "Asylum" && s.parts === 4 && s.materials === 4 && s.textured === 4, `parts import wrong: ${JSON.stringify(s)}`);
+  assert(Math.abs(s.ratio - 4) < 0.1, `parts not side by side (width/depth ${s.ratio})`);
+  const status = await page.textContent("#status");
+  assert(status.includes("4 parts") && status.includes("left out 1 sky"), `status: ${status}`);
+  assert(page.errors.length === 0, page.errors.join("; "));
+  await page.close();
+});
+
 await test("import an OBJ with MTL and texture, export, reopen", async () => {
   const dir = fs.existsSync(OPTIONAL.objFolder) ? OPTIONAL.objFolder : makeObjFixture();
   const files = fs.readdirSync(dir).filter((f) => !f.endsWith(".txt")).map((f) => path.join(dir, f));
@@ -426,7 +469,8 @@ await test("zipped game rip: pick the model, drop stacked layers, glow panels ad
   await page.setInputFiles("#open-file", zip); // a zipped model given to Open map works too
   await page.waitForSelector("#pick-model:not([hidden])", { timeout: 20000 });
   const choices = await page.$$eval("#pick-model .choice", (b) => b.map((x) => [x.textContent, x.classList.contains("active")]));
-  assert(choices.length === 2 && choices[0][0].startsWith("level.obj") && choices[0][1], `model choices: ${JSON.stringify(choices)}`);
+  // Two models: the biggest is picked (not "All together", which is for levels in many parts).
+  assert(choices.length === 3 && choices[0][0].startsWith("All 2 together") && !choices[0][1] && choices[1][0].startsWith("level.obj") && choices[1][1], `model choices: ${JSON.stringify(choices)}`);
   await page.click('#pick-model [data-act="import"]');
   await page.waitForFunction(() => window.__sbg.project, null, { timeout: 20000 });
   const s = await page.evaluate(() => {

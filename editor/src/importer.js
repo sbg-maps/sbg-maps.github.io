@@ -88,7 +88,7 @@ export async function importModel(fileList, modelFile = findModels(fileList)[0])
   try {
     switch (ext(modelFile.name)) {
       case ".obj":
-        root = await loadObj(manager, files, modelUrl);
+        root = await loadObj(manager, files, modelFile);
         break;
       case ".glb":
       case ".gltf":
@@ -112,6 +112,47 @@ export async function importModel(fileList, modelFile = findModels(fileList)[0])
   // glTF stores each texture's wrap mode; other formats assume repeating textures.
   normalizeMaterials(root, { keepWrap: [".glb", ".gltf"].includes(ext(modelFile.name)) });
   return { root, missing: [...missing], layers };
+}
+
+/**
+ * Loads several models into one level: map rips often come as many parts (one file per room or area) that already
+ * sit where they belong in the level's own coordinates.
+ */
+export async function importModels(fileList, modelFiles, name, onPart = () => {}) {
+  const root = new THREE.Group();
+  root.name = name;
+  const missing = new Set();
+  let layers = 0;
+  for (let i = 0; i < modelFiles.length; i++) {
+    onPart(i, modelFiles.length);
+    const part = await importModel(fileList, modelFiles[i]);
+    root.add(part.root);
+    part.missing.forEach((m) => missing.add(m));
+    layers += part.layers;
+  }
+  const backdrops = dropBackdrops(root);
+  return { root, missing: [...missing], layers, backdrops };
+}
+
+// A part this many times bigger than the typical part is a sky dome or far-off scenery around the level.
+const BACKDROP_SIZE = 15;
+
+/**
+ * Removes sky domes and distant backdrop scenery from a level in parts: they are kilometres across, would swallow the
+ * level in the view and in the game (which has its own sky), and throw off its size. Returns their names.
+ */
+function dropBackdrops(root) {
+  const parts = root.children.map((part) => ({ part, size: Math.max(...new THREE.Box3().setFromObject(part).getSize(new THREE.Vector3()).toArray()) }));
+  if (parts.length < 4) return [];
+  const sizes = parts.map((p) => p.size).sort((a, b) => a - b);
+  const median = sizes[Math.floor(sizes.length / 2)];
+  const dropped = parts.filter((p) => median > 0 && p.size > median * BACKDROP_SIZE);
+  if (dropped.length === parts.length) return [];
+  for (const { part } of dropped) {
+    part.removeFromParent();
+    part.traverse((o) => o.geometry?.dispose());
+  }
+  return dropped.map((p) => p.part.name);
 }
 
 /**
@@ -144,15 +185,27 @@ function samePositions(a, b) {
 
 const sameMatrix = (a, b) => a.matrix.equals(b.matrix);
 
-async function loadObj(manager, files, modelUrl) {
+async function loadObj(manager, files, modelFile) {
   const loader = new OBJLoader(manager);
-  const mtlFile = files.find((f) => ext(f.name) === ".mtl");
-  if (mtlFile) {
-    const materials = await new MTLLoader(manager).loadAsync(manager.resolveURL(mtlFile.name));
-    materials.preload();
-    loader.setMaterials(materials);
+  // The material files the OBJ names (mtllib), else the one with its name, else any: levels in parts each have their own.
+  const text = await modelFile.text();
+  const wanted = [...text.matchAll(/^mtllib\s+(.+?)\s*$/gm)].map((m) => base(m[1]));
+  const mtls = files.filter((f) => ext(f.name) === ".mtl");
+  const own = base(modelFile.name).replace(/\.obj$/, ".mtl");
+  let picked = mtls.filter((f) => wanted.includes(base(f.name)));
+  if (!picked.length) picked = mtls.filter((f) => base(f.name) === own);
+  if (!picked.length) picked = mtls.slice(0, 1);
+  if (picked.length) {
+    const combined = URL.createObjectURL(new Blob(await Promise.all(picked.map((f) => f.text().then((t) => t + "\n")))));
+    try {
+      const materials = await new MTLLoader(manager).loadAsync(combined);
+      materials.preload();
+      loader.setMaterials(materials);
+    } finally {
+      URL.revokeObjectURL(combined);
+    }
   }
-  return loader.loadAsync(modelUrl);
+  return loader.parse(text);
 }
 
 /**

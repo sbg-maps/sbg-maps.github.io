@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { loadFolder, loadZip, holeGrids, SURFACES } from "./mapfile.js";
-import { importModel, findModels, unpackZips, expandArchives } from "./importer.js";
+import { importModel, importModels, findModels, unpackZips, expandArchives } from "./importer.js";
 import { renderer, pick, pickCenter, hitMaterial, frameBox, scene, camera, controls, onFrame, frame } from "./scene.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { HeightmapView } from "./viewer.js";
@@ -140,12 +140,15 @@ async function openMap(map) {
   setStatus(`${map.manifest.name} by ${map.manifest.author || "unknown"}`);
 }
 
-async function openModel(picked) {
+async function openModel(picked, name = "Level") {
   const files = await unpackZips([...picked]);
   const models = findModels(files);
   const model = models.length > 1 ? await chooseModel(models) : models[0];
   if (models.length > 1 && !model) return setStatus("Import cancelled");
-  const { root, missing, layers } = await importModel(files, model);
+  const { root, missing, layers, backdrops = [] } =
+    model === ALL_MODELS
+      ? await importModels(files, models, name, (i, n) => setStatus(`Importing part ${i + 1} of ${n}...`))
+      : await importModel(files, model);
   clear();
   empty.hidden = true;
   flyBtn.hidden = false;
@@ -156,26 +159,36 @@ async function openModel(picked) {
   project.scale = Array.isArray(root.userData.worldOrigin) ? 1 : niceScale(DEFAULT_LEVEL_SIZE / Math.max(size.x, size.z));
   project.applyTransform();
   startEditing();
+  const parts = model === ALL_MODELS ? ` (${models.length - backdrops.length} parts${backdrops.length ? `, left out ${backdrops.length} sky and backdrop parts` : ""})` : "";
   const extra = layers ? ` (left out ${layers} stacked shadow/light layers)` : "";
-  setStatus(missing.length ? `Imported, but these files were missing: ${missing.join(", ")}` : `Imported ${root.name}${extra}`, missing.length > 0);
+  setStatus(missing.length ? `Imported, but these files were missing: ${missing.join(", ")}` : `Imported ${root.name}${parts}${extra}`, missing.length > 0);
 }
 
-/** Asks which of several model files to import; resolves to the File, or null if cancelled. */
+/** chooseModel's answer for "all of them, as one level". */
+const ALL_MODELS = "all";
+// From this many model files on, a download is most likely one level split into parts.
+const PARTS_FROM = 4;
+
+/** Asks which of several model files to import; resolves to the File, ALL_MODELS, or null if cancelled. */
 function chooseModel(models) {
   const dialog = document.getElementById("pick-model");
   const list = dialog.querySelector(".models");
   const mb = (n) => (n / 1048576 >= 0.1 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.ceil(n / 1024)} KB`);
-  list.innerHTML = models.map((m, i) => `<button class="choice ${i ? "" : "active"}" data-i="${i}">${esc(m.name)} <small>${mb(m.size)}</small></button>`).join("");
+  const together = models.length >= PARTS_FROM;
+  const total = models.reduce((a, m) => a + m.size, 0);
+  list.innerHTML =
+    `<button class="choice all ${together ? "active" : ""}" data-i="all">All ${models.length} together <small>one level, ${mb(total)}</small></button>` +
+    models.map((m, i) => `<button class="choice ${!together && !i ? "active" : ""}" data-i="${i}">${esc(m.name)} <small>${mb(m.size)}</small></button>`).join("");
   dialog.hidden = false;
-  let chosen = 0;
+  let chosen = together ? ALL_MODELS : 0;
   return new Promise((resolve) => {
     dialog.onclick = (e) => {
       const choice = e.target.closest(".choice");
       if (choice) {
-        chosen = Number(choice.dataset.i);
+        chosen = choice.dataset.i === "all" ? ALL_MODELS : Number(choice.dataset.i);
         list.querySelectorAll(".choice").forEach((c) => c.classList.toggle("active", c === choice));
       }
-      const done = e.target.closest("[data-act=import]") ? models[chosen] : e.target === dialog || e.target.closest("[data-act=cancel]") ? null : undefined;
+      const done = e.target.closest("[data-act=import]") ? (chosen === ALL_MODELS ? ALL_MODELS : models[chosen]) : e.target === dialog || e.target.closest("[data-act=cancel]") ? null : undefined;
       if (done === undefined) return;
       dialog.hidden = true;
       dialog.onclick = null;
@@ -215,7 +228,14 @@ async function openFiles(picked) {
   }
   const maps = entries.filter((e) => /\.sbgmap$/i.test(e.file.name));
   if (maps.length && !findModels(entries.map((e) => e.file)).length) return openMap(await loadZip(maps[0].file));
-  return openModel(entries.map((e) => e.file));
+  return openModel(entries.map((e) => e.file), levelName(picked, entries));
+}
+
+/** A name for a level made of several parts: the folder they are in, or the zip or folder that was opened. */
+function levelName(picked, entries) {
+  const model = entries.find((e) => findModels([e.file]).length);
+  const folder = model?.path.split("/").slice(-2, -1)[0];
+  return folder || picked[0]?.file.name.replace(/\.[^.]+$/, "") || "Level";
 }
 
 const asEntries = (fileList) => [...fileList].map((file) => ({ file, path: file.webkitRelativePath || file.name }));
