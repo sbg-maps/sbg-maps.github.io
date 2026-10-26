@@ -431,6 +431,38 @@ export class Project {
     return part;
   }
 
+  /** A copy of an object next to it (a few metres to the side), with the same settings. Returns the copy. */
+  duplicateObject(o) {
+    const copy = o.clone(true);
+    const base = this.billboardBase.get(o);
+    if (base) copy.quaternion.copy(base); // camera-facing objects are copied with their real rotation
+    copy.name = o.name;
+    const size = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3());
+    const offset = new THREE.Vector3(Math.max(2, size.x * 1.2), 0, 0);
+    const at = o.getWorldPosition(new THREE.Vector3()).add(offset);
+    o.parent.add(copy);
+    copy.position.copy(o.parent.worldToLocal(at));
+    copy.updateMatrixWorld(true);
+    this.collectMaterials();
+    this.rebuildMarkers();
+    return copy;
+  }
+
+  /** Largest side of an object in metres. */
+  objectSize(o) {
+    const size = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3());
+    return Math.max(size.x, size.y, size.z);
+  }
+
+  /** Resizes an object evenly (keeping its proportions) so its largest side is `metres` long. */
+  setObjectSize(o, metres) {
+    const now = this.objectSize(o);
+    if (!(now > 0) || !(metres > 0)) return;
+    o.scale.multiplyScalar(metres / now);
+    o.updateMatrixWorld(true);
+    this.rebuildMarkers();
+  }
+
   removePart(part) {
     part.removeFromParent();
     this.collectMaterials();

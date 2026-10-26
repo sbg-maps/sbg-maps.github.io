@@ -212,6 +212,26 @@ await test("new level: sculpt, paint, undo/redo, objects, paths, export", async 
   await page.click('.add-shape[data-shape="box"]');
   await page.selectOption("#obj-kind", "mover");
   await page.check("#obj-knocks");
+  // Even size: the largest side follows the box (3 m box to 6 m), proportions kept.
+  await page.fill("#obj-size", "6");
+  await page.dispatchEvent("#obj-size", "change");
+  const sized = await page.evaluate(() => {
+    const o = window.__sbg.project.objects[0];
+    const s = new window.__sbg.THREE.Box3().setFromObject(o).getSize(new window.__sbg.THREE.Vector3());
+    return [s.x, s.y, s.z].map((v) => Math.round(v * 10) / 10);
+  });
+  assert(sized.every((v) => v === 6), `box sized to ${sized}`);
+  // Duplicate (button, then Ctrl+D on the copy), undo takes the last copy away.
+  await page.click("#obj-duplicate");
+  await page.keyboard.press("Control+d");
+  const copies = () => page.evaluate(() => window.__sbg.project.objects.length);
+  assert((await copies()) === 3, `duplicates: ${await copies()} objects`);
+  const same = await page.evaluate(() => window.__sbg.project.objects.every((o) => o.userData.object === "mover" && o.userData.knocks));
+  assert(same, "copies lost their settings");
+  await page.keyboard.press("Control+z");
+  await page.keyboard.press("Control+z");
+  assert((await copies()) === 1, "undo did not take the copies away");
+  await page.click(".object .mat-name");
   const obj = await page.evaluate(() => window.__sbg.project.objects[0].userData);
   assert(obj.object === "mover" && obj.path?.length >= 2 && obj.knocks, `mover setup wrong: ${JSON.stringify(obj)}`);
   await page.click("#path-line");

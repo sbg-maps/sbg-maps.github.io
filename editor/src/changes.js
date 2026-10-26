@@ -2,6 +2,14 @@
 // Write for players: what they can do now in the editor, not how it works, and not mod or game news. Bump `id` for every new entry.
 export const CHANGES = [
   {
+    id: 9,
+    date: "2026-10-26",
+    items: [
+      "Objects have a <b>Duplicate</b> button (or Ctrl+D): a copy with the same settings appears next to it.",
+      "Objects have a <b>Size</b> slider and box (largest side in metres) that resizes them evenly, so imported models keep their proportions. The handles that stretch each side on its own are now called <b>Stretch</b>.",
+    ],
+  },
+  {
     id: 8,
     date: "2026-10-26",
     items: [

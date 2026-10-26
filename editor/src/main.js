@@ -317,7 +317,10 @@ window.addEventListener("keydown", (e) => {
     redo();
   } else if (e.key === "Escape" && tool === "path") setTool("look");
   else if (e.key === "Enter" && tool === "area" && project?.cutOutline?.length >= 3) cutArea();
-  else if ((e.key === "Delete" || e.key === "Backspace") && project && selectedObject && !isFlying()) {
+  else if (mod && e.key.toLowerCase() === "d" && project && selectedObject) {
+    e.preventDefault();
+    duplicateSelected();
+  } else if ((e.key === "Delete" || e.key === "Backspace") && project && selectedObject && !isFlying()) {
     // Delete the selected object (or cut-out piece); undo brings it back.
     e.preventDefault();
     const o = selectedObject;
@@ -1053,6 +1056,30 @@ function objectsPanel() {
       .join("") || `<p class="hint">No objects yet.</p>`}</div>`;
 }
 
+/**
+ * Even size of an object: its largest side in metres, on a slider (a tenth to ten times the size it has now) and in a
+ * box to type into. Keeps the object's proportions.
+ */
+function sizeSlider(o) {
+  const now = +project.objectSize(o).toPrecision(3);
+  const at = Math.log10(now);
+  return `<div class="field slider-field"><label for="obj-size-range">Size (largest side)</label>
+    <div class="slider-row">
+      <input type="range" id="obj-size-range" min="${at - 1}" max="${at + 1}" step="0.005" value="${at}" />
+      <input type="text" inputmode="decimal" class="slider-num" id="obj-size" value="${now}" aria-label="Size in metres" />
+      <span class="slider-unit">m</span>
+    </div></div>`;
+}
+
+/** Copies the selected object next to itself and selects the copy. */
+function duplicateSelected() {
+  if (!project || !selectedObject) return;
+  let copy;
+  history.record(() => (copy = project.duplicateObject(selectedObject)));
+  selectObject(copy);
+  setStatus(`Duplicated ${copy.name || "object"} (Ctrl+Z takes it away)`);
+}
+
 function selectedObjectPanel(o) {
   const d = o.userData;
   const kind = d.object ?? "static";
@@ -1062,8 +1089,10 @@ function selectedObjectPanel(o) {
   return `
     <div class="card">
       <div class="field"><label for="obj-name">Name</label><input id="obj-name" value="${esc(o.name)}" /></div>
+      ${sizeSlider(o)}
       <div class="row">
-        ${["translate", "rotate", "scale"].map((m) => `<button class="btn btn-secondary small gizmo-mode ${gizmo.mode === m ? "active-mode" : ""}" data-mode="${m}">${{ translate: "Move", rotate: "Rotate", scale: "Size" }[m]}</button>`).join("")}
+        ${["translate", "rotate", "scale"].map((m) => `<button class="btn btn-secondary small gizmo-mode ${gizmo.mode === m ? "active-mode" : ""}" data-mode="${m}">${{ translate: "Move", rotate: "Rotate", scale: "Stretch" }[m]}</button>`).join("")}
+        <button class="btn btn-secondary small" id="obj-duplicate" title="Copy it, with the same settings (Ctrl+D)">Duplicate</button>
       </div>
       <div class="field"><label for="obj-kind">Behaviour</label><select id="obj-kind">${BEHAVIOURS.map(([id, name]) => `<option value="${id}" ${id === kind ? "selected" : ""}>${name}</option>`).join("")}</select></div>
       ${pathed ? `
@@ -1083,7 +1112,7 @@ function selectedObjectPanel(o) {
         </div>
         <p class="hint">Paths start from where the object stands. ${points < 2 ? "Add at least 2 points." : ""}</p>` : ""}
       ${kind === "chomp" ? `<p class="hint">Hops around where you place it and lunges every few seconds. Touching it knocks players over.</p>` : ""}
-      ${kind === "outofbounds" ? `<p class="hint">A ball that lands inside this zone, or keeps falling through it, goes back to its player with a penalty stroke, like any out of bounds shot. Use it over holes and pits balls should not drop into. Players walk through it; it is invisible in the game. Resize it with Size.</p>` : ""}
+      ${kind === "outofbounds" ? `<p class="hint">A ball that lands inside this zone, or keeps falling through it, goes back to its player with a penalty stroke, like any out of bounds shot. Use it over holes and pits balls should not drop into. Players walk through it; it is invisible in the game. Size it with Stretch (each side on its own) or the Size slider.</p>` : ""}
       ${kind === "seesaw" ? `<p class="hint">Tilts toward players standing on it. Its long side should run front to back.</p>` : ""}
       ${kind === "jumppad" ? `
         ${slider("obj-jump-speed", "Launch speed (players)", d.launchSpeed ?? 103, { min: 5, max: 200, step: 1, unit: "m/s" })}
@@ -1187,6 +1216,26 @@ function wireObjects() {
     if (rerender) renderPanel();
   };
   info.querySelector("#obj-name").addEventListener("change", (e) => edit(() => (o.name = e.target.value)));
+  info.querySelector("#obj-duplicate").addEventListener("click", duplicateSelected);
+  // Size: follows the slider while dragging, one undo step per drag.
+  const sizeBox = info.querySelector("#obj-size");
+  let sizeBefore = null;
+  info.querySelector("#obj-size-range").addEventListener("input", (e) => {
+    sizeBefore ??= history.capture();
+    const v = +Math.pow(10, Number(e.target.value)).toPrecision(3);
+    sizeBox.value = v;
+    project.setObjectSize(o, v);
+  });
+  info.querySelector("#obj-size-range").addEventListener("change", () => {
+    history.commit(sizeBefore ?? history.capture());
+    sizeBefore = null;
+    renderPanel();
+  });
+  sizeBox.addEventListener("change", (e) => {
+    const v = readNumber(e.target.value);
+    if (v === null || v <= 0) return renderPanel();
+    edit(() => project.setObjectSize(o, v));
+  });
   info.querySelector("#obj-jump-speed")?.addEventListener("change", (e) => edit(() => (d.launchSpeed = Math.min(200, Math.max(5, Number(e.target.value) || 103)))));
   info.querySelector("#obj-jump-pitch")?.addEventListener("change", (e) => edit(() => (d.launchPitch = Math.min(90, Math.max(0, Number(e.target.value) || 0)))));
   info.querySelector("#obj-kind").addEventListener("change", (e) =>
