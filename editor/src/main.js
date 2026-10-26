@@ -410,16 +410,17 @@ function editViewHole(index) {
 
 // ---------- Tools ----------
 
-// Toolbar tools, in labelled groups: what makes the hole, things placed on it, editing the level, trying it out.
+// Toolbar tools, in labelled groups: what makes the hole, editing the level, trying it out. Boxes and carts are picked
+// in the Objects tab (with everything else placed on the level) and only show here while being placed.
 const PLACE_TOOLS = [
   { id: "look", name: "Look", tip: "Orbit around. Click the level to find its material, or an object to select it." },
   { id: "tee", group: "Hole", name: "Start", tip: "Click to place the Start: the tee, where players hit their first shot." },
   { id: "cup", group: "Hole", name: "Flag", tip: "Click to place the Flag: the hole (cup) players are aiming for." },
   { id: "checkpoints", group: "Hole", name: "Checkpoint", tip: "Click to add checkpoints, in order from the Start to the Flag: players come back to the furthest one they reached." },
   { id: "bounds", group: "Hole", name: "Play area", tip: "Click corners around the hole: balls that leave this area are out of bounds. Erase removes a corner." },
-  { id: "itemBoxes", group: "Objects", name: "Item box", tip: "Click to add item boxes (up to 64 per hole). Choose what they give in the Objects tab." },
-  { id: "redItemBoxes", group: "Objects", name: "Red box", tip: "Click to add red item boxes: they give the better movement items (like spring boots). Needs mod 0.4.1." },
-  { id: "golfCarts", group: "Objects", name: "Golf cart", tip: "Click to park a golf cart (it faces the Flag), or click and drag to aim it. Anyone can drive them. Needs mod 0.4.1." },
+  { id: "itemBoxes", group: "Placing", name: "Item box", tip: "Click to add item boxes (up to 64 per hole). Choose what they give in the Objects tab." },
+  { id: "redItemBoxes", group: "Placing", name: "Red box", tip: "Click to add red item boxes: they give the better movement items (like spring boots). Needs mod 0.4.1." },
+  { id: "golfCarts", group: "Placing", name: "Golf cart", tip: "Click to park a golf cart (it faces the Flag), or click and drag to aim it. Anyone can drive them. Needs mod 0.4.1." },
   { id: "area", group: "Level", name: "Cut area", tip: "Click corners around a part of the level (seen from above), then Cut it out: everything inside becomes an object you can move, resize or delete. Works on solid meshes too." },
   { id: "part", group: "Level", name: "Remove part", tip: "Click a part of the level to remove it: one file of a level imported in parts, or one named piece of a model (the outline shows what goes). Ctrl+Z brings it back." },
   { id: "piece", group: "Level", name: "Cut piece", tip: "Click a floating island (or any separate piece of an imported level) to cut it out as an object you can move, turn and resize. Ctrl+Z puts it back." },
@@ -465,7 +466,9 @@ function setTool(id) {
 }
 
 function renderToolbar() {
-  const tools = project?.terrain ? [...PLACE_TOOLS.slice(0, 1), ...TERRAIN_TOOLS, ...PLACE_TOOLS.slice(1)] : PLACE_TOOLS;
+  const all = project?.terrain ? [...PLACE_TOOLS.slice(0, 1), ...TERRAIN_TOOLS, ...PLACE_TOOLS.slice(1)] : PLACE_TOOLS;
+  // Boxes and carts are placed from the Objects tab; the toolbar only shows the one being placed.
+  const tools = all.filter((t) => !HOLE_OBJECTS.includes(t.id) || t.id === tool);
   toolbar.innerHTML =
     tools
       .map((t, i) => {

@@ -625,7 +625,7 @@ await test("music, volume, play area and hole picture: add, export, reopen", asy
     el.dispatchEvent(new Event("change", { bubbles: true }));
   });
   // Park a golf cart.
-  await page.click('button[data-tool="golfCarts"]');
+  await page.click('.place-tool[data-tool="golfCarts"]');
   await dragView(page, [[0.5, 0.55], [0.6, 0.55]], 20);
   await page.check('.items-own[data-key="redItems"]');
   // Right-click erases a red box standing on the level, but never the level under it.

@@ -19,7 +19,7 @@ export const CHANGES = [
     id: 6,
     date: "2026-10-26",
     items: [
-      "Tools are grouped in the toolbar: <b>Hole</b>, <b>Objects</b>, <b>Level</b>, <b>Try</b>. Item boxes, red boxes and golf carts are objects now: you find them, their counts and the items in the boxes in the <b>Objects</b> tab too.",
+      "Tools are grouped in the toolbar: <b>Hole</b>, <b>Level</b>, <b>Try</b>. Item boxes, red boxes and golf carts are objects now: pick them in the <b>Objects</b> tab, next to their counts and the items in the boxes.",
       "Right-click erases the box, cart or marker you point at (red boxes too), and never the level itself. A level piece is removed with Delete after selecting it.",
     ],
   },
