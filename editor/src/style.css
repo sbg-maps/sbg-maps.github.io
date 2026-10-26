@@ -861,8 +861,14 @@ button.btn {
 
 .choice-group.models {
   flex-direction: column;
+  flex-wrap: nowrap;
   max-height: 50vh;
+  overflow-x: hidden;
   overflow-y: auto;
+}
+
+.choice-group.models .choice {
+  flex: none;
 }
 
 .choice-group.models .choice {
