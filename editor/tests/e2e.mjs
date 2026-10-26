@@ -435,6 +435,13 @@ await test("a level in parts: many OBJ files in one zip import together", async 
     if ((await parts()) < 4) break;
   }
   assert((await parts()) === 3, `Remove part left ${await parts()} parts`);
+  // Removed for real: its mesh and texture leave the exported level.
+  const exported = await page.evaluate(async () => {
+    const glb = new Uint8Array(await window.__sbg.project.exportGlb());
+    const json = JSON.parse(new TextDecoder().decode(glb.subarray(20, 20 + new DataView(glb.buffer).getUint32(12, true))));
+    return { meshes: json.meshes.length, images: json.images?.length ?? 0 };
+  });
+  assert(exported.meshes === 3 && exported.images === 3, `export after removing a part: ${JSON.stringify(exported)}`);
   await page.keyboard.press("Control+z");
   assert((await parts()) === 4, "undo did not bring the part back");
   assert(page.errors.length === 0, page.errors.join("; "));
