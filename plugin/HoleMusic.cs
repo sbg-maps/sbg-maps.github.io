@@ -113,6 +113,16 @@ namespace SbgMaps
             return path;
         }
 
+        /// <summary>The playing song's volume as the map set it, before the player's own music volume setting.</summary>
+        private static float mapVolume = 1f;
+
+        /// <summary>Applies a changed music volume setting to the song that is playing.</summary>
+        public static void ApplyVolume()
+        {
+            if (channel.hasHandle())
+                channel.setVolume(mapVolume * Settings.MusicVolume.Value);
+        }
+
         private static void Play(string path, bool hurry, float volume)
         {
             Stop();
@@ -124,7 +134,8 @@ namespace SbgMaps
             bus.getChannelGroup(out var group);
             Check(core.playSound(sound, group, false, out channel), "play");
             AppDomain.CurrentDomain.SetData(SharedKey, new[] { channel.handle, sound.handle });
-            channel.setVolume(volume);
+            mapVolume = volume;
+            channel.setVolume(volume * Settings.MusicVolume.Value);
             if (hurry)
                 channel.setPitch(HurryPitch);
         }

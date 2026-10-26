@@ -10,17 +10,18 @@ namespace SbgMaps
 {
     /// <summary>
     /// Host-side dev hotkeys. Feedback goes to the in-game text chat (local only) and the BepInEx log.
+    /// F5 and F7 only work for a host alone in the lobby.
     ///   F5  restart the current hole (custom holes re-read their map files, so edits show up)
     ///   F7  skip to the next hole
     ///   F8  dump gameplay object positions to the log
-    ///   F9  save your golfer and the camera view to SbgMaps/golfer.glb for the map editor
+    ///   F9  save your character and the camera view to SbgMaps/my-character.glb for the map editor
     /// </summary>
     internal static class DevTools
     {
         public static void Update()
         {
             var kb = Keyboard.current;
-            if (kb == null)
+            if (kb == null || !Settings.HotKeys.Value)
                 return;
 
             if (kb.f5Key.wasPressedThisFrame)
@@ -48,10 +49,18 @@ namespace SbgMaps
 
         private static bool RequireHost()
         {
-            if (NetworkServer.active && SingletonNetworkBehaviour<CourseManager>.HasInstance)
-                return true;
-            Say("Only the host can do that, and only during a match");
-            return false;
+            if (!NetworkServer.active || !SingletonNetworkBehaviour<CourseManager>.HasInstance)
+            {
+                Say("Only the host can do that, and only during a match");
+                return false;
+            }
+            // Restarting or skipping a hole is for testing alone: with friends in the lobby it would cut their game short.
+            if (NetworkServer.connections.Values.Any(c => c != null && c != NetworkServer.localConnection))
+            {
+                Say("F5 and F7 only work when you are alone in the lobby");
+                return false;
+            }
+            return true;
         }
 
         public static void RestartHole()

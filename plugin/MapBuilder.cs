@@ -205,13 +205,19 @@ namespace SbgMaps
         /// and paint), never from meshes. So the terrain, otherwise bare sea floor under the level, is shaped to the
         /// level's top surface and painted with its surfaces, then hidden: it only feeds those estimates.
         /// </summary>
+        /// <summary>How far around the cup the estimate grid is held at cup height (the opening plus a grid cell).</summary>
+        private const float CupFillRadius = 1.5f;
+
         private static void MirrorLevelIntoTerrain(Terrain terrain, TerrainBuilder builder, Rect area, int groundMask, Vector3 cupPos)
         {
             Physics.SyncTransforms();
             var started = Time.realtimeSinceStartup;
             RaycastHit hit;
             bool Top(float wx, float wz) => Physics.Raycast(new Vector3(wx, 3000f, wz), Vector3.down, out hit, 6000f, groundMask, QueryTriggerInteraction.Ignore);
-            builder.Sculpt(area, 1f, (wx, wz) => Top(wx, wz) ? hit.point.y : SeaFloorHeight, SeaFloorHeight);
+            // Over the cup, a ray from above drops through the opening and finds nothing: that would be a pit in the
+            // estimate grid, and a putt aimed straight at the hole would roll into it and read as water.
+            bool AtCup(float wx, float wz) => (new Vector2(wx, wz) - new Vector2(cupPos.x, cupPos.z)).sqrMagnitude < CupFillRadius * CupFillRadius;
+            builder.Sculpt(area, 1f, (wx, wz) => AtCup(wx, wz) ? cupPos.y : Top(wx, wz) ? hit.point.y : SeaFloorHeight, SeaFloorHeight);
             var layers = new Dictionary<Collider, TerrainLayer>();
             builder.Paint(area, 0f, (wx, wz) =>
             {

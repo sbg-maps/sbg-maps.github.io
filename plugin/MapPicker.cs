@@ -10,15 +10,13 @@ using UnityEngine.UI;
 namespace SbgMaps
 {
     /// <summary>
-    /// "Test a map" on the title screen: pick any installed map hole and play it straight away. It hosts a lobby
+    /// "Custom maps" on the title screen: pick any installed map hole and play it straight away. It hosts a lobby
     /// as usual and, once the driving range is up, starts a course of just that hole.
     /// </summary>
     internal static class MapPicker
     {
         private const string ButtonName = "SbgMaps Test Map Button";
-        private const string Label = "Test a map";
-        /// <summary>The menu buttons are wired up in the scene; the lobby browser one is copied for ours.</summary>
-        private const string TemplateMethod = "OpenLobbyBrowser";
+        private const string Label = "Custom maps";
         private const float StartTimeoutSeconds = 60f;
 
         private static GameObject button;
@@ -46,37 +44,12 @@ namespace SbgMaps
                 TryStart();
         }
 
-        private static void TryAddButton()
-        {
-            var template = UnityEngine.Object.FindObjectsByType<Button>(FindObjectsInactive.Include, FindObjectsSortMode.None)
-                .FirstOrDefault(b => Enumerable.Range(0, b.onClick.GetPersistentEventCount()).Any(i => b.onClick.GetPersistentMethodName(i) == TemplateMethod));
-            if (template == null)
-                return;
-            var parent = template.transform.parent;
-            var existing = parent.Find(ButtonName);
-            if (existing != null)
-            {
-                button = existing.gameObject;
-                return;
-            }
-            button = UnityEngine.Object.Instantiate(template.gameObject, parent);
-            button.name = ButtonName;
-            button.transform.SetSiblingIndex(template.transform.GetSiblingIndex() + 1);
-            // Localized labels would put the template's text back.
-            foreach (var c in button.GetComponentsInChildren<MonoBehaviour>(true))
-                if (c.GetType().Name.Contains("Localize"))
-                    UnityEngine.Object.DestroyImmediate(c);
-            foreach (var text in button.GetComponentsInChildren<TMP_Text>(true))
-                text.text = Label;
-            var copy = button.GetComponent<Button>();
-            copy.onClick = new Button.ButtonClickedEvent();
-            copy.onClick.AddListener(() =>
+        private static void TryAddButton() =>
+            button = TitleButtons.Add(ButtonName, Label, 1, () =>
             {
                 MapWatcher.CheckNow();
                 open = true;
             });
-            Plugin.Log.LogInfo("Added 'Test a map' to the title screen");
-        }
 
         public static void OnGUI()
         {
@@ -92,7 +65,7 @@ namespace SbgMaps
             float width = Mathf.Min(720f, Screen.width - 40f), height = Mathf.Min(640f, Screen.height - 40f);
             var area = new Rect((Screen.width - width) / 2f, (Screen.height - height) / 2f, width, height);
             GUILayout.BeginArea(area, GUI.skin.box);
-            GUILayout.Label("Test a map", title, GUILayout.Height(44));
+            GUILayout.Label("Custom maps", title, GUILayout.Height(44));
             GUILayout.Label("Click a hole to play it right away. Your lobby works as usual, so friends can still join.", note);
             GUILayout.Space(8);
             scroll = GUILayout.BeginScrollView(scroll);
@@ -104,14 +77,21 @@ namespace SbgMaps
                 {
                     var hole = pack.Manifest.holes[i];
                     string name = string.IsNullOrWhiteSpace(hole.name) ? $"Hole {i + 1}" : hole.name;
-                    if (GUILayout.Button($"{pack.Manifest.name}   {i + 1}. {name}   (par {Mathf.Max(1, hole.par)})", row, GUILayout.Height(40)))
+                    if (GUILayout.Button($"{pack.Manifest.name}{(pack.IsPrivate ? " (private)" : "")}   {i + 1}. {name}   (par {Mathf.Max(1, hole.par)})", row, GUILayout.Height(40)))
                         Play(pack.Manifest.id, i);
                 }
             }
             GUILayout.EndScrollView();
             GUILayout.Space(8);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Mod settings", row, GUILayout.Height(40)))
+            {
+                open = false;
+                Settings.Open();
+            }
             if (GUILayout.Button("Back", row, GUILayout.Height(40)))
                 open = false;
+            GUILayout.EndHorizontal();
             GUILayout.EndArea();
         }
 

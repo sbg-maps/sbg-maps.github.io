@@ -7,6 +7,21 @@
 // Write for players: what they get in the game, a line each.
 export const MOD_VERSIONS = [
   {
+    version: "0.6.0",
+    date: "2026-10-26",
+    items: [
+      "Animated models: an imported model plays the animation chosen for it in the editor.",
+      "Maps whose file name starts with \"private\" stay on your computer: players who join you do not get them.",
+      "The Custom Maps course tab has its own icon and lists only map holes; the game's tabs list only the game's holes.",
+      "The game starts straight at the title screen, without the intro.",
+      "Test a map is now Custom maps on the title screen, with Mod settings inside it: the intro skip, the F5/F7/F9 keys and the volume of map music.",
+      "F5 (restart hole) and F7 (skip hole) only work when you are alone in the lobby.",
+      "F9 saves your character as SbgMaps/my-character.glb (in the game folder), for the map editor.",
+      "Fixed the swing bar showing water and losing the flag when aiming straight at the hole.",
+      "Players who walk or fall into an out of bounds zone are knocked out and respawn, like in the game's bottomless pits. Below the zone is still in bounds.",
+    ],
+  },
+  {
     version: "0.5.0",
     date: "2026-10-26",
     items: ["Out of bounds zones: balls that land in one, or fall through it into a pit, go back to their player with a penalty stroke."],

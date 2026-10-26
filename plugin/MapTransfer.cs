@@ -202,7 +202,7 @@ namespace SbgMaps
 
         public static void SendListTo(NetworkConnectionToClient conn)
         {
-            var maps = MapLibrary.Maps;
+            var maps = MapLibrary.Maps.Where(m => !m.IsPrivate).ToList();
             conn.Send(new MapListMessage
             {
                 ids = maps.Select(m => m.Manifest.id).ToArray(),
@@ -301,7 +301,7 @@ namespace SbgMaps
         private static void OnRequest(NetworkConnectionToClient conn, MapRequestMessage msg)
         {
             var pack = MapLibrary.Find(msg.id);
-            if (pack == null)
+            if (pack == null || pack.IsPrivate)
                 return;
             var bytes = ZipFor(pack);
             Plugin.Log.LogInfo($"Sending map '{pack.Manifest.id}' ({bytes.Length / 1024} KB) to connection {conn.connectionId}");

@@ -11,19 +11,19 @@ namespace SbgMaps
 {
     /// <summary>
     /// Saves the local player's golfer (as currently dressed and posed) plus the live camera setup to
-    /// &lt;game&gt;/SbgMaps/golfer.glb, so the map editor can show the real character and the real player view.
+    /// &lt;game&gt;/SbgMaps/my-character.glb, so the map editor can show the real character and the real player view.
     /// The file stays on the player's own computer.
     /// </summary>
     internal static class GolferExport
     {
-        public static string OutputPath => Path.Combine(Paths.GameRootPath, "SbgMaps", "golfer.glb");
+        public static string OutputPath => Path.Combine(Paths.GameRootPath, "SbgMaps", "my-character.glb");
 
         public static void Export()
         {
             var player = GameManager.LocalPlayerMovement;
             if (player == null)
             {
-                DevTools.Say("Join a match first, then press F9 to export your golfer");
+                DevTools.Say("Join a match first, then press F9 to save your character");
                 return;
             }
             var root = player.transform;
@@ -96,7 +96,7 @@ namespace SbgMaps
 
             Directory.CreateDirectory(Path.GetDirectoryName(OutputPath));
             File.WriteAllBytes(OutputPath, writer.Build(new { sbgGolfer = 1, playerHeight = height, camera }));
-            DevTools.Say($"Golfer saved to SbgMaps/golfer.glb ({parts} parts{(skipped > 0 ? $", {skipped} skipped" : "")}). Load it in the map editor.");
+            DevTools.Say($"Character saved in the game folder: SbgMaps/my-character.glb ({parts} parts{(skipped > 0 ? $", {skipped} skipped" : "")}). Load it in the map editor's Model tab.");
         }
 
         /// <summary>Minimal glTF binary writer for a handful of textured meshes.</summary>

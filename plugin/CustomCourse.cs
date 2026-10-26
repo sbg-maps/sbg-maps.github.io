@@ -121,6 +121,25 @@ namespace SbgMaps
             return true;
         }
 
+        /// <summary>The course's own badge in the course tabs (otherwise it shows the copied course's icon).</summary>
+        private static Sprite Icon => icon ??= LoadIcon();
+        private static Sprite icon;
+
+        private static Sprite LoadIcon()
+        {
+            using var stream = typeof(CustomCourse).Assembly.GetManifestResourceStream("SbgMaps.course-icon.png");
+            if (stream == null)
+                return null;
+            var bytes = new byte[stream.Length];
+            stream.Read(bytes, 0, bytes.Length);
+            var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false) { name = "SbgMaps course icon" };
+            texture.LoadImage(bytes);
+            return Sprite.Create(texture, new Rect(0, 0, texture.width, texture.height), new Vector2(0.5f, 0.5f), 100f);
+        }
+
+        /// <summary>Is this the custom maps course?</summary>
+        public static bool IsMapsCourse(CourseData c) => c != null && c == course;
+
         private static CourseData Inject(CourseCollection collection)
         {
             if (collection.Courses.Any(c => c.name == CourseName))
@@ -154,6 +173,8 @@ namespace SbgMaps
                 Traverse.Create(collection).Property("Courses").SetValue(collection.Courses.Append(course).ToArray());
             }
             course.OverrideHoles(holes);
+            if (Icon != null)
+                Traverse.Create(course).Property("CategoryIcon").SetValue(Icon);
             if (initialize)
             {
                 foreach (var hole in holes)

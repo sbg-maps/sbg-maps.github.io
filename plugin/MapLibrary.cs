@@ -20,6 +20,12 @@ namespace SbgMaps
         public MapManifest Manifest { get; private set; }
         public string Hash { get; private set; }
 
+        /// <summary>
+        /// A map whose file or folder name starts with "private" (like "private test.sbgmap") is never offered to
+        /// players who join: it is for the host's own testing.
+        /// </summary>
+        public bool IsPrivate => System.IO.Path.GetFileName(Path.TrimEnd('/', '\\')).StartsWith("private", StringComparison.OrdinalIgnoreCase);
+
         private MapPack(string path)
         {
             Path = path;
@@ -239,9 +245,15 @@ namespace SbgMaps
                 foreach (var other in ordered.Skip(1))
                     Plugin.Log.LogWarning($"Not using {other.pack.Path}: '{pack.Path}' has the same map id '{pack.Manifest.id}' and is {(other.downloaded && !ordered[0].downloaded ? "your own copy" : "newer")}");
             }
-            // Same order on every machine, so global hole indices line up between players.
-            Maps.Sort((a, b) => string.CompareOrdinal(a.Manifest.id, b.Manifest.id));
+            Maps.Sort(Order);
         }
+
+        /// <summary>
+        /// Same order on every machine, so global hole indices line up between players. Private maps come last: players
+        /// who join never get them, and holes after theirs would otherwise be numbered differently.
+        /// </summary>
+        private static int Order(MapPack a, MapPack b) =>
+            a.IsPrivate != b.IsPrivate ? (a.IsPrivate ? 1 : -1) : string.CompareOrdinal(a.Manifest.id, b.Manifest.id);
 
         public static MapPack Find(string id) => Maps.FirstOrDefault(m => m.Manifest.id == id);
 
@@ -250,7 +262,7 @@ namespace SbgMaps
         {
             Maps.RemoveAll(m => m.Manifest.id == pack.Manifest.id);
             Maps.Add(pack);
-            Maps.Sort((a, b) => string.CompareOrdinal(a.Manifest.id, b.Manifest.id));
+            Maps.Sort(Order);
         }
     }
 }

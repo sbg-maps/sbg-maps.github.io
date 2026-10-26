@@ -2,6 +2,15 @@
 // Write for players: what they can do now in the editor, not how it works, and not mod or game news. Bump `id` for every new entry.
 export const CHANGES = [
   {
+    id: 12,
+    date: "2026-10-26",
+    items: [
+      "<b>Animated models</b>: add a .glb, .fbx or .dae model that has animations (Objects tab, 3D model) and pick one in its <b>Animation</b> list. It plays here and loops in the game. An idle is picked by default; None makes it stand still. Needs mod 0.6.0.",
+      "Dropping a model onto an open level asks first: <b>Add as an object</b> or <b>Replace the level</b>.",
+      "<b>Your character</b>: press F9 in the game, then drop my-character.glb (SbgMaps in the game folder) onto the editor. The Golfer tool and Player view use it.",
+    ],
+  },
+  {
     id: 11,
     date: "2026-10-26",
     items: [

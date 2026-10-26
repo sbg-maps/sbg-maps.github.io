@@ -7,10 +7,12 @@ using UnityEngine;
 namespace SbgMaps
 {
     /// <summary>
-    /// Out of bounds zones (objects with extras.object "outofbounds"): invisible boxes that send balls back to their
-    /// player with a penalty stroke. They use the game's own ball trigger, so a ball that lands on ground inside one
-    /// is returned exactly like the game's out of bounds areas. The host also returns a ball that drops out through
-    /// the zone's bottom (into a pit) or is still inside after a moment without touching ground. Players pass through.
+    /// Out of bounds zones (objects with extras.object "outofbounds"): invisible boxes. Balls go back to their player
+    /// with a penalty stroke: the game's own ball trigger returns one that lands on ground inside, and the host returns
+    /// one that drops out through the bottom (into a pit) or stays inside a moment without touching ground. Players
+    /// whose chest is inside the box are knocked out like players falling into the game's fog pits, and respawn. Only
+    /// the box counts: below it (a doorway under a pit) is in bounds. The game's own pit hazards reach down forever,
+    /// which is why they are not used here.
     /// </summary>
     internal class MapOutOfBoundsZone : MonoBehaviour
     {
@@ -83,6 +85,37 @@ namespace SbgMaps
             var zone = GetComponent<BoxCollider>().bounds;
             if (ball.transform.position.y < zone.min.y + 0.5f)
                 SendBack(ball);
+        }
+
+        /// <summary>How often the host looks for players in the zone (seconds).</summary>
+        private const float PlayerCheckInterval = 0.1f;
+        private float nextPlayerCheck;
+        /// <summary>Players just knocked out, until their respawn has begun.</summary>
+        private readonly Dictionary<PlayerInfo, float> knockedOut = new Dictionary<PlayerInfo, float>();
+
+        private void Update()
+        {
+            if (!NetworkServer.active || Time.time < nextPlayerCheck)
+                return;
+            nextPlayerCheck = Time.time + PlayerCheckInterval;
+            var box = GetComponent<BoxCollider>();
+            if (box == null || PlayerMovement.NoClipEnabled)
+                return;
+            foreach (var player in Object.FindObjectsByType<PlayerInfo>(FindObjectsSortMode.None))
+            {
+                if (knockedOut.TryGetValue(player, out var at) && Time.time - at < 3f)
+                    continue;
+                if (player == null || player.Movement == null || player.AsGolfer == null || !player.AsGolfer.IsInitialized || player.Movement.IsRespawning || player.ActiveGolfCartSeat.IsValid())
+                    continue;
+                var chest = player.ChestBone != null ? player.ChestBone.position : player.transform.position + Vector3.up;
+                var local = transform.InverseTransformPoint(chest) - box.center;
+                var half = box.size / 2f;
+                if (Mathf.Abs(local.x) > half.x || Mathf.Abs(local.y) > half.y || Mathf.Abs(local.z) > half.z)
+                    continue;
+                Plugin.Log.LogInfo($"Out of bounds zone: {player.name} went in, knocked out");
+                knockedOut[player] = Time.time;
+                player.AsGolfer.ServerEliminate(EliminationReason.FellIntoFog);
+            }
         }
 
         private void FixedUpdate()

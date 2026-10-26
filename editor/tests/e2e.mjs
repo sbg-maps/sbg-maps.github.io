@@ -56,7 +56,7 @@ function makeObjFixture() {
  * A tiny rigged model as .glb: a 1 x 2 m strip on two bones (the top bone bends), with two animations, "Wave" and
  * "Idle". Written by hand like the PNG above.
  */
-function makeSkinnedGlb() {
+function makeSkinnedGlb(sceneExtras = null) {
   const f32 = (a) => Buffer.from(new Float32Array(a).buffer);
   const parts = [
     f32([-0.5, 0, 0, 0.5, 0, 0, -0.5, 1, 0, 0.5, 1, 0, -0.5, 2, 0, 0.5, 2, 0]), // positions
@@ -77,7 +77,7 @@ function makeSkinnedGlb() {
   const json = {
     asset: { version: "2.0" },
     scene: 0,
-    scenes: [{ nodes: [0] }],
+    scenes: [{ nodes: [0], ...(sceneExtras ? { extras: sceneExtras } : {}) }],
     nodes: [
       { name: "Rig", children: [1, 3] },
       { name: "Hip", children: [2] },
@@ -576,6 +576,39 @@ await test("a level stored z-up with .tga textures stands up, textured", async (
   await page.click('.tab[data-tab="model"]');
   await page.click("#tilt");
   assert((await page.evaluate(() => window.__sbg.project.tilt)) === 0, "Tip over did not go round");
+  assert(page.errors.length === 0, page.errors.join("; "));
+  await page.close();
+});
+
+await test("a character saved in the game loads as your character, not as a level, whatever its name", async () => {
+  const page = await freshPage(browser, url);
+  await page.click("#new-level-btn");
+  await page.click('[data-act="create"]');
+  await page.waitForFunction(() => window.__sbg.project?.terrain, null, { timeout: 20000 });
+  const before = await page.evaluate(() => window.__sbg.project.root.uuid);
+  await page.setInputFiles("#import-files", { name: "renamed.glb", mimeType: "model/gltf-binary", buffer: makeSkinnedGlb({ sbgGolfer: 1, playerHeight: 1.6 }) });
+  await page.waitForFunction(() => document.querySelector("#status").textContent.includes("Loaded your character"), null, { timeout: 10000 });
+  const after = await page.evaluate(() => window.__sbg.project.root.uuid);
+  assert(before === after, "the level was replaced");
+  // Any other model dropped onto the open level asks first; "Add as an object" keeps the level.
+  const drop = (name, bytes) =>
+    page.evaluate(
+      ([name, bytes]) => {
+        const dt = new DataTransfer();
+        dt.items.add(new File([new Uint8Array(bytes)], name));
+        window.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+      },
+      [name, [...bytes]],
+    );
+  await drop("waver.glb", makeSkinnedGlb());
+  await page.waitForSelector("#drop-model:not([hidden])", { timeout: 10000 });
+  await page.click('#drop-model [data-act="object"]');
+  await page.waitForFunction(() => window.__sbg.project.objects.length === 1, null, { timeout: 10000 });
+  assert((await page.evaluate(() => window.__sbg.project.root.uuid)) === before, "Add as an object replaced the level");
+  await drop("waver.glb", makeSkinnedGlb());
+  await page.waitForSelector("#drop-model:not([hidden])", { timeout: 10000 });
+  await page.click('#drop-model [data-act="level"]');
+  await page.waitForFunction((before) => window.__sbg.project.root.uuid !== before, before, { timeout: 10000 });
   assert(page.errors.length === 0, page.errors.join("; "));
   await page.close();
 });

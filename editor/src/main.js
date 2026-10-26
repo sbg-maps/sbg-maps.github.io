@@ -5,7 +5,7 @@ import { renderer, pick, pickCenter, pointerRay, hitMaterial, frameBox, scene, c
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { HeightmapView } from "./viewer.js";
 import { Project, MODEL_SURFACES, MARKERS, BASE_Y, MAX_PER_HOLE, MAX_SIZE, ITEMS } from "./project.js";
-import { golferInfo, loadGolferFile, restoreGolfer, onGolferChange } from "./golfer.js";
+import { golferInfo, loadGolferFile, restoreGolfer, onGolferChange, isCharacterFile } from "./golfer.js";
 import { PlayerView } from "./pov.js";
 import { Terrain } from "./terrain.js";
 import { History } from "./history.js";
@@ -222,7 +222,13 @@ const newSeed = () => (Math.random() * 1e9) | 0;
  * Decides what a set of picked or dropped files is: a map (a map folder or a .sbgmap, also inside zips) or a model
  * (with its textures, also zipped, even zips inside zips).
  */
-async function openFiles(picked) {
+async function openFiles(picked, { dropped = false } = {}) {
+  // A character saved with F9 in the game: it is the figure for the Golfer tool and Player view, not a level.
+  if (picked.length === 1 && (await isCharacterFile(picked[0].file))) {
+    await loadGolferFile(picked[0].file);
+    renderPanel();
+    return setStatus("Loaded your character: the Golfer tool and Player view use it now");
+  }
   // A .sbgmap on its own opens as it is (it is a zip, but should not be unpacked like a model download).
   if (picked.length === 1 && /\.sbgmap$/i.test(picked[0].file.name)) return openMap(await loadZip(picked[0].file));
   const entries = await expandArchives(picked);
@@ -235,7 +241,34 @@ async function openFiles(picked) {
   }
   const maps = entries.filter((e) => /\.sbgmap$/i.test(e.file.name));
   if (maps.length && !findModels(entries.map((e) => e.file)).length) return openMap(await loadZip(maps[0].file));
-  return openModel(entries.map((e) => e.file), levelName(picked, entries));
+  const files = entries.map((e) => e.file);
+  // Dropped onto an open level: it may well be meant as an object in it, so ask instead of replacing the level.
+  if (dropped && project && findModels(files).length) {
+    const choice = await askDropAction();
+    if (!choice) return setStatus("Nothing added");
+    if (choice === "object") {
+      const { root, missing } = await importModel(files);
+      await addObject({ root, size: 10 }, root.name);
+      if (missing.length) setStatus(`Added, but these files were missing: ${missing.join(", ")}`, true);
+      return;
+    }
+  }
+  return openModel(files, levelName(picked, entries));
+}
+
+/** Asks what a model dropped onto an open level is for: "object", "level", or null (cancelled). */
+function askDropAction() {
+  const dialog = document.getElementById("drop-model");
+  dialog.hidden = false;
+  return new Promise((resolve) => {
+    dialog.onclick = (e) => {
+      const act = e.target.closest("[data-act]")?.dataset.act ?? (e.target === dialog ? "cancel" : null);
+      if (!act) return;
+      dialog.hidden = true;
+      dialog.onclick = null;
+      resolve(act === "cancel" ? null : act);
+    };
+  });
 }
 
 /** A name for a level made of several parts: the folder they are in, or the zip or folder that was opened. */
@@ -282,7 +315,9 @@ window.addEventListener("drop", (e) => {
   dragDepth = 0;
   dropOverlay.hidden = true;
   const roots = [...e.dataTransfer.items].map((i) => i.webkitGetAsEntry?.()).filter(Boolean);
-  run("Opening", async () => openFiles((await Promise.all(roots.map((r) => readEntry(r, "")))).flat()));
+  // Without folder entries (some browsers, files dragged from other pages), the plain files still open.
+  const read = roots.length ? async () => (await Promise.all(roots.map((r) => readEntry(r, "")))).flat() : async () => asEntries(e.dataTransfer.files);
+  run("Opening", async () => openFiles(await read(), { dropped: true }));
 });
 
 async function readEntry(entry, prefix) {
@@ -435,7 +470,7 @@ const PLACE_TOOLS = [
   { id: "part", group: "Level", name: "Remove part", tip: "Click a part of the level to remove it: one file of a level imported in parts, or one named piece of a model (the outline shows what goes). Ctrl+Z brings it back." },
   { id: "piece", group: "Level", name: "Cut piece", tip: "Click a floating island (or any separate piece of an imported level) to cut it out as an object you can move, turn and resize. Ctrl+Z puts it back." },
   { id: "pov", group: "Try", name: "Player view", tip: "Click to stand there and see what a player sees (in the Player view window)." },
-  { id: "golfer", group: "Try", name: "Golfer", tip: "Click to drop a golfer (player-sized) anywhere, to judge the scale. Not saved into the map." },
+  { id: "golfer", group: "Try", name: "Golfer", tip: "Click to drop a player-sized figure anywhere, to judge the scale (not saved into the map). To use your own character: press F9 in the game, then drop my-character.glb (in the game folder, SbgMaps) onto the editor." },
   { id: "erase", group: "Erase", name: "Erase", tip: "Click a marker or golfer to remove it. With any tool, right-click a marker or placed object to erase it." },
 ];
 const TERRAIN_TOOLS = [
@@ -841,13 +876,13 @@ function modelPanel() {
     <div class="stats">${stat("Course area", `${sx} x ${sz} m`)}</div>
     ${Array.isArray(project.root.userData.worldOrigin) ? `<label class="btn btn-secondary small" tabindex="0" title="Another section of the same game world, placed where it really is">Add a section<input id="add-section" type="file" accept=".glb,.gltf,.zip" hidden /></label>
     <p class="hint">Sections of the same world line up by themselves. Holes can then be anywhere: each one takes the piece of the level around it.</p>` : ""}`}
-    <h3>Your golfer</h3>
+    <h3>Your character</h3>
     <p class="hint">${
       golferInfo().fromGame
-        ? `Using your golfer from the game (${golferInfo().height.toFixed(2)} m)${golferInfo().camera ? " and its camera" : ""}.`
-        : `Using a stand-in golfer (${golferInfo().height} m). In the game, press <b>F9</b> while playing to save your golfer and camera to <b>SbgMaps/golfer.glb</b>, then load it here. It stays on your computer.`
+        ? `Using your character from the game (${golferInfo().height.toFixed(2)} m)${golferInfo().camera ? " and its camera" : ""}.`
+        : `Using a stand-in character (${golferInfo().height} m). In the game, press <b>F9</b> while playing to save your character and camera to <b>my-character.glb</b> in the <b>SbgMaps</b> folder inside the game folder, then load it here. It stays on your computer.`
     }</p>
-    <label class="btn btn-secondary small" tabindex="0">Load golfer.glb<input id="golfer-file" type="file" accept=".glb" hidden /></label>
+    <label class="btn btn-secondary small" tabindex="0">Load my character<input id="golfer-file" type="file" accept=".glb" hidden /></label>
     <div class="row">${project.terrain ? "" : `<button class="btn btn-secondary small" id="rotate" title="Turn the level a quarter turn around the vertical">Rotate 90&deg;</button><button class="btn btn-secondary small" id="tilt" title="For levels lying on their side: tip it a quarter turn forward">Tip over 90&deg;</button>`}
     <label class="check"><input type="checkbox" id="overlay" ${project.surfaceOverlay ? "checked" : ""} /> Show surfaces</label></div>
     <h3>Surfaces</h3>
@@ -1138,7 +1173,7 @@ function selectedObjectPanel(o) {
         </div>
         <p class="hint">Paths start from where the object stands. ${points < 2 ? "Add at least 2 points." : ""}</p>` : ""}
       ${kind === "chomp" ? `<p class="hint">Hops around where you place it and lunges every few seconds. Touching it knocks players over.</p>` : ""}
-      ${kind === "outofbounds" ? `<p class="hint">A ball that lands inside this zone, or keeps falling through it, goes back to its player with a penalty stroke, like any out of bounds shot. Use it over holes and pits balls should not drop into. Players walk through it; it is invisible in the game. Size it with Stretch (each side on its own) or the Size slider.</p>` : ""}
+      ${kind === "outofbounds" ? `<p class="hint">Balls that land in this zone, or fall through it, go back to their player with a penalty stroke. Players who walk or fall into it are knocked out and respawn, like falling into the game's bottomless pits. Only the box counts: below it is still in bounds, so a doorway under a pit stays open. Put it over holes and pits nobody should drop into. It is invisible in the game. Size it with Stretch (each side on its own) or the Size slider.</p>` : ""}
       ${kind === "seesaw" ? `<p class="hint">Tilts toward players standing on it. Its long side should run front to back.</p>` : ""}
       ${kind === "jumppad" ? `
         ${slider("obj-jump-speed", "Launch speed (players)", d.launchSpeed ?? 103, { min: 5, max: 200, step: 1, unit: "m/s" })}

@@ -14,6 +14,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Resources/course-icon.png" LogicalName="SbgMaps.course-icon.png" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="$(BepInExCore)/BepInEx.dll" Private="false" />
     <Reference Include="$(BepInExCore)/0Harmony.dll" Private="false" />
     <Reference Include="$(Managed)/GameAssembly.dll" Private="false" />

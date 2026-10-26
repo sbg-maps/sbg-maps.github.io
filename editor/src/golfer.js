@@ -29,7 +29,21 @@ async function useGolferBytes(bytes) {
   for (const fn of listeners) fn(golfer);
 }
 
-/** Loads a golfer.glb picked by the user and remembers it in this browser. */
+/** Is this a character saved with F9 in the game (my-character.glb, or an older golfer.glb), whatever it is called now? */
+export async function isCharacterFile(file) {
+  if (!/\.glb$/i.test(file.name) || file.size < 20) return false;
+  const head = new DataView(await file.slice(0, 20).arrayBuffer());
+  if (head.getUint32(0, true) !== 0x46546c67) return false;
+  const length = head.getUint32(12, true);
+  try {
+    const json = JSON.parse(await file.slice(20, 20 + length).text());
+    return json.scenes?.some((s) => s.extras?.sbgGolfer) || /golfer export/i.test(json.asset?.generator ?? "");
+  } catch {
+    return false;
+  }
+}
+
+/** Loads a my-character.glb (or older golfer.glb) picked by the user and remembers it in this browser. */
 export async function loadGolferFile(file) {
   const bytes = await file.arrayBuffer();
   await useGolferBytes(bytes);
