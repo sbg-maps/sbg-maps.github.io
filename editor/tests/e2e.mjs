@@ -334,9 +334,14 @@ await test("import an OBJ with MTL and texture, export, reopen", async () => {
   assert(status.startsWith("Imported") && !status.includes("missing"), `import status: ${status}`);
   const textured = await page.evaluate(() => window.__sbg.project.materials.filter((m) => m.material.map).length);
   assert(textured > 0, "no textures loaded");
+  // Autosave reuses the level export until something in the level changes.
+  const sig0 = await page.evaluate(() => window.__sbg.project.levelSignature());
   await placeStartAndFlag(page);
+  assert((await page.evaluate(() => window.__sbg.project.levelSignature())) === sig0, "placing markers changed the level signature");
   await page.click('.tab[data-tab="model"]');
   await page.check(".material .climb input");
+  await page.waitForFunction((sig) => window.__sbg.project.levelSignature() !== sig, sig0, { timeout: 5000 }).catch(() => {});
+  assert((await page.evaluate(() => window.__sbg.project.levelSignature())) !== sig0, "a material change kept the old level export");
   await page.waitForFunction(() => window.__sbg.project.materials.some((m) => m.material.userData.climbable), null, { timeout: 5000 });
   // Transparency settings of the selected material.
   await page.click(".material .thumb");

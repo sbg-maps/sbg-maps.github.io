@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "fflate": "0.8.3",
-    "three": "0.186.1"
+    "three": "0.186.1",
+    "three-mesh-bvh": "0.9.16"
   },
   "devDependencies": {
     "playwright": "1.58.2",

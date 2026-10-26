@@ -2,6 +2,14 @@
 // Write for players: what they can do now in the editor, not how it works, and not mod or game news. Bump `id` for every new entry.
 export const CHANGES = [
   {
+    id: 5,
+    date: "2026-10-26",
+    items: [
+      "<b>Scale</b> has a slider, and the item chances in boxes are sliders too. Number boxes take 0,5 as well as 0.5.",
+      "Big imported levels run smoother: clicking on them is several times faster, autosave no longer stalls the editor, and long material lists show the first 60 (Show all lists the rest).",
+    ],
+  },
+  {
     id: 4,
     date: "2026-10-25",
     items: [

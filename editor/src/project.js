@@ -1,6 +1,6 @@
 // An editable model-based map (format 2): one imported level, surfaces per material, several holes on it.
 import * as THREE from "three";
-import { zipSync, strToU8 } from "fflate";
+import { zip, strToU8 } from "fflate";
 import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { scene, renderer, fromMap, toMap, disposeObject } from "./scene.js";
@@ -884,7 +884,7 @@ export class Project {
    * Builds the .sbgmap (zip) bytes: map.json plus level.glb and/or the terrain grids. With `previews`, each hole also
    * gets a picture for the game's match setup (left out of autosaves, which run often).
    */
-  async exportSbgmap({ previews = false, forGame = false } = {}) {
+  async exportSbgmap({ previews = false, forGame = false, autosave = false } = {}) {
     const files = {};
     const pictures = previews ? await this.renderPreviews() : [];
     pictures.forEach((bytes, i) => bytes && (files[`previews/hole${i + 1}.jpg`] = [bytes, { level: 0 }]));
@@ -894,7 +894,10 @@ export class Project {
     const regions = forGame && this.trims ? this.holes.map((h) => this.holeRegion(h)) : null;
     if (regions) {
       for (let i = 0; i < regions.length; i++) if (regions[i]) files[`hole${i + 1}.glb`] = new Uint8Array(await this.exportGlb({ region: regions[i] }));
-    } else if (withModel) files["level.glb"] = new Uint8Array(await this.exportGlb());
+    } else if (withModel) {
+      // Autosaves reuse the last level export while only markers or settings changed, and skip compressing it.
+      files["level.glb"] = autosave ? [new Uint8Array(await this.cachedGlb()), { level: 0 }] : new Uint8Array(await this.exportGlb());
+    }
     const grids = this.terrain?.exportGrids("terrain");
     if (grids) Object.assign(files, grids.files);
     const id = this.info.id || `${slug(this.info.author || "anon")}.${slug(this.info.name)}`;
@@ -942,7 +945,35 @@ export class Project {
     // Only songs something plays go in, stored as they are (they are compressed already).
     for (const name of this.usedSongs()) files[name] = [this.songs.get(name), { level: 0 }];
     for (const name of new Set(this.holes.map((h) => h.skyImage).filter((n) => n && this.skyImages.has(n)))) files[name] = [this.skyImages.get(name), { level: 0 }];
-    return zipSync({ "map.json": strToU8(JSON.stringify(manifest, null, 2)), ...files }, { level: 6 });
+    // Compressed in background workers, so the editor keeps running smoothly while big maps are packed.
+    const entries = { "map.json": strToU8(JSON.stringify(manifest, null, 2)), ...files };
+    return await new Promise((resolve, reject) => zip(entries, { level: 6 }, (err, data) => (err ? reject(err) : resolve(data))));
+  }
+
+  /** The level export, made again only when something in it changed since the last one (see levelSignature). */
+  async cachedGlb() {
+    const sig = this.levelSignature();
+    if (this.glbCache?.sig !== sig) this.glbCache = { sig, bytes: await this.exportGlb() };
+    return this.glbCache.bytes;
+  }
+
+  /** Everything exportGlb depends on, as a string: placement, objects, meshes and material settings. */
+  levelSignature() {
+    const plain = (data) => Object.entries(data).filter(([k, v]) => k !== "thumb" && (v === null || typeof v !== "object" || Array.isArray(v))).map(([k, v]) => `${k}=${v}`).join(",");
+    const parts = [this.realScale, this.rotation, ...this.pivot.position.toArray(), JSON.stringify(this.root.userData)];
+    const objects = new Set(this.objects);
+    for (const o of this.objects) {
+      const q = this.billboardBase.get(o) ?? o.quaternion; // camera-facing objects turn every frame in the view
+      parts.push(o.uuid, o.parent?.uuid, o.visible, ...o.position.toArray(), ...q.toArray(), ...o.scale.toArray(), JSON.stringify(o.userData));
+    }
+    this.root.traverse((o) => {
+      if (o.isMesh) parts.push(o.uuid, o.geometry.uuid, o.visible, o.parent?.uuid);
+      if (!objects.has(o)) parts.push(...o.position.toArray(), ...o.quaternion.toArray(), ...o.scale.toArray());
+    });
+    for (const { material, original } of this.materials) {
+      parts.push(material.uuid, plain(material.userData), material.color.getHexString(), original.map?.uuid, original.color.getHexString(), original.vertexColors);
+    }
+    return parts.join("|");
   }
 
   /** `songs` for map.json: settings of the given songs that differ from the defaults, or nothing. */

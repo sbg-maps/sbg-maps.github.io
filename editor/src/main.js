@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { loadFolder, loadZip, holeGrids, SURFACES } from "./mapfile.js";
 import { importModel, findModels, unpackZips } from "./importer.js";
-import { renderer, pick, pickCenter, hitMaterial, frameBox, scene, camera, controls, onFrame } from "./scene.js";
+import { renderer, pick, pickCenter, hitMaterial, frameBox, scene, camera, controls, onFrame, frame } from "./scene.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { HeightmapView } from "./viewer.js";
 import { Project, MODEL_SURFACES, MARKERS, BASE_Y, MAX_PER_HOLE, MAX_SIZE, ITEMS } from "./project.js";
@@ -102,6 +102,7 @@ function clear() {
   view = project = null;
   selectedMaterial = null;
   selectedMaterials.clear();
+  showAllMaterials = false;
   toolbar.hidden = true;
   scene.background = null;
   renderer.domElement.parentElement.style.background = "";
@@ -734,11 +735,15 @@ function wireTerrain() {
 }
 
 // Model / surfaces
+const MATERIALS_LISTED = 60;
+let showAllMaterials = false;
 function modelPanel() {
   const [sx, sz] = project.size;
+  // Levels can have a thousand materials: list the first ones (and any picked) until the mapper asks for all.
+  const shortList = !showAllMaterials && project.materials.length > MATERIALS_LISTED;
   const surfaceRows = project.materials
     .map(({ material }, i) =>
-      material.userData.invisible && material.userData.renderOnly
+      (material.userData.invisible && material.userData.renderOnly) || (shortList && i >= MATERIALS_LISTED && !selectedMaterials.has(material))
         ? ""
         : `<div class="material ${selectedMaterials.has(material) ? "selected" : ""}" data-i="${i}">
           <span class="thumb" style="${materialThumb(material)}"></span>
@@ -770,7 +775,8 @@ function modelPanel() {
     <p class="hint">${project.terrain ? "Surfaces of your objects and props (the terrain is painted in the Terrain tab)." : "Pick what each material plays as. Tip: click the level with Look to find a material."} Click a material for how its texture's transparency is drawn; Shift+click to pick several and change them together.${
       project.hasCollisionMesh ? " This level has a separate collision mesh: tick Show surfaces to see it." : ""
     }</p>
-    <div class="materials">${surfaceRows || `<p class="hint">Nothing here yet.</p>`}</div>`;
+    <div class="materials">${surfaceRows || `<p class="hint">Nothing here yet.</p>`}</div>
+    ${shortList ? `<button class="btn btn-secondary small" id="all-materials">Show all ${project.materials.length} materials</button>` : ""}`;
 }
 
 const ALPHA_MODES = [
@@ -823,6 +829,10 @@ function scaleSlider() {
 }
 
 function wireModel() {
+  info.querySelector("#all-materials")?.addEventListener("click", () => {
+    showAllMaterials = true;
+    renderPanel();
+  });
   const setScale = (v) => {
     project.realScale = Math.max(0.0001, v);
     project.applyTransform();
@@ -1550,7 +1560,7 @@ async function autosave() {
   if (!sig || sig === savedSignature || saving || stroke) return;
   saving = true;
   try {
-    const bytes = await project.exportSbgmap();
+    const bytes = await project.exportSbgmap({ autosave: true });
     await storePut(AUTOSAVE_KEY, { bytes, name: project.info.name, savedAt: Date.now() });
     savedSignature = sig;
   } catch (e) {
@@ -1648,7 +1658,7 @@ async function showWhatsNew() {
 showWhatsNew();
 
 // Test hook: lets the automated browser tests reach editor state.
-window.__sbg = { get project() { return project; }, history, autosave, THREE, frameBox, camera, controls };
+window.__sbg = { get project() { return project; }, history, autosave, THREE, frameBox, camera, controls, renderer, frame, renderPanel: () => renderPanel() };
 
 // Mod button: newest version and date; a "New" badge when this browser downloaded an older version.
 {

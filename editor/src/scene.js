@@ -2,6 +2,7 @@
 // Map coordinates (x right, z forward, Unity-style) are shown as three.js (x, y, -z).
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { MeshBVH, acceleratedRaycast } from "three-mesh-bvh";
 
 export const viewport = document.getElementById("viewport");
 
@@ -35,16 +36,35 @@ const afterRenderCallbacks = new Set();
 /** Extra render passes after the main view (e.g. the picture-in-picture player view). */
 export const afterRender = (fn) => afterRenderCallbacks.add(fn);
 
-renderer.setAnimationLoop((t) => {
+export function frame(t) {
   // Disabled while flying (it would turn the camera back to its orbit point).
   if (controls.enabled) controls.update();
   for (const fn of frameCallbacks) fn(t);
   renderer.render(scene, camera);
   for (const fn of afterRenderCallbacks) fn(renderer);
-});
+}
+renderer.setAnimationLoop(frame);
 
 export const toMap = (v) => ({ x: v.x, y: v.y, z: -v.z });
 export const fromMap = (p, y = p.y ?? 0) => new THREE.Vector3(p.x, y, -p.z);
+
+// Big meshes get a bounding volume tree the first time a ray tests them, so picking on levels with millions of
+// triangles takes a fraction of a millisecond instead of tens. Built "indirect" so the geometry itself (its triangle
+// order and material groups) is left untouched; rebuilt if the geometry is edited in place.
+const BVH_FROM_TRIANGLES = 2000;
+const bvhStamps = new WeakMap(); // not in userData: that would be exported into the map
+THREE.Mesh.prototype.raycast = function (raycaster, intersects) {
+  const g = this.geometry;
+  const triangles = (g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3;
+  if (triangles >= BVH_FROM_TRIANGLES && !this.isSkinnedMesh) {
+    const stamp = `${g.attributes.position.version}|${g.index?.version ?? -1}|${g.index?.count ?? 0}`;
+    if (!g.boundsTree || bvhStamps.get(g) !== stamp) {
+      g.boundsTree = new MeshBVH(g, { indirect: true });
+      bvhStamps.set(g, stamp);
+    }
+  }
+  return acceleratedRaycast.call(this, raycaster, intersects);
+};
 
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
