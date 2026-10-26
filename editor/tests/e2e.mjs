@@ -496,8 +496,10 @@ await test("music, volume, play area and hole picture: add, export, reopen", asy
   await page.click("#fit-bounds");
   // Choose the items in the boxes: start from the game's own, then set one.
   await page.check('.items-own[data-key="items"]');
-  await page.fill('.item-weight input[data-key="items"][data-item="Coffee"]', "40");
-  await page.dispatchEvent('.item-weight input[data-key="items"][data-item="Coffee"]', "change");
+  await page.$eval('.item-weight input[data-key="items"][data-item="Coffee"]', (el) => {
+    el.value = "40";
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  });
   // Park a golf cart.
   await page.click('button[data-tool="golfCarts"]');
   await dragView(page, [[0.5, 0.55], [0.6, 0.55]], 20);
@@ -615,6 +617,15 @@ await test("scale survives export and reopening", async () => {
   await page.setInputFiles("#import-files", fs.readdirSync(dir).map((f) => path.join(dir, f)));
   await page.waitForFunction(() => window.__sbg.project, null, { timeout: 20000 });
   await page.click('.tab[data-tab="model"]');
+  // The slider is logarithmic: halfway between 1 and 100 is 10.
+  await page.$eval("#scale-range", (el) => {
+    el.value = "1";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  assert((await page.inputValue("#scale")) === "10", `scale slider at 10^1 shows ${await page.inputValue("#scale")}`);
+  await page.fill("#scale", "0,5");
+  await page.dispatchEvent("#scale", "change");
+  assert((await page.evaluate(() => window.__sbg.project.realScale)) === 0.5, "a decimal comma did not set scale 0.5");
   await page.fill("#scale", "2.5");
   await page.dispatchEvent("#scale", "change");
   await placeStartAndFlag(page);

@@ -753,7 +753,7 @@ function modelPanel() {
   return `
     ${project.terrain ? "" : `
     <h3>Size</h3>
-    <div class="field"><label for="scale">Scale</label><input id="scale" type="number" min="0.0001" step="any" value="${+project.realScale.toPrecision(3)}" /></div>
+    ${scaleSlider()}
     <div class="stats">${stat("Course area", `${sx} x ${sz} m`)}</div>
     ${Array.isArray(project.root.userData.worldOrigin) ? `<label class="btn btn-secondary small" tabindex="0" title="Another section of the same game world, placed where it really is">Add a section<input id="add-section" type="file" accept=".glb,.gltf" hidden /></label>
     <p class="hint">Sections of the same world line up by themselves. Holes can then be anywhere: each one takes the piece of the level around it.</p>` : ""}`}
@@ -811,10 +811,39 @@ function together(el) {
   return selectedMaterials.has(material) ? [...selectedMaterials] : [material];
 }
 
+/** Scale slider: logarithmic (game levels can need 0.03 or 5.5), from a hundredth to a hundred times, plus a box to type in. */
+function scaleSlider() {
+  const scale = project.realScale;
+  const at = Math.log10(scale);
+  return `<div class="field slider-field"><label for="scale-range">Scale</label>
+    <div class="slider-row">
+      <input type="range" id="scale-range" min="${Math.min(-2, at)}" max="${Math.max(2, at)}" step="0.005" value="${at}" />
+      <input type="text" inputmode="decimal" class="slider-num" id="scale" value="${+scale.toPrecision(3)}" aria-label="Scale" />
+    </div></div>`;
+}
+
 function wireModel() {
-  info.querySelector("#scale")?.addEventListener("change", (e) => {
-    project.realScale = Math.max(0.0001, Number(e.target.value) || 1);
+  const setScale = (v) => {
+    project.realScale = Math.max(0.0001, v);
     project.applyTransform();
+  };
+  const scaleBox = info.querySelector("#scale");
+  info.querySelector("#scale-range")?.addEventListener("input", (e) => {
+    const v = niceScale(Math.pow(10, Number(e.target.value)));
+    scaleBox.value = v;
+    setScale(v);
+  });
+  info.querySelector("#scale-range")?.addEventListener("change", () => {
+    frameBox(project.box);
+    renderPanel();
+  });
+  scaleBox?.addEventListener("change", (e) => {
+    const v = readNumber(e.target.value);
+    if (v === null || v <= 0) {
+      e.target.value = +project.realScale.toPrecision(3);
+      return;
+    }
+    setScale(v);
     frameBox(project.box);
     renderPanel();
   });
@@ -1167,9 +1196,9 @@ function itemChoice(key, weights, label, usual) {
     ${weights
       ? `<div class="item-weights">${ITEMS.map((it) => {
           const w = weights[it.id] ?? 0;
-          return `<label class="item-weight ${w > 0 ? "on" : ""}"><span>${it.name}</span><input type="number" min="0" max="100" step="5" data-key="${key}" data-item="${it.id}" value="${w}" /><small>${total > 0 && w > 0 ? Math.round((w / total) * 100) + "%" : ""}</small></label>`;
+          return `<label class="item-weight ${w > 0 ? "on" : ""}"><span>${it.name}</span><input type="range" min="0" max="100" step="5" data-key="${key}" data-item="${it.id}" value="${w}" aria-label="${it.name}" /><small>${total > 0 && w > 0 ? Math.round((w / total) * 100) + "%" : ""}</small></label>`;
         }).join("")}</div>
-        <p class="hint">Each number is how often that item comes up compared to the others (0 = never). ${total > 0 ? "" : "<b class=\"bad\">Pick at least one item.</b>"}</p>`
+        <p class="hint">Each slider is how often that item comes up compared to the others (all the way left = never). ${total > 0 ? "" : "<b class=\"bad\">Pick at least one item.</b>"}</p>`
       : `<p class="hint">${usual}</p>`}`;
 }
 
@@ -1452,7 +1481,7 @@ function slider(id, label, value, { min, max, step = 1, unit = "", note = "" } =
   return `<div class="field slider-field"><label for="${id}">${label}</label>
     <div class="slider-row">
       <input type="range" id="${id}" data-slider min="${lo}" max="${hi}" step="${step}" value="${value}" />
-      <input type="number" class="slider-num" data-for="${id}" step="${step}" value="${value}" aria-label="${label}" />
+      <input type="text" inputmode="decimal" class="slider-num" data-for="${id}" value="${value}" aria-label="${label}" />
       ${unit ? `<span class="slider-unit">${unit}</span>` : ""}
     </div>${note ? `<p class="hint slider-note" id="${id}-note">${note}</p>` : ""}</div>`;
 }
@@ -1465,14 +1494,25 @@ info.addEventListener("input", (e) => {
 info.addEventListener("change", (e) => {
   if (!e.target.matches(".slider-num")) return;
   const range = document.getElementById(e.target.dataset.for);
-  const v = Number(e.target.value);
-  if (!range || !Number.isFinite(v)) return;
+  if (!range) return;
+  const v = readNumber(e.target.value);
+  if (v === null) {
+    e.target.value = range.value;
+    return;
+  }
+  e.target.value = v;
   // Typed values may go past the slider's ends.
   if (v < Number(range.min)) range.min = v;
   if (v > Number(range.max)) range.max = v;
   range.value = v;
   range.dispatchEvent(new Event("change", { bubbles: true }));
 });
+
+/** A typed number, with a decimal comma or point ("0,5" or "0.5"); null when it is not one. */
+function readNumber(text) {
+  const v = Number(String(text).trim().replace(",", "."));
+  return String(text).trim() !== "" && Number.isFinite(v) ? v : null;
+}
 
 function materialThumb(material) {
   const url = material.userData.thumb;

@@ -1026,6 +1026,8 @@ button.btn {
 }
 
 .slider-row .slider-num {
+  width: 100%;
+  min-width: 0;
   padding: 4px 6px;
   font-size: 13px;
 }
@@ -1063,14 +1065,14 @@ button.btn {
 
 .item-weights {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 4px 10px;
   margin: 6px 0;
 }
 
 .item-weight {
   display: grid;
-  grid-template-columns: 1fr 3.6em 2.6em;
+  grid-template-columns: 7.5em 1fr 2.6em;
   align-items: center;
   gap: 4px;
   font-size: 13px;
@@ -1083,8 +1085,9 @@ button.btn {
 }
 
 .item-weight input {
-  padding: 2px 4px;
-  font-size: 13px;
+  width: 100%;
+  min-width: 0;
+  accent-color: var(--grass-dark);
 }
 
 .item-weight small {
