@@ -2,6 +2,13 @@
 // Write for players: what they can do now in the editor, not how it works, and not mod or game news. Bump `id` for every new entry.
 export const CHANGES = [
   {
+    id: 8,
+    date: "2026-10-26",
+    items: [
+      "<b>Remove part</b> tool (Level group): click a part of the level to remove it, like one file of a level imported in parts or one named piece of a model. A yellow outline shows what goes; Ctrl+Z brings it back.",
+    ],
+  },
+  {
     id: 7,
     date: "2026-10-26",
     items: [

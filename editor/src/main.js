@@ -421,6 +421,7 @@ const PLACE_TOOLS = [
   { id: "redItemBoxes", group: "Objects", name: "Red box", tip: "Click to add red item boxes: they give the better movement items (like spring boots). Needs mod 0.4.1." },
   { id: "golfCarts", group: "Objects", name: "Golf cart", tip: "Click to park a golf cart (it faces the Flag), or click and drag to aim it. Anyone can drive them. Needs mod 0.4.1." },
   { id: "area", group: "Level", name: "Cut area", tip: "Click corners around a part of the level (seen from above), then Cut it out: everything inside becomes an object you can move, resize or delete. Works on solid meshes too." },
+  { id: "part", group: "Level", name: "Remove part", tip: "Click a part of the level to remove it: one file of a level imported in parts, or one named piece of a model (the outline shows what goes). Ctrl+Z brings it back." },
   { id: "piece", group: "Level", name: "Cut piece", tip: "Click a floating island (or any separate piece of an imported level) to cut it out as an object you can move, turn and resize. Ctrl+Z puts it back." },
   { id: "pov", group: "Try", name: "Player view", tip: "Click to stand there and see what a player sees (in the Player view window)." },
   { id: "golfer", group: "Try", name: "Golfer", tip: "Click to drop a golfer (player-sized) anywhere, to judge the scale. Not saved into the map." },
@@ -459,6 +460,7 @@ function setTool(id) {
     : { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
   setLookButtons(BRUSH_TOOLS.has(id) || id === "path" || id === "golfCarts" ? [2] : [0, 2]);
   brushCursor.visible = false;
+  partOutline.visible = false;
   if (!toolbar.hidden) renderToolbar();
 }
 
@@ -505,6 +507,21 @@ function cutArea() {
 }
 
 // Brush cursor.
+// Remove part: outlines the part under the pointer.
+const partOutline = new THREE.Box3Helper(new THREE.Box3(), 0xffd23f);
+partOutline.visible = false;
+scene.add(partOutline);
+renderer.domElement.addEventListener("pointermove", (e) => {
+  if (tool !== "part" || !project || e.buttons) {
+    partOutline.visible = false;
+    return;
+  }
+  const hit = pick(e, project.pickTargets);
+  const part = hit && project.partAt(hit.object);
+  partOutline.visible = !!part;
+  if (part) partOutline.box.setFromObject(part);
+});
+
 const brushCursor = new THREE.Mesh(new THREE.RingGeometry(0.94, 1, 48), new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, depthTest: false, transparent: true }));
 brushCursor.rotation.x = -Math.PI / 2;
 brushCursor.renderOrder = 10;
@@ -643,6 +660,13 @@ renderer.domElement.addEventListener("pointerup", (e) => {
     (project.cutOutline ??= []).push({ x: hit.point.x, y: hit.point.y, z: -hit.point.z });
     project.rebuildMarkers();
     renderToolbar();
+  } else if (tool === "part") {
+    const part = project.partAt(hit.object);
+    if (!part) return setStatus("Nothing to remove there: that is the whole level, or an object (right-click or Delete removes objects)", true);
+    history.record(() => project.removePart(part), { parts: [{ node: part, parent: part.parent }] });
+    partOutline.visible = false;
+    setStatus(`Removed ${part.name || "part"} (Ctrl+Z brings it back)`);
+    renderPanel();
   } else if (tool === "piece") {
     const piece = project.findPiece(hit);
     if (!piece) return setStatus("That is not a separate piece: it is joined to most of the level (or is an object already)", true);

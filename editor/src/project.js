@@ -412,6 +412,31 @@ export class Project {
   }
 
   /** Takes an object out of the level. Not disposed, so undo can put it back. */
+  /**
+   * The part of the level a hit belongs to: the child of the level holding it (one file of a level imported in parts,
+   * or one named object of a single model). Null for objects, and when that part is all there is of the level.
+   */
+  partAt(object) {
+    let part = object;
+    while (part && part.parent !== this.root) part = part.parent;
+    if (!part || part.userData.object) return null;
+    const withMeshes = this.root.children.filter((c) => !c.userData.object && hasMesh(c));
+    if (withMeshes.length < 2) {
+      // One model as a whole: its own named objects are the parts.
+      const inner = part.children.filter(hasMesh);
+      if (inner.length < 2) return null;
+      for (let o = object; o; o = o.parent) if (o.parent === part) return o;
+      return null;
+    }
+    return part;
+  }
+
+  removePart(part) {
+    part.removeFromParent();
+    this.collectMaterials();
+    this.rebuildMarkers();
+  }
+
   removeObject(object) {
     object.removeFromParent();
     this.collectMaterials();
@@ -1374,6 +1399,12 @@ function exportMaterial({ material, original }) {
   m.blending = THREE.NormalBlending;
   m.side = doubleSided ? THREE.DoubleSide : THREE.FrontSide;
   return m;
+}
+
+function hasMesh(node) {
+  let found = false;
+  node.traverse((o) => (found ||= !!o.isMesh));
+  return found;
 }
 
 /** Is this part of an out of bounds zone (seen in the editor, but nothing to stand on)? */

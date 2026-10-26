@@ -427,6 +427,16 @@ await test("a level in parts: many OBJ files in one zip import together", async 
   assert(Math.abs(s.ratio - 4) < 0.1, `parts not side by side (width/depth ${s.ratio})`);
   const status = await page.textContent("#status");
   assert(status.includes("4 parts") && status.includes("left out 1 sky"), `status: ${status}`);
+  // Remove part: click one room away, undo brings it back.
+  await page.click('button.tool[data-tool="part"]');
+  const parts = () => page.evaluate(() => window.__sbg.project.root.children.filter((c) => !c.userData.object).length);
+  for (const [x, y] of [[0.5, 0.55], [0.45, 0.5], [0.55, 0.5], [0.5, 0.45]]) {
+    await clickView(page, x, y);
+    if ((await parts()) < 4) break;
+  }
+  assert((await parts()) === 3, `Remove part left ${await parts()} parts`);
+  await page.keyboard.press("Control+z");
+  assert((await parts()) === 4, "undo did not bring the part back");
   assert(page.errors.length === 0, page.errors.join("; "));
   await page.close();
 });

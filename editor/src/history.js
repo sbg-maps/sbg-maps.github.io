@@ -1,4 +1,4 @@
-// Undo/redo by snapshots: holes, golfers, objects (incl. added/removed ones) and terrain.
+// Undo/redo by snapshots: holes, golfers, objects (incl. added/removed ones), removed level parts and terrain.
 const LIMIT = 60;
 
 export class History {
@@ -17,7 +17,7 @@ export class History {
   }
 
   /** Captures everything an edit could change. Terrain is only captured when asked (it is large). */
-  capture({ terrain = false, meshes = null } = {}) {
+  capture({ terrain = false, meshes = null, parts = null } = {}) {
     const p = this.getProject();
     if (!p) return null;
     return {
@@ -28,20 +28,22 @@ export class History {
       terrain: terrain && p.terrain ? p.terrain.snapshot() : null,
       // Level meshes an edit replaces the geometry of (cutting out a piece); geometries are swapped, never changed.
       meshes: meshes ? meshes.map((mesh) => ({ mesh, geometry: mesh.geometry })) : null,
+      // Level parts an edit takes out (Remove part): where each one hangs, or nowhere.
+      parts: parts ? parts.map(({ node, parent }) => ({ node, parent: node.parent ?? null, home: parent })) : null,
     };
   }
 
   /** Runs an edit and records it, so it can be undone. */
-  record(edit, { terrain = false, meshes = null } = {}) {
-    const before = this.capture({ terrain, meshes });
+  record(edit, { terrain = false, meshes = null, parts = null } = {}) {
+    const before = this.capture({ terrain, meshes, parts });
     edit();
-    this.commit(before, { terrain, meshes });
+    this.commit(before, { terrain, meshes, parts });
   }
 
   /** Records an edit whose "before" was captured earlier (e.g. at the start of a brush stroke or drag). */
-  commit(before, { terrain = false, meshes = null } = {}) {
+  commit(before, { terrain = false, meshes = null, parts = null } = {}) {
     if (!before) return;
-    const after = this.capture({ terrain, meshes });
+    const after = this.capture({ terrain, meshes, parts });
     this.undoStack.push({ before, after });
     if (this.undoStack.length > LIMIT) this.undoStack.shift();
     this.redoStack = [];
@@ -83,6 +85,10 @@ export class History {
     }
     if (state.terrain && p.terrain) p.terrain.restore(state.terrain);
     for (const { mesh, geometry } of state.meshes ?? []) mesh.geometry = geometry;
+    for (const { node, parent, home } of state.parts ?? []) {
+      if (parent && node.parent !== parent) home.add(node);
+      else if (!parent) node.removeFromParent();
+    }
     p.collectMaterials();
     p.rebuildMarkers();
     this.onChange?.();
