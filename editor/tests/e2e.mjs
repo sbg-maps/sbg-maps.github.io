@@ -20,7 +20,10 @@ const OPTIONAL = {
 
 let failures = 0;
 const results = [];
+// `node tests/e2e.mjs <text>` runs only the tests whose name contains the text.
+const only = process.argv[2]?.toLowerCase();
 async function test(name, fn) {
+  if (only && !name.toLowerCase().includes(only)) return;
   const started = Date.now();
   try {
     await fn();
@@ -47,6 +50,73 @@ function makeObjFixture() {
   fs.writeFileSync(path.join(dir, "level.mtl"), "newmtl grass\nKd 0.2 0.2 0.2\nmap_Kd grass.png\n");
   fs.writeFileSync(path.join(dir, "grass.png"), png(8, 8, [60, 180, 60, 255]));
   return dir;
+}
+
+/**
+ * A tiny rigged model as .glb: a 1 x 2 m strip on two bones (the top bone bends), with two animations, "Wave" and
+ * "Idle". Written by hand like the PNG above.
+ */
+function makeSkinnedGlb() {
+  const f32 = (a) => Buffer.from(new Float32Array(a).buffer);
+  const parts = [
+    f32([-0.5, 0, 0, 0.5, 0, 0, -0.5, 1, 0, 0.5, 1, 0, -0.5, 2, 0, 0.5, 2, 0]), // positions
+    Buffer.from(new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0])), // joints
+    f32([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]), // weights
+    Buffer.from(new Uint16Array([0, 1, 3, 0, 3, 2, 2, 3, 5, 2, 5, 4]).buffer), // indices
+    f32([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -1, 0, 1]), // inverse binds
+    f32([0, 1, 2]), // key times
+    f32([0, 0, 0, 1, 0, 0, 0.3827, 0.9239, 0, 0, 0, 1]), // Idle: bend 45 degrees and back
+    f32([0, 0, 0, 1, 0.3827, 0, 0, 0.9239, 0, 0, 0, 1]), // Wave
+  ];
+  let offset = 0;
+  const views = parts.map((b) => {
+    const v = { buffer: 0, byteOffset: offset, byteLength: b.length };
+    offset += b.length;
+    return v;
+  });
+  const json = {
+    asset: { version: "2.0" },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [
+      { name: "Rig", children: [1, 3] },
+      { name: "Hip", children: [2] },
+      { name: "Top", translation: [0, 1, 0] },
+      { name: "Body", mesh: 0, skin: 0 },
+    ],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0, JOINTS_0: 1, WEIGHTS_0: 2 }, indices: 3 }] }],
+    skins: [{ joints: [1, 2], inverseBindMatrices: 4 }],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: 6, type: "VEC3", min: [-0.5, 0, 0], max: [0.5, 2, 0] },
+      { bufferView: 1, componentType: 5121, count: 6, type: "VEC4" },
+      { bufferView: 2, componentType: 5126, count: 6, type: "VEC4" },
+      { bufferView: 3, componentType: 5123, count: 12, type: "SCALAR" },
+      { bufferView: 4, componentType: 5126, count: 2, type: "MAT4" },
+      { bufferView: 5, componentType: 5126, count: 3, type: "SCALAR", min: [0], max: [2] },
+      { bufferView: 6, componentType: 5126, count: 3, type: "VEC4" },
+      { bufferView: 7, componentType: 5126, count: 3, type: "VEC4" },
+    ],
+    bufferViews: views,
+    buffers: [{ byteLength: offset }],
+    animations: [
+      { name: "Wave", samplers: [{ input: 5, output: 7 }], channels: [{ sampler: 0, target: { node: 2, path: "rotation" } }] },
+      { name: "Idle", samplers: [{ input: 5, output: 6 }], channels: [{ sampler: 0, target: { node: 2, path: "rotation" } }] },
+    ],
+  };
+  const pad = (b, fill) => Buffer.concat([b, Buffer.alloc((4 - (b.length % 4)) % 4, fill)]);
+  const jsonChunk = pad(Buffer.from(JSON.stringify(json)), 0x20);
+  const bin = pad(Buffer.concat(parts), 0);
+  const header = Buffer.alloc(12);
+  header.writeUInt32LE(0x46546c67, 0);
+  header.writeUInt32LE(2, 4);
+  header.writeUInt32LE(12 + 8 + jsonChunk.length + 8 + bin.length, 8);
+  const chunk = (data, type) => {
+    const h = Buffer.alloc(8);
+    h.writeUInt32LE(data.length, 0);
+    h.writeUInt32LE(type, 4);
+    return Buffer.concat([h, data]);
+  };
+  return Buffer.concat([header, chunk(jsonChunk, 0x4e4f534a), chunk(bin, 0x004e4942)]);
 }
 
 /** Solid-colour PNG, written by hand to keep the tests dependency-free. */
@@ -387,6 +457,88 @@ await test("out of bounds zone: added from Objects, not ground for markers, expo
   const glb = unzipSync(new Uint8Array(fs.readFileSync(map)))["level.glb"];
   const json = JSON.parse(strFromU8(glb.subarray(20, 20 + new DataView(glb.buffer, glb.byteOffset + 12, 4).getUint32(0, true))));
   assert(json.nodes.some((n) => n.extras?.object === "outofbounds"), "exported level has no out of bounds node");
+  assert(page.errors.length === 0, page.errors.join("; "));
+  await page.close();
+});
+
+await test("animated model: plays the idle, other animation or none, exported with its bones, reopened playing", async () => {
+  const page = await freshPage(browser, url);
+  await page.click("#new-level-btn");
+  await page.click('[data-act="create"]');
+  await page.waitForFunction(() => window.__sbg.project?.terrain, null, { timeout: 20000 });
+  await page.click('.tab[data-tab="objects"]');
+  await page.setInputFiles("#add-prop", { name: "waver.glb", mimeType: "model/gltf-binary", buffer: makeSkinnedGlb() });
+  await page.waitForSelector("#obj-animation", { timeout: 10000 });
+  assert((await page.inputValue("#obj-animation")) === "Idle", `default animation: ${await page.inputValue("#obj-animation")}`);
+  // The top bone bends in the view (Idle turns it around z).
+  const bend = () =>
+    page.evaluate(() => {
+      let top;
+      window.__sbg.project.objects[0].traverse((n) => n.isBone && n.name === "Top" && (top = n));
+      return top ? Math.abs(top.quaternion.z) : -1;
+    });
+  await page.waitForFunction(() => {
+    let top;
+    window.__sbg.project.objects[0].traverse((n) => n.isBone && n.name === "Top" && (top = n));
+    return top && Math.abs(top.quaternion.z) > 0.05;
+  }, null, { timeout: 5000 });
+  await placeStartAndFlag(page);
+  const level = (file) => {
+    const glb = unzipSync(new Uint8Array(fs.readFileSync(file)))["level.glb"];
+    return JSON.parse(strFromU8(glb.subarray(20, 20 + new DataView(glb.buffer, glb.byteOffset + 12, 4).getUint32(0, true))));
+  };
+  const file = await exportMap(page, "animated.sbgmap");
+  const json = level(file);
+  const node = json.nodes.find((n) => n.extras?.object);
+  assert(json.skins?.length === 1, `exported skins: ${json.skins?.length}`);
+  assert(json.animations?.length === 1 && json.animations[0].name === node.extras.clip && node.extras.animation === "Idle", `exported clip: ${JSON.stringify(json.animations?.map((a) => a.name))} node ${JSON.stringify(node.extras)}`);
+  // None: back in its own pose, exported still.
+  await page.click('.tab[data-tab="objects"]');
+  await page.selectOption("#obj-animation", "");
+  assert((await bend()) < 0.001, "None left the model bent");
+  const still = level(await exportMap(page, "still.sbgmap"));
+  assert(!still.animations?.length && !still.skins?.length, "None still exported an animation");
+  await page.click('.tab[data-tab="objects"]');
+  await page.selectOption("#obj-animation", "Wave");
+  const waving = await exportMap(page, "waving.sbgmap");
+  await page.close();
+  const again = await freshPage(browser, url);
+  await again.setInputFiles("#open-file", waving);
+  await again.waitForFunction(() => window.__sbg.project, null, { timeout: 20000 });
+  await again.waitForFunction(() => {
+    let top;
+    window.__sbg.project.objects[0]?.traverse((n) => n.isBone && n.name === "Top" && (top = n));
+    return top && Math.abs(top.quaternion.x) > 0.05;
+  }, null, { timeout: 5000 });
+  const o = await again.evaluate(() => ({ clips: window.__sbg.project.objects[0].animations.map((c) => c.name), chosen: window.__sbg.project.objects[0].userData.animation }));
+  assert(o.chosen === "Wave" && o.clips.join() === "Wave", `reopened: ${JSON.stringify(o)}`);
+  assert(again.errors.length === 0, again.errors.join("; "));
+  await again.close();
+});
+
+await test("map file size: one copy of each picture, JPEG when not see-through, shared corners", async () => {
+  const dir = path.join(tmp, "dupes");
+  fs.mkdirSync(dir, { recursive: true });
+  // Two materials loading the same picture (each gets its own copy, as model loaders do), on a 2 x 2 grid of quads.
+  const v = [];
+  for (let z = 0; z <= 2; z++) for (let x = 0; x <= 2; x++) v.push(`v ${x * 50 - 50} 0 ${z * 50 - 50}`);
+  const quad = (i) => [i + 1, i + 2, i + 5, i + 4];
+  const faces = (q) => [`f ${q[0]}/1 ${q[1]}/2 ${q[2]}/3`, `f ${q[0]}/1 ${q[2]}/3 ${q[3]}/4`];
+  fs.writeFileSync(path.join(dir, "level.obj"), ["mtllib level.mtl", ...v, "vt 0 0", "vt 1 0", "vt 1 1", "vt 0 1", "usemtl a", ...faces(quad(0)), ...faces(quad(1)), "usemtl b", ...faces(quad(3)), ...faces(quad(4))].join("\n"));
+  fs.writeFileSync(path.join(dir, "level.mtl"), "newmtl a\nmap_Kd grass.png\nnewmtl b\nmap_Kd grass.png\n");
+  fs.writeFileSync(path.join(dir, "grass.png"), png(8, 8, [60, 180, 60, 255]));
+  const page = await freshPage(browser, url);
+  await page.setInputFiles("#import-files", fs.readdirSync(dir).map((f) => path.join(dir, f)));
+  await page.waitForFunction(() => window.__sbg.project, null, { timeout: 20000 });
+  const own = await page.evaluate(() => new Set(window.__sbg.project.materials.map((m) => m.original.map?.image)).size);
+  assert(own === 2, `fixture should load the picture twice, got ${own}`);
+  await placeStartAndFlag(page);
+  const { gltf } = readSbgmap(await exportMap(page, "dupes.sbgmap"));
+  assert(gltf.images.length === 1 && gltf.images[0].mimeType === "image/jpeg", `images: ${JSON.stringify(gltf.images.map((i) => i.mimeType))}`);
+  // Each quad's corners have their own texture positions: 16 corners, not 24 (and both materials share them).
+  const accessors = new Set(gltf.meshes.flatMap((m) => m.primitives.map((p) => p.attributes.POSITION)));
+  const corners = [...accessors].reduce((n, i) => n + gltf.accessors[i].count, 0);
+  assert(corners === 16, `8 triangles stored with ${corners} corners`);
   assert(page.errors.length === 0, page.errors.join("; "));
   await page.close();
 });

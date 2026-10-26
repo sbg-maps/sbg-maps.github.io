@@ -85,21 +85,29 @@ export async function importModel(fileList, modelFile = findModels(fileList)[0])
 
   const modelUrl = urls.get(base(modelFile.name));
   let root;
+  let clips = [];
   try {
     switch (ext(modelFile.name)) {
       case ".obj":
         root = await loadObj(manager, files, modelFile);
         break;
       case ".glb":
-      case ".gltf":
-        root = (await new GLTFLoader(manager).loadAsync(modelUrl)).scene;
+      case ".gltf": {
+        const gltf = await new GLTFLoader(manager).loadAsync(modelUrl);
+        root = gltf.scene;
+        clips = gltf.animations;
         break;
+      }
       case ".fbx":
         root = await new FBXLoader(manager).loadAsync(modelUrl);
+        clips = root.animations;
         break;
-      case ".dae":
-        root = (await new ColladaLoader(manager).loadAsync(modelUrl)).scene;
+      case ".dae": {
+        const dae = await new ColladaLoader(manager).loadAsync(modelUrl);
+        root = dae.scene;
+        clips = dae.animations ?? dae.scene.animations ?? [];
         break;
+      }
     }
     await waitUntilIdle(progress);
   } finally {
@@ -107,11 +115,26 @@ export async function importModel(fileList, modelFile = findModels(fileList)[0])
     setTimeout(() => urls.forEach((u) => URL.revokeObjectURL(u)), 5000);
   }
   root.name = modelFile.name.replace(/\.[^.]+$/, "");
+  root.animations = nameClips(clips ?? []);
   // glTF has proper multi-texture materials, and its stacked copies can be meant (invisible collision meshes).
   const layers = [".glb", ".gltf"].includes(ext(modelFile.name)) ? 0 : dropTextureLayers(root);
   // glTF stores each texture's wrap mode; other formats assume repeating textures.
   normalizeMaterials(root, { keepWrap: [".glb", ".gltf"].includes(ext(modelFile.name)) });
   return { root, missing: [...missing], layers };
+}
+
+/** Animations that move something, each with a name of its own (the animation list shows them by name). */
+function nameClips(clips) {
+  const seen = new Set();
+  return clips
+    .filter((c) => c.duration > 0 && c.tracks.length)
+    .map((c, i) => {
+      let name = (c.name || "").trim() || `Animation ${i + 1}`;
+      for (let n = 2; seen.has(name); n++) name = `${c.name} ${n}`;
+      seen.add(name);
+      c.name = name;
+      return c;
+    });
 }
 
 /**

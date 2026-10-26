@@ -3,6 +3,8 @@ import * as THREE from "three";
 import { zip, strToU8 } from "fflate";
 import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
+import { mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
 import { scene, renderer, fromMap, toMap, disposeObject } from "./scene.js";
 import { materialsOf, hasCutoutAlpha } from "./importer.js";
 import { makeGolfer, yawToRotation } from "./golfer.js";
@@ -99,6 +101,8 @@ export class Project {
     this.trimToHoles = false;
     /** Real rotations of camera-facing objects, which the editor turns toward the camera while showing them. */
     this.billboardBase = new WeakMap();
+    // Animated objects playing in the view: object -> { mixer, name, rest } (rest: node poses to go back to).
+    this.animators = new Map();
     this.collectMaterials();
     scene.add(this.pivot, this.markersGroup);
     if (terrain) scene.add(terrain.mesh);
@@ -252,6 +256,12 @@ export class Project {
     if (data) Object.assign(obj.userData, structuredClone(data));
     if (billboard) obj.userData.billboard = true;
     obj.add(model);
+    if (model.animations?.length) {
+      obj.animations = model.animations;
+      // Start with what looks like an idle, else the first; "None" in the object card stops it.
+      const clips = model.animations;
+      obj.userData.animation = (clips.find((c) => /^idle$/i.test(c.name)) ?? clips.find((c) => /idle|stand|breath/i.test(c.name)) ?? clips[0]).name;
+    }
     const box = new THREE.Box3().setFromObject(model);
     if (size != null) {
       // Imported models: centre on the footprint, bottom on the ground.
@@ -433,7 +443,10 @@ export class Project {
 
   /** A copy of an object next to it (a few metres to the side), with the same settings. Returns the copy. */
   duplicateObject(o) {
-    const copy = o.clone(true);
+    // A skinned model's copy needs bones of its own, or it would move with the original.
+    let skinned = false;
+    o.traverse((m) => (skinned ||= m.isSkinnedMesh));
+    const copy = skinned ? SkeletonUtils.clone(o) : o.clone(true);
     const base = this.billboardBase.get(o);
     if (base) copy.quaternion.copy(base); // camera-facing objects are copied with their real rotation
     copy.name = o.name;
@@ -446,6 +459,40 @@ export class Project {
     this.collectMaterials();
     this.rebuildMarkers();
     return copy;
+  }
+
+  /** The animation an object plays (its chosen clip), or null. */
+  clipOf(o) {
+    return (o.userData.animation && o.animations?.find((c) => c.name === o.userData.animation)) || null;
+  }
+
+  /** Chooses which of its animations an object plays (null: none, back in its own pose). */
+  setAnimation(o, name) {
+    if (name) o.userData.animation = name;
+    else delete o.userData.animation;
+    this.tickAnimations(0);
+  }
+
+  /** Moves animated objects on by `dt` seconds; starts and stops them as their choice changes. */
+  tickAnimations(dt) {
+    for (const [o, a] of this.animators) {
+      const clip = this.clipOf(o);
+      if (clip?.name === a.name && o.parent && isAncestor(this.root, o)) continue;
+      a.mixer.stopAllAction();
+      a.mixer.uncacheRoot(o);
+      for (const [node, p, q, s] of a.rest) (node.position.copy(p), node.quaternion.copy(q), node.scale.copy(s));
+      this.animators.delete(o);
+    }
+    for (const o of this.objects) {
+      const clip = o.animations?.length ? this.clipOf(o) : null;
+      if (!clip || this.animators.has(o)) continue;
+      const rest = [];
+      o.traverse((n) => n !== o && rest.push([n, n.position.clone(), n.quaternion.clone(), n.scale.clone()]));
+      const mixer = new THREE.AnimationMixer(o);
+      mixer.clipAction(clip).play();
+      this.animators.set(o, { mixer, name: clip.name, rest });
+    }
+    for (const a of this.animators.values()) a.mixer.update(dt);
   }
 
   /** Largest side of an object in metres. */
@@ -1066,9 +1113,11 @@ export class Project {
       const q = this.billboardBase.get(o) ?? o.quaternion; // camera-facing objects turn every frame in the view
       parts.push(o.uuid, o.parent?.uuid, o.visible, ...o.position.toArray(), ...q.toArray(), ...o.scale.toArray(), JSON.stringify(o.userData));
     }
+    // Nodes inside a playing animation move every frame; the export keeps their animation, not their pose.
+    const animated = [...this.animators.keys()];
     this.root.traverse((o) => {
       if (o.isMesh) parts.push(o.uuid, o.geometry.uuid, o.visible, o.parent?.uuid);
-      if (!objects.has(o)) parts.push(...o.position.toArray(), ...o.quaternion.toArray(), ...o.scale.toArray());
+      if (!objects.has(o) && !animated.some((a) => isAncestor(a, o))) parts.push(...o.position.toArray(), ...o.quaternion.toArray(), ...o.scale.toArray());
     });
     for (const { material, original } of this.materials) {
       parts.push(material.uuid, plain(material.userData), material.color.getHexString(), original.map?.uuid, original.color.getHexString(), original.vertexColors);
@@ -1248,6 +1297,7 @@ export class Project {
     // Export copies of the materials as players see them, so the live ones (and the view) are never touched while
     // the exporter runs; autosave runs this in the background while the mapper keeps editing.
     const copies = new Map(this.materials.map((entry) => [entry.material, exportMaterial(entry)]));
+    shareTextures([...copies.values()]);
     const exportMaterialOf = (m) => (Array.isArray(m) ? m.map((x) => copies.get(x) ?? x) : copies.get(m) ?? m);
     // Camera-facing objects are exported with their real rotation, not the one they show right now.
     for (const o of this.objects) {
@@ -1258,6 +1308,9 @@ export class Project {
     const objects = new Set(this.objects.filter((o) => o.visible && inRegion(o.matrixWorld.elements[12], o.matrixWorld.elements[14])));
     const skipped = new Set(this.objects.filter((o) => !objects.has(o)));
     const nodeFor = new Map();
+    const clips = [];
+    const animated = new Set();
+    const shared = new Set(); // copies of animated models share their geometry with the view: not disposed after
     for (const obj of objects) {
       const node = new THREE.Group();
       node.name = obj.name;
@@ -1267,6 +1320,37 @@ export class Project {
       node.userData = JSON.parse(JSON.stringify(obj.userData));
       out.add(node);
       nodeFor.set(obj, node);
+      const clip = this.clipOf(obj);
+      if (clip) {
+        // Animated: its bones and skinned meshes go in as they are, with the clip it plays (named per object).
+        const copy = SkeletonUtils.clone(obj);
+        const from = [];
+        const to = [];
+        obj.traverse((n) => from.push(n));
+        copy.traverse((n) => to.push(n));
+        const tracks = [];
+        for (const track of clip.tracks) {
+          const binding = THREE.PropertyBinding.parseTrackName(track.name);
+          const target = binding.objectName ? null : THREE.PropertyBinding.findNode(obj, binding.nodeName);
+          const i = from.indexOf(target);
+          if (i < 1 || !["position", "quaternion", "scale"].includes(binding.propertyName)) continue;
+          const t = track.clone();
+          t.name = `${to[i].uuid}.${binding.propertyName}`;
+          tracks.push(t);
+        }
+        if (tracks.length) {
+          const name = `${clips.length + 1} ${clip.name}`;
+          clips.push(new THREE.AnimationClip(name, clip.duration, tracks));
+          node.userData.clip = name;
+          for (const child of [...copy.children]) node.add(child);
+          node.traverse((m) => {
+            if (!m.isMesh) return;
+            m.material = exportMaterialOf(m.material);
+            shared.add(m);
+          });
+          animated.add(obj);
+        }
+      }
     }
     const inverse = new THREE.Matrix4();
     this.root.traverse((o) => {
@@ -1275,13 +1359,15 @@ export class Project {
       let owner = o;
       while (owner && !objects.has(owner) && owner !== this.root) owner = owner.parent;
       if (owner && !objects.has(owner) && this.objects.some((x) => (!x.visible || skipped.has(x)) && isAncestor(x, o))) return; // hidden or elsewhere
+      if (animated.has(owner)) return; // exported with its bones above
       const node = objects.has(owner) ? nodeFor.get(owner) : null;
       const matrix = node ? inverse.copy(owner.matrixWorld).invert().multiply(o.matrixWorld) : o.matrixWorld;
-      let geometry = o.geometry.clone().applyMatrix4(matrix);
+      let geometry = welded(o.geometry).clone().applyMatrix4(matrix);
       if (region && !node) {
         // Level triangles whose middle is in the hole's area, moved so the area starts at the origin.
         geometry = keepTriangles(geometry, (a, b, c) => inRegion((a.x + b.x + c.x) / 3, (a.z + b.z + c.z) / 3));
         if (!geometry) return;
+        geometry = mergeVertices(geometry); // keepTriangles hands back separate corners
         geometry.translate(shiftX, 0, shiftZ);
       }
       const mesh = new THREE.Mesh(geometry, exportMaterialOf(o.material));
@@ -1298,9 +1384,9 @@ export class Project {
       Object.assign(out.userData, { ...(this.root.userData.source ? { source: this.root.userData.source } : {}), ...(this.root.userData.map ? { map: this.root.userData.map } : {}), worldOrigin: [origin[0] - p.x, origin[1] - p.y, origin[2] - p.z] });
     }
     try {
-      return await new GLTFExporter().parseAsync(out, { binary: true });
+      return await new GLTFExporter().parseAsync(out, { binary: true, animations: clips, maxTextureSize: MAX_TEXTURE_SIZE });
     } finally {
-      out.traverse((o) => o.isMesh && o.geometry.dispose());
+      out.traverse((o) => o.isMesh && !shared.has(o) && o.geometry.dispose());
       copies.forEach((m) => m.dispose());
     }
   }
@@ -1319,7 +1405,7 @@ export class Project {
     for (const h of pieces) {
       const bytes = map.files.get(h.model.file);
       if (!bytes) throw new Error(`Missing ${h.model.file}`);
-      const piece = (await new GLTFLoader().parseAsync(bytes.slice().buffer, "")).scene;
+      const piece = withClips(await new GLTFLoader().parseAsync(bytes.slice().buffer, ""));
       piece.position.set(h.origin[0], 0, -h.origin[1]);
       root.add(piece);
     }
@@ -1335,7 +1421,7 @@ export class Project {
     if (m.model?.file) {
       const bytes = map.files.get(m.model.file);
       if (!bytes) throw new Error(`Missing ${m.model.file}`);
-      root = (await new GLTFLoader().parseAsync(bytes.slice().buffer, "")).scene;
+      root = withClips(await new GLTFLoader().parseAsync(bytes.slice().buffer, ""));
       root.traverse((o) => {
         for (const mat of materialsOf(o)) {
           mat.side = THREE.DoubleSide;
@@ -1387,6 +1473,18 @@ export class Project {
     project.rebuildMarkers();
     return project;
   }
+}
+
+/** A reopened level's scene, its animated objects given back the clip each one plays (by its saved name). */
+function withClips(gltf) {
+  gltf.scene.traverse((o) => {
+    const clip = o.userData.clip && gltf.animations.find((c) => c.name === o.userData.clip);
+    if (!clip) return;
+    clip.name = o.userData.animation ?? clip.name;
+    o.animations = [clip];
+    delete o.userData.clip;
+  });
+  return gltf.scene;
 }
 
 function isAncestor(ancestor, object) {
@@ -1448,6 +1546,78 @@ function exportMaterial({ material, original }) {
   m.blending = THREE.NormalBlending;
   m.side = doubleSided ? THREE.DoubleSide : THREE.FrontSide;
   return m;
+}
+
+// Textures bigger than this are made smaller in the map file: the game's view rarely needs more, downloads do.
+const MAX_TEXTURE_SIZE = 2048;
+
+/**
+ * Makes materials showing the same picture share one texture, so the file holds each picture once (models often load
+ * a texture again for every material that uses it, and a map rip can have hundreds of copies). Pictures of materials
+ * that are not see-through are saved as JPEG, a fraction of PNG's size.
+ */
+function shareTextures(materials) {
+  const shared = new Map();
+  for (const m of materials) {
+    const t = m.map;
+    if (!t?.image) continue;
+    const opaque = !m.transparent && !m.alphaTest;
+    const key = [imageKey(t.image), t.wrapS, t.wrapT, t.flipY, t.repeat.x, t.repeat.y, t.offset.x, t.offset.y, t.rotation, t.channel, opaque].join("|");
+    if (!shared.has(key)) {
+      const copy = t.clone();
+      copy.userData = { ...t.userData, ...(opaque ? { mimeType: "image/jpeg" } : {}) };
+      shared.set(key, copy);
+    }
+    m.map = shared.get(key);
+  }
+}
+
+const imageKeys = new WeakMap();
+let keyCanvas = null;
+
+/** Same key for images with the same pixels: their size plus a fingerprint of a 64 x 64 copy. Remembered per image. */
+function imageKey(image) {
+  if (typeof image !== "object") return String(image);
+  if (imageKeys.has(image)) return imageKeys.get(image);
+  let key;
+  try {
+    const w = image.width ?? 0;
+    const h = image.height ?? 0;
+    let bytes;
+    if (image.data) {
+      bytes = image.data; // raw pixels (DataTexture)
+    } else {
+      keyCanvas ??= Object.assign(document.createElement("canvas"), { width: 64, height: 64 });
+      const ctx = keyCanvas.getContext("2d", { willReadFrequently: true });
+      ctx.clearRect(0, 0, 64, 64);
+      ctx.drawImage(image, 0, 0, 64, 64);
+      bytes = ctx.getImageData(0, 0, 64, 64).data;
+    }
+    let hash = 2166136261;
+    const step = Math.max(1, Math.floor(bytes.length / 65536));
+    for (let i = 0; i < bytes.length; i += step) hash = Math.imul(hash ^ bytes[i], 16777619);
+    key = `${w}x${h}:${hash >>> 0}`;
+  } catch {
+    key = `own:${Math.random()}`; // unreadable: never shared
+  }
+  imageKeys.set(image, key);
+  return key;
+}
+
+const weldCache = new WeakMap();
+
+/**
+ * The geometry with corners that are the same in every way (place, normal, texture position) stored once. Imported
+ * models usually store each triangle's corners separately: three times the data. Remembered until the geometry changes.
+ */
+function welded(geometry) {
+  if (geometry.index) return geometry;
+  const stamp = `${geometry.attributes.position.version}|${geometry.attributes.position.count}`;
+  const cached = weldCache.get(geometry);
+  if (cached?.stamp === stamp) return cached.geometry;
+  const result = mergeVertices(geometry);
+  weldCache.set(geometry, { stamp, geometry: result });
+  return result;
 }
 
 function hasMesh(node) {

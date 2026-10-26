@@ -601,6 +601,14 @@ onFrame((now) => {
   project.terrain.brush(tool, hit.point.x, -hit.point.z, { radius: brush.radius, strength: brush.strength, surface: brush.surface, target: stroke.target, dt });
 });
 
+// Animated objects play their chosen animation in the view.
+let lastFrame = null;
+onFrame((now) => {
+  const dt = lastFrame == null ? 0 : Math.min(0.1, (now - lastFrame) / 1000);
+  lastFrame = now;
+  project?.tickAnimations(dt);
+});
+
 // Pictures marked "face the camera" turn toward it (around the vertical axis), as they will in the game.
 const tmpQ = new THREE.Quaternion();
 const tmpV = new THREE.Vector3();
@@ -1095,6 +1103,10 @@ function selectedObjectPanel(o) {
         ${["translate", "rotate", "scale"].map((m) => `<button class="btn btn-secondary small gizmo-mode ${gizmo.mode === m ? "active-mode" : ""}" data-mode="${m}">${{ translate: "Move", rotate: "Rotate", scale: "Stretch" }[m]}</button>`).join("")}
         <button class="btn btn-secondary small" id="obj-duplicate" title="Copy it, with the same settings (Ctrl+D)">Duplicate</button>
       </div>
+      ${o.animations?.length ? `<div class="field"><label for="obj-animation">Animation</label><select id="obj-animation">
+        <option value="">None (stands still)</option>
+        ${o.animations.map((c) => `<option value="${esc(c.name)}" ${c.name === d.animation ? "selected" : ""}>${esc(c.name)} (${round2(c.duration)} s)</option>`).join("")}
+      </select></div>` : ""}
       <div class="field"><label for="obj-kind">Behaviour</label><select id="obj-kind">${BEHAVIOURS.map(([id, name]) => `<option value="${id}" ${id === kind ? "selected" : ""}>${name}</option>`).join("")}</select></div>
       ${pathed ? `
         ${slider("obj-speed", "Speed", round2((d.speed ?? DEFAULTS[kind].speed / s) * s), { min: 0.5, max: 60, step: 0.5, unit: "m/s" })}
@@ -1252,6 +1264,7 @@ function wireObjects() {
   });
   info.querySelector("#obj-jump-speed")?.addEventListener("change", (e) => edit(() => (d.launchSpeed = Math.min(200, Math.max(5, Number(e.target.value) || 103)))));
   info.querySelector("#obj-jump-pitch")?.addEventListener("change", (e) => edit(() => (d.launchPitch = Math.min(90, Math.max(0, Number(e.target.value) || 0)))));
+  info.querySelector("#obj-animation")?.addEventListener("change", (e) => edit(() => project.setAnimation(o, e.target.value || null)));
   info.querySelector("#obj-kind").addEventListener("change", (e) =>
     edit(() => {
       d.object = e.target.value;

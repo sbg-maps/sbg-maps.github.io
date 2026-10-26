@@ -2,6 +2,13 @@
 // Write for players: what they can do now in the editor, not how it works, and not mod or game news. Bump `id` for every new entry.
 export const CHANGES = [
   {
+    id: 10,
+    date: "2026-10-26",
+    items: [
+      "Map files are much smaller: a picture used by many materials is saved once, pictures that are not see-through are saved as JPEG, very large ones are made 2048 pixels at most, and models are stored more compactly. A Dark Souls level went from 460 MB to 34 MB. Export your map again to get the smaller file.",
+    ],
+  },
+  {
     id: 9,
     date: "2026-10-26",
     items: [

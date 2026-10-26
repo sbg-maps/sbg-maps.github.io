@@ -55,7 +55,44 @@ namespace SbgMaps
             public float[] Position;    // map coordinates
             public float[] Rotation;    // quaternion xyzw, Unity convention
             public float[] Scale;
-            public readonly List<Primitive> Primitives = new List<Primitive>(); // object-local, map axes
+            public readonly List<Primitive> Primitives = new List<Primitive>(); // object-local, map axes; skinned meshes posed as exported
+            /// <summary>Its node tree, meshes and the clip it plays (extras.clip), or null when it does not move by itself.</summary>
+            public Rig Rig;
+        }
+
+        /// <summary>An animated object: its nodes (below the object's own), what they draw, and one looping clip.</summary>
+        public class Rig
+        {
+            public readonly List<RigNode> Nodes = new List<RigNode>();
+            public readonly List<RigMesh> Meshes = new List<RigMesh>();
+            public readonly List<RigChannel> Channels = new List<RigChannel>();
+            public float Duration;
+        }
+
+        public class RigNode
+        {
+            public string Name;
+            public int Parent = -1;     // rig node index, -1 for the object itself
+            public float[] Position, Rotation, Scale; // local, Unity convention
+        }
+
+        public class RigMesh
+        {
+            public int Node;
+            public Primitive Primitive; // in the node's own space (skinned: the skin's bind space)
+            public int[] Joints;        // 4 rig node indices per vertex, or null when not skinned
+            public float[] Weights;     // 4 per vertex
+            public int[] Bones;         // rig node index per skin joint
+            public float[][] Bindposes; // per skin joint, 16 floats column-major, Unity convention
+        }
+
+        public class RigChannel
+        {
+            public int Node;
+            public string Path;         // translation, rotation or scale
+            public float[] Times;
+            public float[] Values;      // 3 or 4 per key, Unity convention
+            public bool Step;
         }
 
         public class Model
@@ -169,11 +206,16 @@ namespace SbgMaps
                     owner = MakeObject(node, world);
                     model.Objects.Add(owner);
                     world = Identity(); // the object's own geometry is kept in its local space
+                    relative = Relative(index);
+                    if (node["extras"]?["clip"] is JValue clip && clip.Type == JTokenType.String)
+                        owner.Rig = ReadRig(index, (string)clip);
                 }
                 var meshIndex = (int?)node["mesh"];
+                // A skinned mesh is drawn where its joints put it (glTF ignores the mesh node's own transform).
+                var skin = owner != null && node["skin"] != null ? SkinMatrices((int)node["skin"]) : null;
                 if (meshIndex.HasValue)
                     foreach (JObject p in (JArray)Arr("meshes")[meshIndex.Value]["primitives"])
-                        ReadPrimitive(p, world, owner?.Primitives ?? model.Primitives);
+                        ReadPrimitive(p, world, owner?.Primitives ?? model.Primitives, skin);
                 if (node["children"] is JArray children)
                     foreach (var c in children)
                         VisitNode((int)c, world, owner);
@@ -181,6 +223,13 @@ namespace SbgMaps
 
             /// <summary>Converts a glTF world matrix to map/Unity position, rotation and scale (z is flipped on both sides).</summary>
             private static SceneObject MakeObject(JToken node, double[] w)
+            {
+                var (t, r, sc) = ToUnity(w);
+                return new SceneObject { Name = (string)node["name"] ?? "object", Extras = (JObject)node["extras"], Position = t, Rotation = r, Scale = sc };
+            }
+
+            /// <summary>A glTF matrix as Unity position, rotation (xyzw) and scale.</summary>
+            private static (float[] t, float[] r, float[] s) ToUnity(double[] w)
             {
                 // U = C * W * C with C = diag(1, 1, -1): negate the elements that mix z with x/y.
                 double[] u = (double[])w.Clone();
@@ -214,17 +263,155 @@ namespace SbgMaps
                     double s = Math.Sqrt(1.0 + m22 - m00 - m11) * 2;
                     qw = (m10 - m01) / s; qx = (m02 + m20) / s; qy = (m12 + m21) / s; qz = 0.25 * s;
                 }
-                return new SceneObject
-                {
-                    Name = (string)node["name"] ?? "object",
-                    Extras = (JObject)node["extras"],
-                    Position = new[] { (float)u[12], (float)u[13], (float)u[14] },
-                    Rotation = new[] { (float)qx, (float)qy, (float)qz, (float)qw },
-                    Scale = new[] { (float)sx, (float)sy, (float)sz },
-                };
+                return (new[] { (float)u[12], (float)u[13], (float)u[14] }, new[] { (float)qx, (float)qy, (float)qz, (float)qw }, new[] { (float)sx, (float)sy, (float)sz });
             }
 
-            private void ReadPrimitive(JObject p, double[] world, List<Primitive> into)
+            // ---------- animated objects ----------
+
+            /// <summary>Matrices of the current object's nodes relative to the object (glTF space), by node index.</summary>
+            private Dictionary<int, double[]> relative = new Dictionary<int, double[]>();
+
+            private Dictionary<int, double[]> Relative(int objectNode)
+            {
+                var result = new Dictionary<int, double[]>();
+                void Walk(int i, double[] m)
+                {
+                    result[i] = m;
+                    if (Arr("nodes")[i]["children"] is JArray children)
+                        foreach (var c in children)
+                            Walk((int)c, Multiply(m, LocalMatrix(Arr("nodes")[(int)c])));
+                }
+                Walk(objectNode, Identity());
+                return result;
+            }
+
+            /// <summary>Joint matrix times inverse bind matrix per joint, relative to the object: poses a skinned mesh.</summary>
+            private double[][] SkinMatrices(int skinIndex)
+            {
+                var skin = Arr("skins")[skinIndex];
+                var joints = (JArray)skin["joints"];
+                var ibm = skin["inverseBindMatrices"] != null ? ReadFloats((int)skin["inverseBindMatrices"], 16) : null;
+                var result = new double[joints.Count][];
+                for (int j = 0; j < joints.Count; j++)
+                {
+                    var inverse = Identity();
+                    if (ibm != null)
+                        for (int k = 0; k < 16; k++)
+                            inverse[k] = ibm[j * 16 + k];
+                    result[j] = Multiply(relative.TryGetValue((int)joints[j], out var g) ? g : Identity(), inverse);
+                }
+                return result;
+            }
+
+            private Rig ReadRig(int objectNode, string clipName)
+            {
+                var rig = new Rig();
+                var rigIndex = new Dictionary<int, int>();
+                void Walk(int i, int parent)
+                {
+                    if (!(Arr("nodes")[i]["children"] is JArray children))
+                        return;
+                    foreach (var c in children)
+                    {
+                        int ci = (int)c;
+                        var node = Arr("nodes")[ci];
+                        var (t, r, sc) = ToUnity(LocalMatrix(node));
+                        rigIndex[ci] = rig.Nodes.Count;
+                        rig.Nodes.Add(new RigNode { Name = (string)node["name"] ?? "node", Parent = parent, Position = t, Rotation = r, Scale = sc });
+                        Walk(ci, rigIndex[ci]);
+                    }
+                }
+                Walk(objectNode, -1);
+
+                foreach (var kv in rigIndex)
+                {
+                    var node = Arr("nodes")[kv.Key];
+                    var meshIndex = (int?)node["mesh"];
+                    if (!meshIndex.HasValue)
+                        continue;
+                    var skinIndex = (int?)node["skin"];
+                    int[] bones = null;
+                    float[][] bindposes = null;
+                    if (skinIndex.HasValue)
+                    {
+                        var skin = Arr("skins")[skinIndex.Value];
+                        var joints = (JArray)skin["joints"];
+                        var ibm = skin["inverseBindMatrices"] != null ? ReadFloats((int)skin["inverseBindMatrices"], 16) : null;
+                        bones = new int[joints.Count];
+                        bindposes = new float[joints.Count][];
+                        for (int j = 0; j < joints.Count; j++)
+                        {
+                            bones[j] = rigIndex.TryGetValue((int)joints[j], out var b) ? b : -1;
+                            var m = new float[16];
+                            for (int k = 0; k < 16; k++)
+                                m[k] = ibm != null ? ibm[j * 16 + k] : (k % 5 == 0 ? 1 : 0);
+                            foreach (int k in new[] { 2, 6, 8, 9, 11, 14 })
+                                m[k] = -m[k];
+                            bindposes[j] = m;
+                        }
+                    }
+                    foreach (JObject p in (JArray)Arr("meshes")[meshIndex.Value]["primitives"])
+                    {
+                        var into = new List<Primitive>();
+                        ReadPrimitive(p, Identity(), into);
+                        if (into.Count == 0)
+                            continue;
+                        var mesh = new RigMesh { Node = kv.Value, Primitive = into[0], Bones = bones, Bindposes = bindposes };
+                        var attrs = (JObject)p["attributes"];
+                        if (bones != null && attrs["JOINTS_0"] != null && attrs["WEIGHTS_0"] != null)
+                        {
+                            var joints = ReadFloats((int)attrs["JOINTS_0"], 4);
+                            mesh.Weights = ReadFloats((int)attrs["WEIGHTS_0"], 4);
+                            mesh.Joints = new int[joints.Length];
+                            for (int k = 0; k < joints.Length; k++)
+                                mesh.Joints[k] = (int)joints[k];
+                        }
+                        rig.Meshes.Add(mesh);
+                    }
+                }
+
+                foreach (JObject anim in Arr("animations"))
+                {
+                    if ((string)anim["name"] != clipName)
+                        continue;
+                    var samplers = (JArray)anim["samplers"];
+                    foreach (JObject ch in (JArray)anim["channels"])
+                    {
+                        var target = ch["target"];
+                        string path = (string)target?["path"];
+                        var nodeIndex = (int?)target?["node"];
+                        if (!nodeIndex.HasValue || !rigIndex.TryGetValue(nodeIndex.Value, out var rn) || (path != "translation" && path != "rotation" && path != "scale"))
+                            continue;
+                        var sampler = samplers[(int)ch["sampler"]];
+                        int comps = path == "rotation" ? 4 : 3;
+                        var times = ReadFloats((int)sampler["input"], 1);
+                        var raw = ReadFloats((int)sampler["output"], comps);
+                        string interpolation = (string)sampler["interpolation"] ?? "LINEAR";
+                        var values = new float[times.Length * comps];
+                        // Cubic spline keys hold (in-tangent, value, out-tangent); the value alone is close enough.
+                        int stride = interpolation == "CUBICSPLINE" ? 3 : 1;
+                        for (int k = 0; k < times.Length; k++)
+                            for (int c = 0; c < comps; c++)
+                                values[k * comps + c] = raw[(k * stride + (stride == 3 ? 1 : 0)) * comps + c];
+                        for (int k = 0; k < times.Length; k++)
+                        {
+                            if (path == "translation")
+                                values[k * 3 + 2] = -values[k * 3 + 2];
+                            else if (path == "rotation")
+                            {
+                                values[k * 4] = -values[k * 4];
+                                values[k * 4 + 1] = -values[k * 4 + 1];
+                            }
+                        }
+                        rig.Channels.Add(new RigChannel { Node = rn, Path = path, Times = times, Values = values, Step = interpolation == "STEP" });
+                        if (times.Length > 0)
+                            rig.Duration = Math.Max(rig.Duration, times[times.Length - 1]);
+                    }
+                }
+                return rig.Meshes.Count > 0 && rig.Channels.Count > 0 ? rig : null;
+            }
+
+            private void ReadPrimitive(JObject p, double[] world, List<Primitive> into, double[][] skin = null)
             {
                 int mode = (int?)p["mode"] ?? 4;
                 if (mode != 4)
@@ -240,6 +427,34 @@ namespace SbgMaps
                 {
                     colComponents = (string)Arr("accessors")[(int)attrs["COLOR_0"]]["type"] == "VEC3" ? 3 : 4;
                     col = ReadFloats((int)attrs["COLOR_0"], colComponents);
+                }
+                if (skin != null && attrs["JOINTS_0"] != null && attrs["WEIGHTS_0"] != null)
+                {
+                    // Pose it: each vertex is the weighted mix of where its joints carry it.
+                    var joints = ReadFloats((int)attrs["JOINTS_0"], 4);
+                    var weights = ReadFloats((int)attrs["WEIGHTS_0"], 4);
+                    for (int i = 0; i < count; i++)
+                    {
+                        double px = 0, py = 0, pz = 0, nx = 0, ny = 0, nz = 0;
+                        for (int k = 0; k < 4; k++)
+                        {
+                            float w = weights[i * 4 + k];
+                            int j = (int)joints[i * 4 + k];
+                            if (w <= 0 || j < 0 || j >= skin.Length)
+                                continue;
+                            Transform(skin[j], pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2], 1, out var x, out var y, out var z);
+                            px += w * x; py += w * y; pz += w * z;
+                            if (nrm != null)
+                            {
+                                Transform(skin[j], nrm[i * 3], nrm[i * 3 + 1], nrm[i * 3 + 2], 0, out x, out y, out z);
+                                nx += w * x; ny += w * y; nz += w * z;
+                            }
+                        }
+                        (pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]) = ((float)px, (float)py, (float)pz);
+                        if (nrm != null)
+                            (nrm[i * 3], nrm[i * 3 + 1], nrm[i * 3 + 2]) = ((float)nx, (float)ny, (float)nz);
+                    }
+                    world = Identity();
                 }
                 int[] idx;
                 if (p["indices"] != null)

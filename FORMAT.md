@@ -131,6 +131,11 @@ A node with `extras.object` is an object. It is built separately, with its own t
 
 Any object may set `billboard: true` (its look turns to face the camera, for pictures) and a static object may set `knocks: true`.
 
+An animated object (Mod 0.6.0) sets `clip` to the name of an animation in the file and keeps its own nodes (bones and
+skinned meshes) under it. The clip loops on its look, starting at a random point; translation, rotation and scale
+channels on its nodes play, others are ignored. Its collision is the pose it was exported in. `animation` is the clip's
+original name, for the editor. Older mods show it still, in that pose.
+
 Roller extras, all in the node's local units (scaled by the node's transform):
 - `path`: [[x, y, z], ...] points on the ground.
 - `radius`: ball radius.

@@ -152,27 +152,27 @@ namespace SbgMaps
                 switch (behaviour)
                 {
                     case "seesaw":
-                        BuildParts(ctx, go.transform, obj.Primitives, obj.Name, null);
+                        BuildLook(ctx, go.transform, obj, null);
                         Seesaw.Attach(go, seesaws++);
                         break;
                     case "roller":
                         // The parts are the ball's look; the roller clones it for every ball it rolls.
                         var template = new GameObject("ball template");
                         template.transform.SetParent(go.transform, false);
-                        BuildParts(ctx, template.transform, obj.Primitives, obj.Name, null, forceSurface: "none");
+                        BuildLook(ctx, template.transform, obj, "none");
                         Roller.Attach(go, template, obj.Extras, rollers++, groundLayer);
                         break;
                     case "mover":
                         var platform = new GameObject("platform template");
                         platform.transform.SetParent(go.transform, false);
-                        BuildParts(ctx, platform.transform, obj.Primitives, obj.Name, null);
+                        BuildLook(ctx, platform.transform, obj, null);
                         Mover.Attach(go, platform, obj.Extras, groundLayer);
                         movers++;
                         break;
                     case "chomp":
                         var look = new GameObject("chomp look");
                         look.transform.SetParent(go.transform, false);
-                        BuildParts(ctx, look.transform, obj.Primitives, obj.Name, null, forceSurface: "none");
+                        BuildLook(ctx, look.transform, obj, "none");
                         Chomp.Attach(go, look, obj.Extras, chomps++, groundLayer);
                         break;
                     case "jumppad":
@@ -197,7 +197,7 @@ namespace SbgMaps
                             go.layer = groundLayer;
                             break;
                         }
-                        BuildParts(ctx, go.transform, obj.Primitives, obj.Name, null);
+                        BuildLook(ctx, go.transform, obj, null);
                         if ((bool?)obj.Extras?["knocks"] ?? false)
                         {
                             Movers.EnsureCollider(go, groundLayer);
@@ -210,6 +210,27 @@ namespace SbgMaps
                         if (r.GetComponent<Billboard>() == null)
                             r.gameObject.AddComponent<Billboard>();
             }
+        }
+
+        /// <summary>
+        /// An object's parts. Animated ones (a rig) are drawn by the rig and keep only the collision of their exported pose.
+        /// </summary>
+        private static void BuildLook(Context ctx, Transform parent, GlbReader.SceneObject obj, string forceSurface)
+        {
+            if (obj.Rig == null)
+            {
+                BuildParts(ctx, parent, obj.Primitives, obj.Name, null, forceSurface);
+                return;
+            }
+            var collision = new GameObject("collision");
+            collision.transform.SetParent(parent, false);
+            BuildParts(ctx, collision.transform, obj.Primitives, obj.Name, null, forceSurface);
+            foreach (var r in collision.GetComponentsInChildren<MeshRenderer>(true))
+            {
+                UnityEngine.Object.DestroyImmediate(r.GetComponent<MeshFilter>());
+                UnityEngine.Object.DestroyImmediate(r);
+            }
+            Rigs.Build(parent, obj.Rig, index => MaterialFor(ctx.Materials, ctx.Model, index, false));
         }
 
         private class Context
