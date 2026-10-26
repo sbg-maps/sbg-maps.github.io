@@ -2,6 +2,14 @@
 // Write for players: what they can do now in the editor, not how it works, and not mod or game news. Bump `id` for every new entry.
 export const CHANGES = [
   {
+    id: 11,
+    date: "2026-10-26",
+    items: [
+      "Levels stored lying on their side (Counter-Strike and other Source maps, many 3ds Max exports) are stood up by themselves. If one still comes out wrong, <b>Tip over 90&deg;</b> on the Model tab, next to Rotate 90&deg;, turns it.",
+      "Models with .tga textures show them.",
+    ],
+  },
+  {
     id: 10,
     date: "2026-10-26",
     items: [

@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { loadFolder, loadZip, holeGrids, SURFACES } from "./mapfile.js";
-import { importModel, importModels, findModels, unpackZips, expandArchives } from "./importer.js";
+import { importModel, importModels, findModels, unpackZips, expandArchives, storedZUp } from "./importer.js";
 import { renderer, pick, pickCenter, pointerRay, hitMaterial, frameBox, scene, camera, controls, onFrame, frame } from "./scene.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { HeightmapView } from "./viewer.js";
@@ -154,6 +154,12 @@ async function openModel(picked, name = "Level") {
   flyBtn.hidden = false;
   closeBtn.hidden = false;
   project = new Project(root);
+  // Stored lying on its side (z up): stand it up before sizing it.
+  const zUp = !Array.isArray(root.userData.worldOrigin) && storedZUp(root);
+  if (zUp) {
+    project.tilt = 3;
+    project.applyTransform();
+  }
   const size = project.box.getSize(new THREE.Vector3());
   // Converted game worlds are in metres already (and sections must keep one scale to line up): true size.
   project.scale = Array.isArray(root.userData.worldOrigin) ? 1 : niceScale(DEFAULT_LEVEL_SIZE / Math.max(size.x, size.z));
@@ -161,7 +167,8 @@ async function openModel(picked, name = "Level") {
   startEditing();
   const parts = model === ALL_MODELS ? ` (${models.length - backdrops.length} parts${backdrops.length ? `, left out ${backdrops.length} sky and backdrop parts` : ""})` : "";
   const extra = layers ? ` (left out ${layers} stacked shadow/light layers)` : "";
-  setStatus(missing.length ? `Imported, but these files were missing: ${missing.join(", ")}` : `Imported ${root.name}${parts}${extra}`, missing.length > 0);
+  const stood = zUp ? ". It was stored lying on its side, so it was stood up (Model tab, Tip over 90° if that is wrong)" : "";
+  setStatus(missing.length ? `Imported, but these files were missing: ${missing.join(", ")}${stood}` : `Imported ${root.name}${parts}${extra}${stood}`, missing.length > 0);
 }
 
 /** chooseModel's answer for "all of them, as one level". */
@@ -841,7 +848,7 @@ function modelPanel() {
         : `Using a stand-in golfer (${golferInfo().height} m). In the game, press <b>F9</b> while playing to save your golfer and camera to <b>SbgMaps/golfer.glb</b>, then load it here. It stays on your computer.`
     }</p>
     <label class="btn btn-secondary small" tabindex="0">Load golfer.glb<input id="golfer-file" type="file" accept=".glb" hidden /></label>
-    <div class="row">${project.terrain ? "" : `<button class="btn btn-secondary small" id="rotate">Rotate 90&deg;</button>`}
+    <div class="row">${project.terrain ? "" : `<button class="btn btn-secondary small" id="rotate" title="Turn the level a quarter turn around the vertical">Rotate 90&deg;</button><button class="btn btn-secondary small" id="tilt" title="For levels lying on their side: tip it a quarter turn forward">Tip over 90&deg;</button>`}
     <label class="check"><input type="checkbox" id="overlay" ${project.surfaceOverlay ? "checked" : ""} /> Show surfaces</label></div>
     <h3>Surfaces</h3>
     <p class="hint">${project.terrain ? "Surfaces of your objects and props (the terrain is painted in the Terrain tab)." : "Pick what each material plays as. Tip: click the level with Look to find a material."} Click a material for how its texture's transparency is drawn; Shift+click to pick several and change them together.${
@@ -942,6 +949,12 @@ function wireModel() {
   );
   info.querySelector("#rotate")?.addEventListener("click", () => {
     project.rotation = (project.rotation + 1) % 4;
+    project.applyTransform();
+    frameBox(project.box);
+    renderPanel();
+  });
+  info.querySelector("#tilt")?.addEventListener("click", () => {
+    project.tilt = (project.tilt + 1) % 4;
     project.applyTransform();
     frameBox(project.box);
     renderPanel();

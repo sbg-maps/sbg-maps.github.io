@@ -543,6 +543,43 @@ await test("map file size: one copy of each picture, JPEG when not see-through, 
   await page.close();
 });
 
+await test("a level stored z-up with .tga textures stands up, textured", async () => {
+  const dir = path.join(tmp, "zup");
+  fs.mkdirSync(dir, { recursive: true });
+  // A 100 x 80 floor in the x-y plane facing +z, with one 10 m wall: how Source maps come out.
+  fs.writeFileSync(
+    path.join(dir, "map.obj"),
+    ["mtllib map.mtl", "v 0 0 0", "v 100 0 0", "v 100 80 0", "v 0 80 0", "v 0 0 0", "v 100 0 0", "v 100 0 10", "v 0 0 10", "vt 0 0", "vt 1 0", "vt 1 1", "vt 0 1",
+      "usemtl sand", "f 1/1 2/2 3/3", "f 1/1 3/3 4/4", "f 5/1 7/3 6/2", "f 5/1 8/4 7/3"].join("\n"),
+  );
+  fs.writeFileSync(path.join(dir, "map.mtl"), "newmtl sand\nKd 1 1 1\nmap_Kd sand.tga\n");
+  // Uncompressed 2 x 2 true-colour Targa.
+  const tga = Buffer.alloc(18 + 2 * 2 * 3, 0xc0);
+  tga.fill(0, 0, 18);
+  tga[2] = 2;
+  tga.writeUInt16LE(2, 12);
+  tga.writeUInt16LE(2, 14);
+  tga[16] = 24;
+  fs.writeFileSync(path.join(dir, "sand.tga"), tga);
+  const page = await freshPage(browser, url);
+  await page.setInputFiles("#import-files", fs.readdirSync(dir).map((f) => path.join(dir, f)));
+  await page.waitForFunction(() => window.__sbg.project, null, { timeout: 20000 });
+  const s = await page.evaluate(() => {
+    const p = window.__sbg.project;
+    const size = p.box.getSize(new window.__sbg.THREE.Vector3());
+    return { tilt: p.tilt, height: size.y / Math.max(size.x, size.z), textured: p.materials.filter((m) => m.material.map?.image).length };
+  });
+  assert(s.tilt === 3 && s.height < 0.2, `not stood up: ${JSON.stringify(s)}`);
+  assert(s.textured === 1, `tga texture not loaded: ${JSON.stringify(s)}`);
+  assert((await page.textContent("#status")).includes("lying on its side"), "no word about standing it up");
+  // Tip over 90 degrees turns it on.
+  await page.click('.tab[data-tab="model"]');
+  await page.click("#tilt");
+  assert((await page.evaluate(() => window.__sbg.project.tilt)) === 0, "Tip over did not go round");
+  assert(page.errors.length === 0, page.errors.join("; "));
+  await page.close();
+});
+
 await test("zips: a map zipped with its folder, a zipped .sbgmap, zips in zips, other archives explained", async () => {
   assert(terrainMap, "no exported terrain map (an earlier test failed)");
   const { zipSync } = await import("fflate");

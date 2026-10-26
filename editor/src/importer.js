@@ -6,6 +6,7 @@ import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
 import { ColladaLoader } from "three/addons/loaders/ColladaLoader.js";
+import { TGALoader } from "three/addons/loaders/TGALoader.js";
 import { unzip } from "fflate";
 
 export const MODEL_EXTENSIONS = [".obj", ".glb", ".gltf", ".fbx", ".dae"];
@@ -78,6 +79,8 @@ export async function importModel(fileList, modelFile = findModels(fileList)[0])
   // with the parent file's URL (itself a blob URL), so only our exact blob URLs pass through untouched.
   const ours = new Set(urls.values());
   manager.setURLModifier((url) => (ours.has(url) || url.startsWith("data:") ? url : urls.get(base(decodeURIComponent(url))) ?? url));
+  // Game rips often come with Targa textures, which browsers cannot show by themselves.
+  manager.addHandler(/\.tga$/i, new TGALoader(manager));
   const missing = new Set();
   manager.onError = (url) => missing.add(base(decodeURIComponent(url)));
   const progress = { loaded: 0, total: 0 };
@@ -116,11 +119,64 @@ export async function importModel(fileList, modelFile = findModels(fileList)[0])
   }
   root.name = modelFile.name.replace(/\.[^.]+$/, "");
   root.animations = nameClips(clips ?? []);
+  fixSkins(root);
   // glTF has proper multi-texture materials, and its stacked copies can be meant (invisible collision meshes).
   const layers = [".glb", ".gltf"].includes(ext(modelFile.name)) ? 0 : dropTextureLayers(root);
   // glTF stores each texture's wrap mode; other formats assume repeating textures.
   normalizeMaterials(root, { keepWrap: [".glb", ".gltf"].includes(ext(modelFile.name)) });
   return { root, missing: [...missing], layers };
+}
+
+/**
+ * Is this level stored lying on its side, with z as up (Source, Quake and 3ds Max exports)? True when much more of its
+ * surface faces +z than +y (floors face up; walls face both ways along the other axes) and it is flatter along z.
+ */
+export function storedZUp(root) {
+  root.updateMatrixWorld(true);
+  let upY = 0;
+  let upZ = 0;
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  root.traverse((o) => {
+    if (!o.isMesh || o.isSkinnedMesh) return;
+    const pos = o.geometry.attributes.position;
+    const index = o.geometry.index;
+    const count = index ? index.count : pos.count;
+    // Big models: every few triangles is plenty for a direction count.
+    const step = Math.max(1, Math.floor(count / 3 / 200000)) * 3;
+    for (let i = 0; i + 2 < count; i += step) {
+      const [i0, i1, i2] = index ? [index.getX(i), index.getX(i + 1), index.getX(i + 2)] : [i, i + 1, i + 2];
+      a.fromBufferAttribute(pos, i0).applyMatrix4(o.matrixWorld);
+      b.fromBufferAttribute(pos, i1).applyMatrix4(o.matrixWorld);
+      c.fromBufferAttribute(pos, i2).applyMatrix4(o.matrixWorld);
+      n.subVectors(b, a).cross(c.sub(a));
+      const area = n.length();
+      if (!area) continue;
+      if (n.y / area > 0.7) upY += area;
+      if (n.z / area > 0.7) upZ += area;
+    }
+  });
+  const size = new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3());
+  return upZ > upY * 2 && size.z < size.y;
+}
+
+/** Skinned meshes whose vertices name a bone that does not exist (a broken export) use the first bone there instead. */
+function fixSkins(root) {
+  root.traverse((o) => {
+    const index = o.isSkinnedMesh ? o.geometry.attributes.skinIndex : null;
+    const weight = o.geometry?.attributes.skinWeight;
+    if (!index || !weight) return;
+    const count = o.skeleton.bones.length;
+    for (let i = 0; i < index.array.length; i++) {
+      if (index.array[i] < count && o.skeleton.bones[index.array[i]]) continue;
+      index.array[i] = 0;
+      weight.array[i] = 0;
+    }
+    index.needsUpdate = weight.needsUpdate = true;
+    o.normalizeSkinWeights();
+  });
 }
 
 /** Animations that move something, each with a name of its own (the animation list shows them by name). */

@@ -84,6 +84,7 @@ export class Project {
     /** Scale already baked into the model by an earlier export (the map remembers it), so the editor can show the real one. */
     this.bakedScale = Number(root.userData.bakedScale) > 0 ? Number(root.userData.bakedScale) : 1;
     this.rotation = 0; // quarter turns around y
+    this.tilt = 0; // quarter turns around x, for models stored lying on their side
     this.appliedRotation = 0;
     this.markersGroup = new THREE.Group();
     this.surfaceOverlay = false;
@@ -555,7 +556,7 @@ export class Project {
 
     this.pivot.position.set(0, 0, 0);
     this.pivot.scale.setScalar(this.scale);
-    this.pivot.rotation.set(0, (this.rotation * Math.PI) / 2, 0);
+    this.pivot.rotation.set((this.tilt * Math.PI) / 2, (this.rotation * Math.PI) / 2, 0, "YXZ");
     this.pivot.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(this.root);
     this.pivot.position.set(PAD - box.min.x, BASE_Y - box.min.y, -PAD - box.max.z);
@@ -873,7 +874,7 @@ export class Project {
   teePlatforms(h) {
     if (!h.tee) return [];
     const yaw = this.teeYaw(h);
-    const key = `${h.tee.x}|${h.tee.y}|${h.tee.z}|${yaw}|${this.scale}|${this.rotation}|${this.shapeVersion}`;
+    const key = `${h.tee.x}|${h.tee.y}|${h.tee.z}|${yaw}|${this.scale}|${this.rotation}|${this.tilt}|${this.shapeVersion}`;
     this.platformCache ??= new WeakMap();
     const cached = this.platformCache.get(h);
     if (cached?.key === key) return cached.platforms;
@@ -1107,7 +1108,7 @@ export class Project {
   /** Everything exportGlb depends on, as a string: placement, objects, meshes and material settings. */
   levelSignature() {
     const plain = (data) => Object.entries(data).filter(([k, v]) => k !== "thumb" && (v === null || typeof v !== "object" || Array.isArray(v))).map(([k, v]) => `${k}=${v}`).join(",");
-    const parts = [this.realScale, this.rotation, ...this.pivot.position.toArray(), JSON.stringify(this.root.userData)];
+    const parts = [this.realScale, this.rotation, this.tilt, ...this.pivot.position.toArray(), JSON.stringify(this.root.userData)];
     const objects = new Set(this.objects);
     for (const o of this.objects) {
       const q = this.billboardBase.get(o) ?? o.quaternion; // camera-facing objects turn every frame in the view
@@ -1379,7 +1380,7 @@ export class Project {
     const origin = this.root.userData.worldOrigin;
     // The scale of the source model the export is at, so reopening it shows the real scale (not 1).
     out.userData = { bakedScale: this.realScale };
-    if (!region && Array.isArray(origin) && this.realScale === 1 && this.rotation === 0) {
+    if (!region && Array.isArray(origin) && this.realScale === 1 && this.rotation === 0 && this.tilt === 0) {
       const p = this.pivot.position;
       Object.assign(out.userData, { ...(this.root.userData.source ? { source: this.root.userData.source } : {}), ...(this.root.userData.map ? { map: this.root.userData.map } : {}), worldOrigin: [origin[0] - p.x, origin[1] - p.y, origin[2] - p.z] });
     }
