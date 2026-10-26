@@ -1090,6 +1090,7 @@ function selectedObjectPanel(o) {
     <div class="card">
       <div class="field"><label for="obj-name">Name</label><input id="obj-name" value="${esc(o.name)}" /></div>
       ${sizeSlider(o)}
+      ${o.userData.billboard ? "" : slider("obj-yaw", "Turn (degrees, 0 = map north)", project.objectYaw(o), { min: 0, max: 359.9, step: 0.5, unit: "&deg;" })}
       <div class="row">
         ${["translate", "rotate", "scale"].map((m) => `<button class="btn btn-secondary small gizmo-mode ${gizmo.mode === m ? "active-mode" : ""}" data-mode="${m}">${{ translate: "Move", rotate: "Rotate", scale: "Stretch" }[m]}</button>`).join("")}
         <button class="btn btn-secondary small" id="obj-duplicate" title="Copy it, with the same settings (Ctrl+D)">Duplicate</button>
@@ -1229,6 +1230,19 @@ function wireObjects() {
   info.querySelector("#obj-size-range").addEventListener("change", () => {
     history.commit(sizeBefore ?? history.capture());
     sizeBefore = null;
+    renderPanel();
+  });
+  // Turn: follows the slider while dragging, one undo step per drag (the box sends a change too).
+  let yawBefore = null;
+  info.querySelector("#obj-yaw")?.addEventListener("input", (e) => {
+    yawBefore ??= history.capture();
+    project.setObjectYaw(o, Number(e.target.value));
+  });
+  info.querySelector("#obj-yaw")?.addEventListener("change", (e) => {
+    yawBefore ??= history.capture();
+    project.setObjectYaw(o, Number(e.target.value));
+    history.commit(yawBefore);
+    yawBefore = null;
     renderPanel();
   });
   sizeBox.addEventListener("change", (e) => {

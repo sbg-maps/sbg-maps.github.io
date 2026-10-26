@@ -7,6 +7,7 @@ export const CHANGES = [
     items: [
       "Objects have a <b>Duplicate</b> button (or Ctrl+D): a copy with the same settings appears next to it.",
       "Objects have a <b>Size</b> slider and box (largest side in metres) that resizes them evenly, so imported models keep their proportions. The handles that stretch each side on its own are now called <b>Stretch</b>.",
+      "Objects have a <b>Turn</b> slider and box: which way they face, in degrees (0 = map north).",
     ],
   },
   {

@@ -221,6 +221,16 @@ await test("new level: sculpt, paint, undo/redo, objects, paths, export", async 
     return [s.x, s.y, s.z].map((v) => Math.round(v * 10) / 10);
   });
   assert(sized.every((v) => v === 6), `box sized to ${sized}`);
+  // Turn to face map east (90 degrees): its front (-z in three.js, map north) now points along +x.
+  await page.fill('.slider-num[data-for="obj-yaw"]', "90");
+  await page.dispatchEvent('.slider-num[data-for="obj-yaw"]', "change");
+  const facing = await page.evaluate(() => {
+    const o = window.__sbg.project.objects[0];
+    const f = new window.__sbg.THREE.Vector3(0, 0, -1).applyQuaternion(o.getWorldQuaternion(new window.__sbg.THREE.Quaternion()));
+    return [f.x, f.z].map((v) => Math.round(v * 100) / 100);
+  });
+  assert(facing[0] === 1 && facing[1] === 0, `turned to 90 but faces ${facing}`);
+  assert((await page.inputValue('.slider-num[data-for="obj-yaw"]')) === "90", "turn box does not show 90");
   // Duplicate (button, then Ctrl+D on the copy), undo takes the last copy away.
   await page.click("#obj-duplicate");
   await page.keyboard.press("Control+d");

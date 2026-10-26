@@ -463,6 +463,23 @@ export class Project {
     this.rebuildMarkers();
   }
 
+  /** Which way an object faces, in degrees around the vertical (0 to 359, 0 = map north, clockwise). */
+  objectYaw(o) {
+    const f = new THREE.Vector3(0, 0, -1).applyQuaternion(o.getWorldQuaternion(new THREE.Quaternion()));
+    return Math.round((((Math.atan2(f.x, -f.z) * 180) / Math.PI) % 360 + 360) % 360 * 10) / 10;
+  }
+
+  /** Turns an object around the vertical so it faces `degrees` (see objectYaw); its tilt stays. */
+  setObjectYaw(o, degrees) {
+    const delta = ((this.objectYaw(o) - degrees) * Math.PI) / 180;
+    const world = o.getWorldQuaternion(new THREE.Quaternion());
+    world.premultiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), delta));
+    const parent = o.parent.getWorldQuaternion(new THREE.Quaternion());
+    o.quaternion.copy(parent.invert().multiply(world));
+    o.updateMatrixWorld(true);
+    this.rebuildMarkers();
+  }
+
   removePart(part) {
     part.removeFromParent();
     this.collectMaterials();
