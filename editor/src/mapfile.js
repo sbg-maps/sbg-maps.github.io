@@ -1,5 +1,5 @@
 // Reads SbgMaps format 1 maps (see FORMAT.md) from a .sbgmap zip or a picked folder.
-import { unzipSync } from "fflate";
+import { readZip } from "./importer.js";
 
 export const SURFACES = [
   { id: 0, name: "Rough", color: [98, 166, 66] },
@@ -12,8 +12,11 @@ export const SURFACES = [
 
 /** Loads a map from a .sbgmap File. Returns { manifest, files } where files maps relative paths to bytes. */
 export async function loadZip(file) {
-  const entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
-  const files = new Map(Object.entries(entries).filter(([name]) => !name.endsWith("/")));
+  const entries = await readZip(file);
+  // A map zipped together with its folder has its map.json one level down.
+  const manifest = entries.map(([name]) => name).filter((name) => name.split("/").pop() === "map.json").sort((a, b) => a.length - b.length)[0];
+  const root = manifest ? manifest.slice(0, -"map.json".length) : "";
+  const files = new Map(entries.filter(([name]) => name.startsWith(root)).map(([name, bytes]) => [name.slice(root.length), bytes]));
   return fromFiles(files);
 }
 

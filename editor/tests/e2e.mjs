@@ -324,6 +324,41 @@ await test("reopen the exported terrain level", async () => {
   await page.close();
 });
 
+await test("zips: a map zipped with its folder, a zipped .sbgmap, zips in zips, other archives explained", async () => {
+  assert(terrainMap, "no exported terrain map (an earlier test failed)");
+  const { zipSync } = await import("fflate");
+  const map = unzipSync(new Uint8Array(fs.readFileSync(terrainMap)));
+  const write = (name, files) => {
+    const file = path.join(tmp, name);
+    fs.writeFileSync(file, zipSync(files));
+    return file;
+  };
+  const opened = async (file, input) => {
+    const page = await freshPage(browser, url);
+    await page.setInputFiles(input, file);
+    await page.waitForFunction(() => window.__sbg.project?.terrain, null, { timeout: 20000 }).catch(() => {});
+    const ok = await page.evaluate(() => !!window.__sbg.project?.terrain && !!window.__sbg.project.hole.tee);
+    const status = await page.textContent("#status");
+    if (ok) assert(page.errors.length === 0, page.errors.join("; "));
+    await page.close();
+    return ok || status;
+  };
+  // A map folder zipped up (map.json one level down), through either button, with Mac junk alongside.
+  const folder = write("folder-map.zip", { ...Object.fromEntries(Object.entries(map).map(([k, v]) => [`My map/${k}`, v])), "__MACOSX/My map/._map.json": new Uint8Array(4) });
+  assert((await opened(folder, "#open-file")) === true, "zipped map folder did not open with Open map");
+  assert((await opened(folder, "#import-files")) === true, "zipped map folder did not open with Import model");
+  // A .sbgmap shared inside a zip, and that zip inside another zip.
+  const shared = write("shared.zip", { "maps/cool.sbgmap": new Uint8Array(fs.readFileSync(terrainMap)) });
+  assert((await opened(shared, "#open-file")) === true, "a .sbgmap inside a zip did not open");
+  const nested = write("nested.zip", { "download/shared.zip": new Uint8Array(fs.readFileSync(shared)) });
+  assert((await opened(nested, "#open-file")) === true, "a zip inside a zip did not open");
+  // Other archive kinds get a clear message.
+  const rar = path.join(tmp, "level.rar");
+  fs.writeFileSync(rar, "Rar!");
+  const said = await opened(rar, "#import-files");
+  assert(typeof said === "string" && said.includes("only .zip"), `rar message: ${said}`);
+});
+
 await test("import an OBJ with MTL and texture, export, reopen", async () => {
   const dir = fs.existsSync(OPTIONAL.objFolder) ? OPTIONAL.objFolder : makeObjFixture();
   const files = fs.readdirSync(dir).filter((f) => !f.endsWith(".txt")).map((f) => path.join(dir, f));

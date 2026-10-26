@@ -6,7 +6,7 @@ import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
 import { ColladaLoader } from "three/addons/loaders/ColladaLoader.js";
-import { unzipSync } from "fflate";
+import { unzip } from "fflate";
 
 export const MODEL_EXTENSIONS = [".obj", ".glb", ".gltf", ".fbx", ".dae"];
 
@@ -18,18 +18,49 @@ export function findModels(files) {
   return [...files].filter((f) => MODEL_EXTENSIONS.includes(ext(f.name))).sort((a, b) => b.size - a.size);
 }
 
-/** Replaces any .zip among the files with the files inside it (models are often shared zipped). */
-export async function unpackZips(files) {
+const ARCHIVE_EXTENSIONS = [".rar", ".7z", ".tar", ".gz", ".tgz", ".xz", ".bz2"];
+// Junk that zips made on a Mac or Windows carry along.
+const isJunk = (path) => /(^|\/)(__MACOSX\/|\.DS_Store$|Thumbs\.db$|desktop\.ini$)/i.test(path);
+
+/** The entries of a zip, unpacked in background workers so big zips do not freeze the page. */
+export async function readZip(file) {
+  const data = new Uint8Array(await file.arrayBuffer());
+  let entries;
+  try {
+    entries = await new Promise((resolve, reject) => unzip(data, (err, out) => (err ? reject(err) : resolve(out))));
+  } catch (e) {
+    const why = String(e?.message ?? e);
+    if (/compression|unknown/i.test(why))
+      throw new Error(`${file.name} uses a kind of zip compression browsers cannot read (Windows makes it for very big files). Extract it and import the folder, or zip it again with 7-Zip.`);
+    if (/encrypt|password/i.test(why)) throw new Error(`${file.name} is password protected. Extract it and import the folder.`);
+    throw new Error(`${file.name} is not a zip that can be read (${why})`);
+  }
+  return Object.entries(entries).filter(([name]) => !name.endsWith("/") && !isJunk(name));
+}
+
+/**
+ * Unpacks every .zip among picked files ({ file, path }), zips inside zips too, keeping folder paths. A zip holding a
+ * map (map.json) is unpacked the same way, so maps zipped together with their folder open as well.
+ */
+export async function expandArchives(entries, depth = 0) {
   const out = [];
-  for (const f of files) {
-    if (ext(f.name) !== ".zip") {
-      out.push(f);
+  for (const entry of entries) {
+    const e = ext(entry.file.name);
+    if (ARCHIVE_EXTENSIONS.includes(e)) throw new Error(`${entry.file.name}: only .zip files can be opened here. Extract it first, or zip it as .zip.`);
+    if (e !== ".zip" || depth > 3) {
+      out.push(entry);
       continue;
     }
-    const entries = unzipSync(new Uint8Array(await f.arrayBuffer()));
-    for (const [name, bytes] of Object.entries(entries)) if (!name.endsWith("/")) out.push(new File([bytes], name.split("/").pop()));
+    const dir = entry.path.slice(0, -entry.file.name.length);
+    const inner = (await readZip(entry.file)).map(([name, bytes]) => ({ file: new File([bytes], name.split("/").pop()), path: dir + name }));
+    out.push(...(await expandArchives(inner, depth + 1)));
   }
   return out;
+}
+
+/** Replaces any .zip among the files with the files inside it (models are often shared zipped). */
+export async function unpackZips(files) {
+  return (await expandArchives([...files].map((file) => ({ file, path: file.name })))).map((e) => e.file);
 }
 
 /**

@@ -6,6 +6,7 @@ export const CHANGES = [
     date: "2026-10-26",
     items: [
       "<b>Scale</b> has a slider, and the item chances in boxes are sliders too. Number boxes take 0,5 as well as 0.5.",
+      "<b>Zips</b> open everywhere: a zipped map folder, a .sbgmap inside a zip, zips inside zips, through any button or by dropping them.",
       "Big imported levels run smoother: clicking on them is several times faster, autosave no longer stalls the editor, and long material lists show the first 60 (Show all lists the rest).",
     ],
   },

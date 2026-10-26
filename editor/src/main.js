@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { loadFolder, loadZip, holeGrids, SURFACES } from "./mapfile.js";
-import { importModel, findModels, unpackZips } from "./importer.js";
+import { importModel, findModels, unpackZips, expandArchives } from "./importer.js";
 import { renderer, pick, pickCenter, hitMaterial, frameBox, scene, camera, controls, onFrame, frame } from "./scene.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { HeightmapView } from "./viewer.js";
@@ -198,24 +198,28 @@ function newLevel(sizeX, sizeZ, shape) {
 
 const newSeed = () => (Math.random() * 1e9) | 0;
 
-/** Decides what a set of picked or dropped files is: a map folder, a .sbgmap, or a model. */
-async function openFiles(entries) {
-  const files = entries.map((e) => e.file);
-  const sbgmap = files.find((f) => /\.(sbgmap|zip)$/i.test(f.name));
-  if (entries.some((e) => e.path.split("/").pop() === "map.json")) return openMap(await loadFolder(entries));
-  if (sbgmap && files.length === 1) {
-    // A plain .zip can also be a zipped model.
-    const map = await loadZip(sbgmap).catch((e) => {
-      if (/\.zip$/i.test(sbgmap.name) && e.message.startsWith("No map.json")) return null;
-      throw e;
-    });
-    return map ? openMap(map) : openModel(files);
+/**
+ * Decides what a set of picked or dropped files is: a map (a map folder or a .sbgmap, also inside zips) or a model
+ * (with its textures, also zipped, even zips inside zips).
+ */
+async function openFiles(picked) {
+  // A .sbgmap on its own opens as it is (it is a zip, but should not be unpacked like a model download).
+  if (picked.length === 1 && /\.sbgmap$/i.test(picked[0].file.name)) return openMap(await loadZip(picked[0].file));
+  const entries = await expandArchives(picked);
+  const manifests = entries.filter((e) => e.path.split("/").pop() === "map.json");
+  if (manifests.length) {
+    // The top-most map.json is the map (a map folder, or one zipped with its folder).
+    const top = manifests.sort((a, b) => a.path.length - b.path.length)[0];
+    const root = top.path.slice(0, -"map.json".length);
+    return openMap(await loadFolder(entries.filter((e) => e.path.startsWith(root))));
   }
-  return openModel(files);
+  const maps = entries.filter((e) => /\.sbgmap$/i.test(e.file.name));
+  if (maps.length && !findModels(entries.map((e) => e.file)).length) return openMap(await loadZip(maps[0].file));
+  return openModel(entries.map((e) => e.file));
 }
 
 const asEntries = (fileList) => [...fileList].map((file) => ({ file, path: file.webkitRelativePath || file.name }));
-document.getElementById("import-files").addEventListener("change", (e) => e.target.files.length && run("Importing", () => openModel(e.target.files)));
+document.getElementById("import-files").addEventListener("change", (e) => e.target.files.length && run("Importing", () => openFiles(asEntries(e.target.files))));
 document.getElementById("import-folder").addEventListener("change", (e) => e.target.files.length && run("Importing", () => openFiles(asEntries(e.target.files))));
 document.getElementById("open-file").addEventListener("change", (e) => e.target.files[0] && run("Opening", () => openFiles(asEntries(e.target.files))));
 
@@ -760,7 +764,7 @@ function modelPanel() {
     <h3>Size</h3>
     ${scaleSlider()}
     <div class="stats">${stat("Course area", `${sx} x ${sz} m`)}</div>
-    ${Array.isArray(project.root.userData.worldOrigin) ? `<label class="btn btn-secondary small" tabindex="0" title="Another section of the same game world, placed where it really is">Add a section<input id="add-section" type="file" accept=".glb,.gltf" hidden /></label>
+    ${Array.isArray(project.root.userData.worldOrigin) ? `<label class="btn btn-secondary small" tabindex="0" title="Another section of the same game world, placed where it really is">Add a section<input id="add-section" type="file" accept=".glb,.gltf,.zip" hidden /></label>
     <p class="hint">Sections of the same world line up by themselves. Holes can then be anywhere: each one takes the piece of the level around it.</p>` : ""}`}
     <h3>Your golfer</h3>
     <p class="hint">${
