@@ -578,7 +578,8 @@ await test("music, volume, play area and hole picture: add, export, reopen", asy
   await placeStartAndFlag(page);
   await page.click('.tab[data-tab="holes"]');
   await page.click("#fit-bounds");
-  // Choose the items in the boxes: start from the game's own, then set one.
+  // Choose the items in the boxes (Objects tab, with the box tools): start from the game's own, then set one.
+  await page.click('.tab[data-tab="objects"]');
   await page.check('.items-own[data-key="items"]');
   await page.$eval('.item-weight input[data-key="items"][data-item="Coffee"]', (el) => {
     el.value = "40";
@@ -588,6 +589,18 @@ await test("music, volume, play area and hole picture: add, export, reopen", asy
   await page.click('button[data-tool="golfCarts"]');
   await dragView(page, [[0.5, 0.55], [0.6, 0.55]], 20);
   await page.check('.items-own[data-key="redItems"]');
+  // Right-click erases a red box standing on the level, but never the level under it.
+  await page.click('.place-tool[data-tool="redItemBoxes"]');
+  await clickView(page, 0.45, 0.5);
+  const reds = () => page.evaluate(() => window.__sbg.project.hole.redItemBoxes?.length ?? 0);
+  await page.waitForFunction(() => window.__sbg.project.hole.redItemBoxes?.length === 1, null, { timeout: 5000 }).catch(() => {});
+  assert((await reds()) === 1, "red box not placed from the Objects tab");
+  await page.click('button.tool[data-tool="look"]');
+  const b = await canvasBox(page);
+  await page.mouse.click(b.x + b.width * 0.45, b.y + b.height * 0.5, { button: "right" });
+  await page.waitForFunction(() => (window.__sbg.project.hole.redItemBoxes?.length ?? 0) === 0, null, { timeout: 5000 }).catch(() => {});
+  assert((await reds()) === 0, "right-click did not erase the red box");
+  await page.click('.tab[data-tab="holes"]');
   // A vanilla hole's sky, then a picture of our own on top.
   await page.selectOption("#sky", "Mirage");
   const skyPng = path.join(tmp, "my sky.png");

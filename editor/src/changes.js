@@ -2,6 +2,14 @@
 // Write for players: what they can do now in the editor, not how it works, and not mod or game news. Bump `id` for every new entry.
 export const CHANGES = [
   {
+    id: 6,
+    date: "2026-10-26",
+    items: [
+      "Tools are grouped in the toolbar: <b>Hole</b>, <b>Objects</b>, <b>Level</b>, <b>Try</b>. Item boxes, red boxes and golf carts are objects now: you find them, their counts and the items in the boxes in the <b>Objects</b> tab too.",
+      "Right-click erases the box, cart or marker you point at (red boxes too), and never the level itself. A level piece is removed with Delete after selecting it.",
+    ],
+  },
+  {
     id: 5,
     date: "2026-10-26",
     items: [

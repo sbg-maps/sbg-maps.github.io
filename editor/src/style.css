@@ -1246,3 +1246,15 @@ a.btn {
   font-weight: 700;
   margin-bottom: 6px;
 }
+
+/* Group labels between the toolbar's tools. */
+.tool-group {
+  align-self: center;
+  margin-left: 6px;
+  padding-left: 10px;
+  border-left: 2px solid rgba(47, 107, 39, 0.25);
+  color: var(--muted);
+  font: 700 11px/1 var(--ui-font);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}

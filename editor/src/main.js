@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { loadFolder, loadZip, holeGrids, SURFACES } from "./mapfile.js";
 import { importModel, importModels, findModels, unpackZips, expandArchives } from "./importer.js";
-import { renderer, pick, pickCenter, hitMaterial, frameBox, scene, camera, controls, onFrame, frame } from "./scene.js";
+import { renderer, pick, pickCenter, pointerRay, hitMaterial, frameBox, scene, camera, controls, onFrame, frame } from "./scene.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { HeightmapView } from "./viewer.js";
 import { Project, MODEL_SURFACES, MARKERS, BASE_Y, MAX_PER_HOLE, MAX_SIZE, ITEMS } from "./project.js";
@@ -410,29 +410,30 @@ function editViewHole(index) {
 
 // ---------- Tools ----------
 
+// Toolbar tools, in labelled groups: what makes the hole, things placed on it, editing the level, trying it out.
 const PLACE_TOOLS = [
   { id: "look", name: "Look", tip: "Orbit around. Click the level to find its material, or an object to select it." },
-  { id: "tee", name: "Start", tip: "Click to place the Start: the tee, where players hit their first shot." },
-  { id: "cup", name: "Flag", tip: "Click to place the Flag: the hole (cup) players are aiming for." },
-  { id: "itemBoxes", name: "Item box", tip: "Click to add item boxes (up to 64 per hole)." },
-  { id: "golfCarts", name: "Golf cart", tip: "Click to park a golf cart (it faces the Flag), or click and drag to aim it. Anyone can drive them. Needs mod 0.4.0." },
-  { id: "redItemBoxes", name: "Red box", tip: "Click to add red item boxes: they give the better movement items (like spring boots). Needs mod 0.4.0." },
-  { id: "checkpoints", name: "Checkpoint", tip: "Click to add checkpoints, in order from the Start to the Flag: players come back to the furthest one they reached." },
-  { id: "bounds", name: "Play area", tip: "Click corners around the hole: balls that leave this area are out of bounds. Erase removes a corner." },
-  { id: "pov", name: "Player view", tip: "Click to stand there and see what a player sees (in the Player view window)." },
-  { id: "area", name: "Cut area", tip: "Click corners around a part of the level (seen from above), then Cut it out: everything inside becomes an object you can move, resize or delete. Works on solid meshes too." },
-  { id: "piece", name: "Cut piece", tip: "Click a floating island (or any separate piece of an imported level) to cut it out as an object you can move, turn and resize. Ctrl+Z puts it back." },
-  { id: "golfer", name: "Golfer", tip: "Click to drop a golfer (player-sized) anywhere, to judge the scale. Not saved into the map." },
-  { id: "erase", name: "Erase", tip: "Click a marker or golfer to remove it. With any tool, right-click an object or marker to erase it." },
+  { id: "tee", group: "Hole", name: "Start", tip: "Click to place the Start: the tee, where players hit their first shot." },
+  { id: "cup", group: "Hole", name: "Flag", tip: "Click to place the Flag: the hole (cup) players are aiming for." },
+  { id: "checkpoints", group: "Hole", name: "Checkpoint", tip: "Click to add checkpoints, in order from the Start to the Flag: players come back to the furthest one they reached." },
+  { id: "bounds", group: "Hole", name: "Play area", tip: "Click corners around the hole: balls that leave this area are out of bounds. Erase removes a corner." },
+  { id: "itemBoxes", group: "Objects", name: "Item box", tip: "Click to add item boxes (up to 64 per hole). Choose what they give in the Objects tab." },
+  { id: "redItemBoxes", group: "Objects", name: "Red box", tip: "Click to add red item boxes: they give the better movement items (like spring boots). Needs mod 0.4.1." },
+  { id: "golfCarts", group: "Objects", name: "Golf cart", tip: "Click to park a golf cart (it faces the Flag), or click and drag to aim it. Anyone can drive them. Needs mod 0.4.1." },
+  { id: "area", group: "Level", name: "Cut area", tip: "Click corners around a part of the level (seen from above), then Cut it out: everything inside becomes an object you can move, resize or delete. Works on solid meshes too." },
+  { id: "piece", group: "Level", name: "Cut piece", tip: "Click a floating island (or any separate piece of an imported level) to cut it out as an object you can move, turn and resize. Ctrl+Z puts it back." },
+  { id: "pov", group: "Try", name: "Player view", tip: "Click to stand there and see what a player sees (in the Player view window)." },
+  { id: "golfer", group: "Try", name: "Golfer", tip: "Click to drop a golfer (player-sized) anywhere, to judge the scale. Not saved into the map." },
+  { id: "erase", group: "Erase", name: "Erase", tip: "Click a marker or golfer to remove it. With any tool, right-click a marker or placed object to erase it." },
 ];
 const TERRAIN_TOOLS = [
-  { id: "land", name: "Land", tip: "Drag to make land out of the sea (beaches appear by themselves). Right-drag to look around." },
-  { id: "sea", name: "Sea", tip: "Drag to sink land into the sea. Right-drag to look around." },
-  { id: "raise", name: "Raise", tip: "Drag to raise the ground. Right-drag to look around." },
-  { id: "lower", name: "Lower", tip: "Drag to lower the ground (below the water level it becomes water). Right-drag to look around." },
-  { id: "smooth", name: "Smooth", tip: "Drag to smooth bumps. Right-drag to look around." },
-  { id: "flatten", name: "Flatten", tip: "Drag to flatten to the height where you start. Right-drag to look around." },
-  { id: "paint", name: "Paint", tip: "Drag to paint the surface chosen in the Terrain tab. Right-drag to look around." },
+  { id: "land", group: "Land", name: "Land", tip: "Drag to make land out of the sea (beaches appear by themselves). Right-drag to look around." },
+  { id: "sea", group: "Land", name: "Sea", tip: "Drag to sink land into the sea. Right-drag to look around." },
+  { id: "raise", group: "Land", name: "Raise", tip: "Drag to raise the ground. Right-drag to look around." },
+  { id: "lower", group: "Land", name: "Lower", tip: "Drag to lower the ground (below the water level it becomes water). Right-drag to look around." },
+  { id: "smooth", group: "Land", name: "Smooth", tip: "Drag to smooth bumps. Right-drag to look around." },
+  { id: "flatten", group: "Land", name: "Flatten", tip: "Drag to flatten to the height where you start. Right-drag to look around." },
+  { id: "paint", group: "Land", name: "Paint", tip: "Drag to paint the surface chosen in the Terrain tab. Right-drag to look around." },
 ];
 const BRUSH_TOOLS = new Set(TERRAIN_TOOLS.map((t) => t.id));
 
@@ -464,7 +465,12 @@ function setTool(id) {
 function renderToolbar() {
   const tools = project?.terrain ? [...PLACE_TOOLS.slice(0, 1), ...TERRAIN_TOOLS, ...PLACE_TOOLS.slice(1)] : PLACE_TOOLS;
   toolbar.innerHTML =
-    tools.map((t) => `<button class="tool ${t.id === tool ? "active" : ""} ${BRUSH_TOOLS.has(t.id) ? "brush" : ""}" data-tool="${t.id}" title="${t.tip}">${t.name}</button>`).join("") +
+    tools
+      .map((t, i) => {
+        const label = t.group && t.group !== tools[i - 1]?.group && t.group !== "Erase" ? `<span class="tool-group">${t.group}</span>` : "";
+        return `${label}<button class="tool ${t.id === tool ? "active" : ""} ${BRUSH_TOOLS.has(t.id) ? "brush" : ""}" data-tool="${t.id}" title="${t.tip}">${t.name}</button>`;
+      })
+      .join("") +
     (tool === "path" ? `<button class="tool active" data-tool="look" title="Stop drawing the path (Esc)">Done drawing</button>` : "") +
     (tool === "area"
       ? `<button class="tool active" id="cut-area" ${project?.cutOutline?.length >= 3 ? "" : "disabled"} title="Cut everything inside the outline out as an object">Cut it out (${project?.cutOutline?.length ?? 0} corners)</button><button class="tool" id="cut-clear" title="Start the outline again">Clear outline</button>`
@@ -479,6 +485,7 @@ function renderToolbar() {
     b.addEventListener("click", () => {
       setTool(b.dataset.tool);
       setStatus([...tools, { id: "look", tip: "" }].find((t) => t.id === tool)?.tip ?? "");
+      if (tab === "objects") renderPanel(); // its place buttons show the tool too
     }),
   );
 }
@@ -547,7 +554,7 @@ renderer.domElement.addEventListener("pointermove", (e) => {
   if (stroke) stroke.last = e;
 });
 renderer.domElement.addEventListener("pointerdown", (e) => {
-  downAt = { x: e.clientX, y: e.clientY };
+  downAt = { x: e.clientX, y: e.clientY, t: performance.now() };
   if (e.button !== 0 || !project?.terrain || !BRUSH_TOOLS.has(tool)) return;
   const hit = pick(e, [project.terrain.mesh]);
   if (!hit) return;
@@ -594,20 +601,23 @@ let downAt = null;
 // Right-click (without dragging, which pans or looks around) erases the object or marker under the pointer.
 renderer.domElement.addEventListener("contextmenu", (e) => e.preventDefault());
 renderer.domElement.addEventListener("pointerup", (e) => {
-  if (!project || !downAt || e.button !== 2 || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 5) return;
-  const hit = pick(e, project.pickTargets);
-  if (!hit) return;
-  const owner = project.objects.find((o) => isInside(o, hit.object));
-  if (owner) {
-    if (owner === selectedObject) selectObject(null);
-    history.record(() => project.removeObject(owner));
-    project.rebuildMarkers();
-    setStatus(`Erased ${owner.name || "object"} (Ctrl+Z brings it back)`);
-  } else {
-    let erased = false;
-    history.record(() => (erased = project.erase(hit.point)));
-    setStatus(erased ? "Erased (Ctrl+Z brings it back)" : "Nothing to erase there");
+  // A quick right-click that did not move; a slower press or a drag is looking around.
+  if (!project || !downAt || e.button !== 2 || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 5 || performance.now() - downAt.t > 400) return;
+  // Markers (boxes, carts, the Start...) first: they stand on top of whatever is under them.
+  let erased = false;
+  history.record(() => (erased = project.erase(null, pointerRay(e))));
+  if (erased) {
+    setStatus("Erased (Ctrl+Z brings it back)");
+    return renderPanel();
   }
+  const hit = pick(e, project.pickTargets);
+  const owner = hit && project.objects.find((o) => isInside(o, hit.object));
+  if (!owner) return setStatus("Nothing to erase there");
+  if (project.isLevelPart(owner)) return setStatus("That is part of the level: select it and press Delete to remove it");
+  if (owner === selectedObject) selectObject(null);
+  history.record(() => project.removeObject(owner));
+  project.rebuildMarkers();
+  setStatus(`Erased ${owner.name || "object"} (Ctrl+Z brings it back)`);
   renderPanel();
 });
 renderer.domElement.addEventListener("pointerup", (e) => {
@@ -644,7 +654,7 @@ renderer.domElement.addEventListener("pointerup", (e) => {
     setStatus(`Cut out a piece (${piece.taken} triangles). Move, turn or resize it with the handles; Ctrl+Z puts it back.`);
   } else if (tool === "erase") {
     history.record(() => {
-      if (!project.erase(hit.point)) setStatus("No marker there");
+      if (!project.erase(hit.point, pointerRay(e))) setStatus("No marker there");
     });
     renderPanel();
   } else {
@@ -973,11 +983,30 @@ const DEFAULTS = {
 /** The object's size in metres per local unit (paths and speeds are stored in local units). */
 const unitScale = (o) => o.getWorldScale(new THREE.Vector3()).x || 1;
 
+/** Things placed per hole with a toolbar tool (Objects group): shown on top of the Objects tab too. */
+const HOLE_OBJECTS = ["itemBoxes", "redItemBoxes", "golfCarts"];
+
 function objectsPanel() {
   const objects = project.objects;
   const sel = selectedObject;
+  const h = project.hole;
   return `
-    <h3>Add</h3>
+    <h3>On this hole</h3>
+    <div class="palette">
+      ${HOLE_OBJECTS.map((id) => {
+        const t = PLACE_TOOLS.find((x) => x.id === id);
+        return `<button class="btn ${tool === id ? "btn-primary" : "btn-secondary"} small place-tool" data-tool="${id}" title="${t.tip}">${t.name}</button>`;
+      }).join("")}
+    </div>
+    <div class="stats">
+      ${stat("Item boxes", `${h.itemBoxes.length + (h.redItemBoxes?.length ?? 0)} / ${MAX_PER_HOLE}${h.redItemBoxes?.length ? ` (${h.redItemBoxes.length} red)` : ""}`)}
+      ${stat("Golf carts", `${h.golfCarts?.length ?? 0} / 16`)}
+    </div>
+    <p class="hint">Pick one, then click the level to place it. Right-click one to erase it.</p>
+    <h3>Items in the boxes</h3>
+    ${itemChoice("items", h.items, "Normal boxes", "Normal boxes give the game's usual items: better ones the further a player is behind the leader.")}
+    ${itemChoice("redItems", h.redItems, "Red boxes", "Red boxes give spring boots or the fire club, like in the game.")}
+    <h3>Add to the level</h3>
     <div class="palette">
       ${Object.entries(SHAPES).map(([id, s]) => `<button class="btn btn-secondary small add-shape" data-shape="${id}">${s.name}</button>`).join("")}
       <label class="btn btn-secondary small" tabindex="0">Picture<input id="add-sprite" type="file" accept="image/*" hidden /></label>
@@ -1046,7 +1075,40 @@ async function addObject(make, label) {
   setStatus(`Added ${label}`);
 }
 
+/** Item choices of the hole's boxes (Objects tab). */
+function wireItemChoices() {
+  info.querySelectorAll(".items-own").forEach((c) =>
+    c.addEventListener("change", () => {
+      const key = c.dataset.key;
+      history.record(() => {
+        if (c.checked) project.hole[key] = Object.fromEntries(ITEMS.map((it) => [it.id, key === "redItems" ? it.red : it.close]).filter(([, w]) => w > 0));
+        else delete project.hole[key];
+      });
+      renderPanel();
+    }),
+  );
+  info.querySelectorAll(".item-weight input").forEach((input) =>
+    input.addEventListener("change", () => {
+      const v = Math.max(0, Math.min(100, Number(input.value) || 0));
+      history.record(() => {
+        const weights = project.hole[input.dataset.key];
+        if (v > 0) weights[input.dataset.item] = v;
+        else delete weights[input.dataset.item];
+      });
+      renderPanel();
+    }),
+  );
+}
+
 function wireObjects() {
+  wireItemChoices();
+  info.querySelectorAll(".place-tool").forEach((b) =>
+    b.addEventListener("click", () => {
+      setTool(tool === b.dataset.tool ? "look" : b.dataset.tool);
+      setStatus(PLACE_TOOLS.find((t) => t.id === tool)?.tip ?? "");
+      renderPanel();
+    }),
+  );
   const objects = project.objects;
   info.querySelectorAll(".add-shape").forEach((b) => b.addEventListener("click", () => addObject({ root: SHAPES[b.dataset.shape].make(), data: SHAPES[b.dataset.shape].data }, SHAPES[b.dataset.shape].name)));
   info.querySelector("#add-sprite").addEventListener("change", (e) =>
@@ -1163,15 +1225,10 @@ function holesPanel() {
       ${stat("Start to flag", length)}
       ${stat("Start (tee)", h.tee ? "placed" : "missing")}
       ${stat("Flag (cup)", h.cup ? "placed" : "missing")}
-      ${stat(MARKERS.itemBoxes.name + "es", `${h.itemBoxes.length + (h.redItemBoxes?.length ?? 0)} / ${MAX_PER_HOLE}${h.redItemBoxes?.length ? ` (${h.redItemBoxes.length} red)` : ""}`)}
       ${stat(MARKERS.checkpoints.name + "s", `${h.checkpoints.length} / ${MAX_PER_HOLE}`)}
-      ${h.golfCarts?.length ? stat("Golf carts", `${h.golfCarts.length} / 16`) : ""}
     </div>
     <h3>Sky</h3>
     ${skyChoice(h)}
-    <h3>Items in the boxes</h3>
-    ${itemChoice("items", h.items, "Normal boxes", "Normal boxes give the game's usual items: better ones the further a player is behind the leader.")}
-    ${itemChoice("redItems", h.redItems, "Red boxes", "Red boxes give spring boots or the fire club, like in the game.")}
     <h3>Play area</h3>
     <p class="hint">Balls that leave it are out of bounds, so shots can't fly off to other parts of the map. ${
       h.bounds?.length >= 3 ? `${h.bounds.length} corners.` : h.bounds?.length ? `${h.bounds.length} corner${h.bounds.length === 1 ? "" : "s"}: needs at least 3.` : "None yet: the whole map counts."
@@ -1309,27 +1366,6 @@ function wireHoles() {
     updateSkyPreview();
     renderPanel();
   });
-  info.querySelectorAll(".items-own").forEach((c) =>
-    c.addEventListener("change", () => {
-      const key = c.dataset.key;
-      history.record(() => {
-        if (c.checked) project.hole[key] = Object.fromEntries(ITEMS.map((it) => [it.id, key === "redItems" ? it.red : it.close]).filter(([, w]) => w > 0));
-        else delete project.hole[key];
-      });
-      renderPanel();
-    }),
-  );
-  info.querySelectorAll(".item-weight input").forEach((input) =>
-    input.addEventListener("change", () => {
-      const v = Math.max(0, Math.min(100, Number(input.value) || 0));
-      history.record(() => {
-        const weights = project.hole[input.dataset.key];
-        if (v > 0) weights[input.dataset.item] = v;
-        else delete weights[input.dataset.item];
-      });
-      renderPanel();
-    }),
-  );
   info.querySelector("#fit-bounds").addEventListener("click", () => {
     history.record(() => project.fitPlayArea());
     renderPanel();

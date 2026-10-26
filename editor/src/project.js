@@ -218,6 +218,17 @@ export class Project {
   }
 
   /** Objects inside the level (see-saws, rollers, props): nodes marked with userData.object. */
+  /**
+   * Is this object part of the level rather than something placed on it: a cut-out piece, or one covering most of the
+   * level (some reopened maps hold the whole level as one object)? Right-click never erases those.
+   */
+  isLevelPart(o) {
+    if (o.userData.levelPiece || o.name === "Level piece") return true;
+    const own = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3());
+    const all = this.box.getSize(new THREE.Vector3());
+    return own.x * own.z > 0.25 * all.x * all.z;
+  }
+
   get objects() {
     const out = [];
     const walk = (o) => {
@@ -372,6 +383,7 @@ export class Project {
     const obj = new THREE.Group();
     obj.name = "Level piece";
     obj.userData.object = "static";
+    obj.userData.levelPiece = true;
     const box = new THREE.Box3();
     const parts = [];
     for (const [mesh, triangles] of piece.take) {
@@ -500,13 +512,27 @@ export class Project {
   }
 
   /** Removes the marker of the active hole nearest to a world point (within 6 m). */
-  erase(worldPoint) {
+  /**
+   * Erases the marker nearest to a world point (within 6 m), or, given a ray, the marker the ray passes closest to
+   * (markers stand up to about 2 m tall, and far ones get more room since they look smaller). Returns whether one was.
+   */
+  erase(worldPoint, ray = null) {
     const h = this.hole;
     let best = null;
+    const lift = new THREE.Vector3(0, 1, 0);
     const consider = (p, remove) => {
       if (!p) return;
-      const d = fromMap(p).distanceTo(worldPoint);
-      if (d < 6 && (!best || d < best.d)) best = { d, remove };
+      const at = fromMap(p);
+      let d, reach;
+      if (ray) {
+        at.add(lift);
+        d = ray.distanceToPoint(at);
+        reach = Math.max(1.6, ray.origin.distanceTo(at) * 0.025);
+      } else {
+        d = at.distanceTo(worldPoint);
+        reach = 6;
+      }
+      if (d < reach && (!best || d < best.d)) best = { d, remove };
     };
     consider(h.tee, () => (h.tee = null));
     consider(h.cup, () => (h.cup = null));

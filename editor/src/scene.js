@@ -84,6 +84,14 @@ export function pick(event, objects, accept = () => true) {
   return raycaster.intersectObjects(objects, true).find((h) => isShown(h.object) && hitMaterial(h)?.visible !== false && accept(h)) ?? null;
 }
 
+/** The ray from the camera through the pointer. */
+export function pointerRay(event) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
+  raycaster.setFromCamera(pointer, camera);
+  return raycaster.ray.clone();
+}
+
 /** Hit at the centre of the view (for placing new things where the user is looking). */
 export function pickCenter(objects) {
   raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
