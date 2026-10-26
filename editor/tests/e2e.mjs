@@ -332,6 +332,35 @@ await test("reopen the exported terrain level", async () => {
   await page.close();
 });
 
+await test("out of bounds zone: added from Objects, not ground for markers, exported as a zone", async () => {
+  const page = await freshPage(browser, url);
+  await page.click("#new-level-btn");
+  await page.click('[data-act="create"]');
+  await page.waitForFunction(() => window.__sbg.project?.terrain, null, { timeout: 20000 });
+  await page.click('.tab[data-tab="objects"]');
+  await page.click('.add-shape[data-shape="outofbounds"]');
+  await page.waitForFunction(() => window.__sbg.project.objects.some((o) => o.userData.object === "outofbounds"), null, { timeout: 5000 }).catch(() => {});
+  const s = await page.evaluate(async () => {
+    const p = window.__sbg.project;
+    const zone = p.objects.find((o) => o.userData.object === "outofbounds");
+    if (!zone) return null;
+    const at = zone.getWorldPosition(new window.__sbg.THREE.Vector3());
+    // The ground under the zone is the terrain, not the zone's top.
+    const ground = p.groundUnder({ x: at.x, z: at.z });
+    return { kind: document.querySelector("#obj-kind")?.value, zoneBottom: at.y, ground };
+  });
+  assert(s, "no out of bounds zone added");
+  assert(s.kind === "outofbounds", `selected behaviour: ${s.kind}`);
+  assert(Math.abs(s.ground - s.zoneBottom) < 1, `ground under the zone read as ${s.ground}, zone stands at ${s.zoneBottom}`);
+  await placeStartAndFlag(page);
+  const map = await exportMap(page, "zone");
+  const glb = unzipSync(new Uint8Array(fs.readFileSync(map)))["level.glb"];
+  const json = JSON.parse(strFromU8(glb.subarray(20, 20 + new DataView(glb.buffer, glb.byteOffset + 12, 4).getUint32(0, true))));
+  assert(json.nodes.some((n) => n.extras?.object === "outofbounds"), "exported level has no out of bounds node");
+  assert(page.errors.length === 0, page.errors.join("; "));
+  await page.close();
+});
+
 await test("zips: a map zipped with its folder, a zipped .sbgmap, zips in zips, other archives explained", async () => {
   assert(terrainMap, "no exported terrain map (an earlier test failed)");
   const { zipSync } = await import("fflate");

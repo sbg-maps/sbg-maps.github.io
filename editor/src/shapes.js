@@ -16,7 +16,15 @@ export const SHAPES = {
   pillar: { name: "Pillar", make: () => mesh(new THREE.CylinderGeometry(1.2, 1.2, 8, 24), mat(0xb4b4ac, "solid"), 4) },
   wall: { name: "Wall", make: () => mesh(new THREE.BoxGeometry(12, 4, 1), mat(0xc27ad6, "solid"), 2) },
   jumppad: { name: "Jump pad", make: () => jumpPad(), data: { object: "jumppad", launchSpeed: 103, launchPitch: 35 } },
+  outofbounds: { name: "Out of bounds", make: () => mesh(new THREE.BoxGeometry(10, 6, 10), zoneMaterial(), 3), data: { object: "outofbounds" } },
 };
+
+/** See-through red for out of bounds zones: only seen in the editor (the game draws nothing there). */
+function zoneMaterial() {
+  const m = new THREE.MeshStandardMaterial({ color: 0xe8443a, roughness: 1, transparent: true, opacity: 0.3, depthWrite: false, name: "out of bounds" });
+  Object.assign(m.userData, { surface: "none", alphaMode: "blend", opacity: 0.3 });
+  return m;
+}
 
 /** A round pad with an arrow on top pointing the way it launches (forward, map +z). */
 function jumpPad() {

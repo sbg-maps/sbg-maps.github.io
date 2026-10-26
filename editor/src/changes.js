@@ -2,6 +2,13 @@
 // Write for players: what they can do now in the editor, not how it works, and not mod or game news. Bump `id` for every new entry.
 export const CHANGES = [
   {
+    id: 7,
+    date: "2026-10-26",
+    items: [
+      "<b>Out of bounds</b> zones (Objects tab): a see-through red box you can move and size. Balls that land in it, or fall through it into a pit, go back to their player with a penalty stroke. Put one in holes and gaps balls should not drop into. Needs mod 0.5.0.",
+    ],
+  },
+  {
     id: 6,
     date: "2026-10-26",
     items: [

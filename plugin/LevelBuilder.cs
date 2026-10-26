@@ -179,6 +179,10 @@ namespace SbgMaps
                         BuildParts(ctx, go.transform, obj.Primitives, obj.Name, null);
                         MapJumpPad.Attach(go, obj.Extras);
                         break;
+                    case "outofbounds":
+                        BuildParts(ctx, go.transform, obj.Primitives, obj.Name, null, forceSurface: "none");
+                        MapOutOfBoundsZone.Attach(go);
+                        break;
                     default:
                         if (billboard && obj.Extras?["hitbox"] is Newtonsoft.Json.Linq.JObject hitbox)
                         {

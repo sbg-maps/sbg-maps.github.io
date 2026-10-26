@@ -126,7 +126,8 @@ A node with `extras.object` is an object. It is built separately, with its own t
 | `roller` | rolls copies of its model along `extras.path`, knocking players over. Positions come from the network clock, so they match on every machine. |
 | `mover` | platforms riding `extras.path` (`loop: true` to go round, otherwise back and forth), `count` evenly spaced copies at `speed` units/s. Clock-synced; players ride along. With `knocks: true` they knock players over instead. |
 | `chomp` | hops around its origin (the post) and lunges up to `reach` in a clock-chosen direction (`radius`, `idleReach`, `lungeSpeed`); touching it knocks players over. |
-| `jumppad` | launches players and balls touching its top along its forward direction (+z), tilted up by `launchPitch` degrees (0 flat, 90 straight up; default 65) at `launchSpeed` m/s (default 22). |
+| `jumppad` | launches players and balls touching its top along its forward direction (+z), tilted up by `launchPitch` degrees (0 flat, 90 straight up; default 35) at `launchSpeed` m/s (default 103). |
+| `outofbounds` | an out of bounds zone: the box around its meshes is an invisible trigger (nothing is drawn or collides). A ball that lands on ground inside it, drops out through its bottom, or stays inside 1.5 s goes back to its player with a penalty stroke. Mod 0.5.0. |
 
 Any object may set `billboard: true` (its look turns to face the camera, for pictures) and a static object may set `knocks: true`.
 

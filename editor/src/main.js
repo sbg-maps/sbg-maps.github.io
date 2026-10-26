@@ -974,6 +974,7 @@ const BEHAVIOURS = [
   ["seesaw", "Tilting see-saw"],
   ["chomp", "Chain chomp (lunges around its spot)"],
   ["jumppad", "Jump pad (launches players and balls)"],
+  ["outofbounds", "Out of bounds zone (balls in it go back)"],
 ];
 const DEFAULTS = {
   mover: { speed: 4, loop: true, count: 1 },
@@ -1055,6 +1056,7 @@ function selectedObjectPanel(o) {
         </div>
         <p class="hint">Paths start from where the object stands. ${points < 2 ? "Add at least 2 points." : ""}</p>` : ""}
       ${kind === "chomp" ? `<p class="hint">Hops around where you place it and lunges every few seconds. Touching it knocks players over.</p>` : ""}
+      ${kind === "outofbounds" ? `<p class="hint">A ball that lands inside this zone, or keeps falling through it, goes back to its player with a penalty stroke, like any out of bounds shot. Use it over holes and pits balls should not drop into. Players walk through it; it is invisible in the game. Resize it with Size.</p>` : ""}
       ${kind === "seesaw" ? `<p class="hint">Tilts toward players standing on it. Its long side should run front to back.</p>` : ""}
       ${kind === "jumppad" ? `
         ${slider("obj-jump-speed", "Launch speed (players)", d.launchSpeed ?? 103, { min: 5, max: 200, step: 1, unit: "m/s" })}

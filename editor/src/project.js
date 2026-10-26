@@ -788,7 +788,7 @@ export class Project {
   firstHit(origin, dir, far, ignore = null) {
     const ray = new THREE.Raycaster(origin, dir, 0, far);
     return ray.intersectObjects([this.pivot, this.terrain?.mesh].filter(Boolean), true).find((hit) => {
-      for (let o = hit.object; o; o = o.parent) if (!o.visible || o === ignore) return false;
+      for (let o = hit.object; o; o = o.parent) if (!o.visible || o === ignore || o.userData.object === "outofbounds") return false;
       const mats = Array.isArray(hit.object.material) ? hit.object.material : [hit.object.material];
       const group = hit.object.geometry.groups?.find((g) => hit.faceIndex * 3 >= g.start && hit.faceIndex * 3 < g.start + g.count);
       return mats[group?.materialIndex ?? 0]?.visible !== false;
@@ -1075,7 +1075,7 @@ export class Project {
   /** Height of the level or terrain under a point (three.js coordinates), or -Infinity. */
   groundUnder(p) {
     const ray = new THREE.Raycaster(new THREE.Vector3(p.x, 1e5, p.z), new THREE.Vector3(0, -1, 0));
-    const hit = ray.intersectObjects([this.pivot, this.terrain?.mesh].filter(Boolean), true).find((h) => h.object.visible);
+    const hit = ray.intersectObjects([this.pivot, this.terrain?.mesh].filter(Boolean), true).find((h) => h.object.visible && !isZone(h.object));
     return hit ? hit.point.y : -Infinity;
   }
 
@@ -1374,6 +1374,12 @@ function exportMaterial({ material, original }) {
   m.blending = THREE.NormalBlending;
   m.side = doubleSided ? THREE.DoubleSide : THREE.FrontSide;
   return m;
+}
+
+/** Is this part of an out of bounds zone (seen in the editor, but nothing to stand on)? */
+function isZone(object) {
+  for (let o = object; o; o = o.parent) if (o.userData.object === "outofbounds") return true;
+  return false;
 }
 
 const fadeCache = new WeakMap();

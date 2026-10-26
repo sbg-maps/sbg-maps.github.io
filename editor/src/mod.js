@@ -7,6 +7,11 @@
 // Write for players: what they get in the game, a line each.
 export const MOD_VERSIONS = [
   {
+    version: "0.5.0",
+    date: "2026-10-26",
+    items: ["Out of bounds zones: balls that land in one, or fall through it into a pit, go back to their player with a penalty stroke."],
+  },
+  {
     version: "0.4.1",
     date: "2026-10-25",
     items: [

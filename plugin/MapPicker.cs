@@ -136,6 +136,7 @@ namespace SbgMaps
             // "Vertigo" (a vanilla hole by scene or hole name) or "map <map id> <hole number>"; "shots" takes screenshots.
             var words = lines[0].Split(' ');
             screenshots = lines.Contains("shots");
+            oobTest = lines.Contains("oob");
             if (words[0] == "skies")
             {
                 // Visit every vanilla hole once to save its sky (SkyThemes), then quit.
@@ -150,7 +151,7 @@ namespace SbgMaps
                 SingletonBehaviour<MainMenu>.Instance.StartHost();
                 return;
             }
-            quitAfterFacts = !screenshots;
+            quitAfterFacts = !screenshots && !oobTest;
             pendingSince = Time.realtimeSinceStartup;
             readySince = -1f;
             if (words[0] == "map" && words.Length >= 3 && int.TryParse(words[2], out int number))
@@ -196,8 +197,79 @@ namespace SbgMaps
                 Plugin.Instance.StartCoroutine(TakeShots());
                 return;
             }
+            if (oobTest)
+            {
+                oobTest = false;
+                Plugin.Instance.StartCoroutine(TestOutOfBounds());
+                return;
+            }
             if (!quitAfterFacts)
                 return;
+            Plugin.Log.LogInfo("Autorun: done, quitting");
+            Application.Quit();
+        }
+
+        private static bool oobTest;
+
+        /// <summary>
+        /// Dev check of out of bounds zones: drops each ball into the first zone and logs where it goes, then quits.
+        /// </summary>
+        private static System.Collections.IEnumerator TestOutOfBounds()
+        {
+            yield return new WaitForSecondsRealtime(8f);
+            var zone = UnityEngine.Object.FindFirstObjectByType<MapOutOfBoundsZone>();
+            var balls = UnityEngine.Object.FindObjectsByType<GolfBall>(FindObjectsSortMode.None);
+            Plugin.Log.LogInfo($"OOB test: zone {(zone ? zone.GetComponent<BoxCollider>().bounds.ToString() : "missing")}, manager {SingletonBehaviour<BallOutOfBoundsTriggerManager>.HasInstance}, {balls.Length} balls");
+            foreach (var ball in balls)
+            {
+                Plugin.Log.LogInfo($"OOB test: ball at {ball.transform.position} hidden={ball.IsHidden} state={ball.OutOfBoundsReturnState}");
+                if (zone == null || ball.IsHidden)
+                    continue;
+                var b = zone.GetComponent<BoxCollider>().bounds;
+                var body = ball.GetComponent<Rigidbody>();
+                var drop = new Vector3(b.center.x, b.max.y - 0.5f, b.center.z);
+                if (body != null)
+                {
+                    body.position = drop;
+                    body.linearVelocity = Vector3.zero;
+                }
+                ball.transform.position = drop;
+            }
+            for (int i = 0; i < 12; i++)
+            {
+                yield return new WaitForSecondsRealtime(0.5f);
+                foreach (var ball in balls)
+                    if (ball != null)
+                        Plugin.Log.LogInfo($"OOB test: t={0.5f * (i + 1):0.0}s ball at {ball.transform.position} state={ball.OutOfBoundsReturnState}");
+            }
+            // Again with the zone floating 40 m up: the ball falls out through its bottom.
+            if (zone != null)
+            {
+                zone.transform.position += Vector3.up * 40f;
+                Physics.SyncTransforms();
+                yield return new WaitForSecondsRealtime(1f);
+                var b = zone.GetComponent<BoxCollider>().bounds;
+                foreach (var ball in balls)
+                {
+                    if (ball == null || ball.IsHidden)
+                        continue;
+                    var drop = new Vector3(b.center.x, b.max.y - 0.5f, b.center.z);
+                    var body = ball.GetComponent<Rigidbody>();
+                    if (body != null)
+                    {
+                        body.position = drop;
+                        body.linearVelocity = Vector3.zero;
+                    }
+                    ball.transform.position = drop;
+                }
+                for (int i = 0; i < 10; i++)
+                {
+                    yield return new WaitForSecondsRealtime(0.3f);
+                    foreach (var ball in balls)
+                        if (ball != null)
+                            Plugin.Log.LogInfo($"OOB test (floating zone, bottom {b.min.y:0.0}): t={0.3f * (i + 1):0.0}s ball at {ball.transform.position} state={ball.OutOfBoundsReturnState}");
+                }
+            }
             Plugin.Log.LogInfo("Autorun: done, quitting");
             Application.Quit();
         }
