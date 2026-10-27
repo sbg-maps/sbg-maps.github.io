@@ -12,3 +12,4 @@ editor/node_modules/
 editor/dist/
 imports/
 release/
+community/.venv/
