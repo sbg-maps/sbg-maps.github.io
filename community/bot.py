@@ -22,6 +22,7 @@ import logging
 import os
 import re
 import shutil
+from urllib.parse import quote
 import zipfile
 from pathlib import Path
 
@@ -273,16 +274,22 @@ class Bot(discord.Client):
         save_state(state)
 
         if (added or replaced or removed) and not first_run:
-            lines = []
-            if added:
-                lines.append("Added: " + ", ".join(added))
-            if replaced:
-                lines.append("Updated: " + ", ".join(replaced))
+            def link(e):
+                return f"[{e['name']}](<{PUBLIC_URL}/maps/{quote(e['file'])}>)"
+
+            lines = [f"Added: {link(maps[k])}" for k in maps if k not in before]
+            lines += [f"Updated: {link(maps[k])}" for k in maps if k in before and before[k]["sha256"] != maps[k]["sha256"]]
             if removed:
                 lines.append("Removed: " + ", ".join(removed))
             total = sum(e["size"] for e in maps.values())
-            lines.append(f"All {len(maps)} maps in one zip ({mb(total)}): {PUBLIC_URL}/all.zip")
-            lines.append(f"Or pick maps: {PUBLIC_URL}/")
+            tail = [f"[All {len(maps)} maps in one zip ({mb(total)})](<{PUBLIC_URL}/all.zip>)",
+                    f"[Every map on its own](<{PUBLIC_URL}/>)"]
+            # Discord allows 2000 characters; a big batch is cut short, the page has the rest.
+            more = []
+            while lines and len("\n".join(["**Map pack updated**", *lines, *more, *tail])) > 1950:
+                lines.pop()
+                more = ["..."]
+            lines += more + tail
             await thread.send("**Map pack updated**\n" + "\n".join(lines), suppress_embeds=True)
         log.info("synced: %d maps, +%d ~%d -%d", len(maps), len(added), len(replaced), len(removed))
         self.first_sync.set()
