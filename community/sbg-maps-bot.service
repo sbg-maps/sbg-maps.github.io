@@ -8,6 +8,7 @@ After=network-online.target
 Environment=THREAD_ID=<thread id>
 Environment=DATA_DIR=/media/F/gamedev/sbg-maps-community
 Environment=PORT=3790
+Environment=CLOUDFLARED=/home/loafer/.local/bin/cloudflared
 Environment=PUBLIC_URL=https://<machine>.<tailnet>.ts.net:10000
 Environment="GAME_MAPS=/media/G/SteamLibrary/steamapps/common/Super Battle Golf/SbgMaps/maps"
 ExecStart=/media/F/gamedev/sbg-maps/community/.venv/bin/python -u /media/F/gamedev/sbg-maps/community/bot.py

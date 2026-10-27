@@ -10,7 +10,10 @@ Rules:
   posting that id is refused (the bot says so in the thread).
 - Optionally copies the maps into the game's maps folder, never touching files it did not put there.
 
-The pack is served on 127.0.0.1:PORT for Funnel to forward. Settings come from the environment (see sbg-maps-bot.service); the token is read from TOKEN_FILE.
+The pack is served on 127.0.0.1:PORT for Funnel to forward. Funnel is slow (well under 1 MB/s), so with
+CLOUDFLARED set the bot also runs a free Cloudflare quick tunnel to the same server and sends map and zip downloads
+there: the Funnel link stays the one people keep (the page and index.json come from it), and its downloads redirect
+to the tunnel, whose address changes whenever the tunnel restarts. Settings come from the environment (see sbg-maps-bot.service); the token is read from TOKEN_FILE.
 """
 
 import asyncio
@@ -35,6 +38,7 @@ PUBLIC_URL = os.environ["PUBLIC_URL"].rstrip("/")
 TOKEN_FILE = Path(os.environ.get("TOKEN_FILE", Path.home() / ".config/sbg-maps-bot/token"))
 GAME_MAPS = Path(os.environ["GAME_MAPS"]) if os.environ.get("GAME_MAPS") else None
 PORT = int(os.environ.get("PORT", "3790"))  # Tailscale Funnel forwards the public link here
+CLOUDFLARED = os.environ.get("CLOUDFLARED")  # optional: a Cloudflare tunnel carries the downloads, much faster
 
 CACHE_DIR = DATA_DIR / "cache"
 SITE_DIR = DATA_DIR / "site"
@@ -130,13 +134,45 @@ class Bot(discord.Client):
         self.first_sync = asyncio.Event()
 
     async def setup_hook(self):
-        app = web.Application()
+        app = web.Application(middlewares=[self.to_tunnel])
         app.router.add_get("/", lambda _: web.FileResponse(SITE_DIR / "index.html"))
         app.router.add_static("/", SITE_DIR)
         runner = web.AppRunner(app)
         await runner.setup()
         await web.TCPSite(runner, "127.0.0.1", PORT).start()
         self.loop.create_task(self.worker())
+        if CLOUDFLARED:
+            self.loop.create_task(self.tunnel())
+
+    fast_url = None
+
+    @web.middleware
+    async def to_tunnel(self, request, handler):
+        """Downloads asked of the Funnel link go to the tunnel."""
+        heavy = request.path.startswith("/maps/") or request.path == "/all.zip"
+        if heavy and self.fast_url and not request.host.endswith(".trycloudflare.com"):
+            raise web.HTTPFound(self.fast_url + request.path_qs)
+        return await handler(request)
+
+    async def tunnel(self):
+        """Keeps a Cloudflare quick tunnel to the web server running and remembers its address."""
+        while not self.is_closed():
+            proc = await asyncio.create_subprocess_exec(
+                CLOUDFLARED, "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{PORT}",
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+            url = None
+            async for line in proc.stderr:
+                text = line.decode(errors="replace")
+                found = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", text)
+                if found and not url:
+                    url = found.group(0)
+                if url and "Registered tunnel connection" in text and self.fast_url != url:
+                    await asyncio.sleep(5)  # the new name takes a moment to resolve everywhere
+                    self.fast_url = url
+                    log.info("downloads go through %s", url)
+            self.fast_url = None
+            log.warning("the Cloudflare tunnel stopped (exit %s), starting it again", await proc.wait())
+            await asyncio.sleep(10)
 
     async def on_ready(self):
         log.info("logged in as %s", self.user)
