@@ -7,6 +7,17 @@
 // Write for players: what they get in the game, a line each.
 export const MOD_VERSIONS = [
   {
+    version: "0.7.0",
+    date: "2026-10-27",
+    items: [
+      "Community maps: paste your group's map pack link in Mod settings. New maps download by themselves, and Custom maps has a Community list.",
+      "Players who join get the host's maps from the map pack link, much faster. Maps not in the pack still come from the host.",
+      "Maps added while you host show up in the lobby and go out to everyone, no trip to the title screen.",
+      "New maps have a New stamp until you play them.",
+      "Fixed players with other maps than the host seeing the wrong hole name, par or music.",
+    ],
+  },
+  {
     version: "0.6.0",
     date: "2026-10-26",
     items: [

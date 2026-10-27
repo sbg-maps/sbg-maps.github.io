@@ -100,6 +100,7 @@ namespace SbgMaps
                 }
                 else
                     t.Method("ClientRebuildCourseList").GetValue();
+                t.Method("UpdateNewHolesNotifications").GetValue();
                 Plugin.Log.LogInfo($"Match setup now lists {list.Count} holes");
             }
             catch (System.Exception e)
@@ -156,6 +157,100 @@ namespace SbgMaps
                 int shown = inactive.contentRoot.GetComponentsInChildren<MatchSetupHole>(true).Count(h => Shown(h.holeData, maps));
                 int all = holes.Count(h => h != null && Shown(h.holeData, maps));
                 label.text = $"{Localization.UI.MATCHSETUP_Label_Inactive} ({shown}/{all})";
+            }
+        }
+    }
+
+    /// <summary>
+    /// "New" stamps on maps this player has not played yet, in match setup (the game's own stamp) and in Custom maps.
+    /// The game remembers new holes by scene, and every map hole shares one scene, so maps are remembered by id in
+    /// SbgMaps/played-maps.txt. Maps there when the mod first keeps the list count as played.
+    /// </summary>
+    internal static class NewMaps
+    {
+        private static string File => System.IO.Path.Combine(BepInEx.Paths.GameRootPath, "SbgMaps", "played-maps.txt");
+        private static HashSet<string> played;
+
+        public static bool IsNew(string id)
+        {
+            if (played == null)
+            {
+                if (System.IO.File.Exists(File))
+                    played = new HashSet<string>(System.IO.File.ReadAllLines(File).Select(l => l.Trim()).Where(l => l.Length > 0));
+                else
+                {
+                    played = new HashSet<string>(MapLibrary.Maps.Select(m => m.Manifest.id));
+                    Save();
+                }
+            }
+            return !played.Contains(id);
+        }
+
+        public static void MarkPlayed(string id)
+        {
+            if (!IsNew(id))
+                return;
+            played.Add(id);
+            Save();
+        }
+
+        private static void Save()
+        {
+            try
+            {
+                System.IO.File.WriteAllLines(File, played.OrderBy(x => x));
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogWarning($"Could not save the played maps: {e.Message}");
+            }
+        }
+
+        [HarmonyPatch(typeof(MatchSetupMenu), "UpdateNewHolesNotifications")]
+        private static class StampPatch
+        {
+            private static void Postfix(MatchSetupMenu __instance)
+            {
+                var t = Traverse.Create(__instance);
+                var holes = t.Field("holes").GetValue<List<MatchSetupHole>>();
+                var buttons = t.Field("cachedCourseButtons").GetValue<List<MatchSetupMenuCourseButton>>();
+                var courses = GameManager.AllCourses.Courses;
+                bool any = false;
+                foreach (var hole in holes)
+                {
+                    if (hole == null || !CustomCourse.TryGetMapHole(hole.holeData, out var pack, out _))
+                        continue;
+                    bool isNew = IsNew(pack.Manifest.id);
+                    hole.SetAcknowledged(!isNew);
+                    if (!isNew)
+                        continue;
+                    any = true;
+                    int index = System.Array.IndexOf(courses, hole.holeData.ParentCourse);
+                    if (index >= 0 && index < buttons.Count)
+                        buttons[index].newNotification.SetActive(true);
+                }
+                if (any)
+                {
+                    __instance.newHolesNotification.SetActive(true);
+                    Plugin.Log.LogInfo($"New stamps on {holes.Count(h => h != null && CustomCourse.TryGetMapHole(h.holeData, out var p, out _) && IsNew(p.Manifest.id))} map holes");
+                }
+            }
+        }
+
+        /// <summary>Playing a hole of a map clears its stamp (the game calls this when a hole starts).</summary>
+        [HarmonyPatch(typeof(MatchSetupMenu), nameof(MatchSetupMenu.AcknowledgeHole))]
+        private static class PlayedPatch
+        {
+            private static bool Prefix(MatchSetupMenu __instance, HoleData holeData)
+            {
+                if (!CustomCourse.TryGetMapHole(holeData, out var pack, out _))
+                    return true;
+                if (IsNew(pack.Manifest.id))
+                {
+                    MarkPlayed(pack.Manifest.id);
+                    Traverse.Create(__instance).Method("UpdateNewHolesNotifications").GetValue();
+                }
+                return false;
             }
         }
     }

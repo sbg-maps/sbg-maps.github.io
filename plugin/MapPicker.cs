@@ -62,7 +62,7 @@ namespace SbgMaps
             if (!open)
                 return;
             title ??= new GUIStyle(GUI.skin.label) { fontSize = 26, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
-            row ??= new GUIStyle(GUI.skin.button) { fontSize = 18, alignment = TextAnchor.MiddleLeft, padding = new RectOffset(14, 14, 8, 8) };
+            row ??= new GUIStyle(GUI.skin.button) { fontSize = 18, alignment = TextAnchor.MiddleLeft, padding = new RectOffset(14, 14, 8, 8), richText = true };
             note ??= new GUIStyle(GUI.skin.label) { fontSize = 15, alignment = TextAnchor.MiddleCenter, wordWrap = true };
 
             GUI.color = new Color(0f, 0f, 0f, 0.75f);
@@ -97,7 +97,8 @@ namespace SbgMaps
                 {
                     var hole = pack.Manifest.holes[i];
                     string name = string.IsNullOrWhiteSpace(hole.name) ? $"Hole {i + 1}" : hole.name;
-                    if (GUILayout.Button($"{pack.Manifest.name}{(pack.IsPrivate ? " (private)" : "")}   {i + 1}. {name}   (par {Mathf.Max(1, hole.par)})", row, GUILayout.Height(40)))
+                    string stamp = NewMaps.IsNew(pack.Manifest.id) ? "   <color=#ffd84a><b>NEW</b></color>" : "";
+                    if (GUILayout.Button($"{pack.Manifest.name}{(pack.IsPrivate ? " (private)" : "")}   {i + 1}. {name}   (par {Mathf.Max(1, hole.par)}){stamp}", row, GUILayout.Height(40)))
                         Play(pack.Manifest.id, i);
                 }
             }
