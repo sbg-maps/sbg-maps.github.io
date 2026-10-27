@@ -21,6 +21,7 @@ namespace SbgMaps
 
         private static GameObject button;
         private static bool open;
+        private static bool community;
         private static Vector2 scroll;
         private static string pendingMap;
         private static int pendingHole;
@@ -39,7 +40,12 @@ namespace SbgMaps
             if (!SingletonBehaviour<MainMenu>.HasInstance)
                 open = false;
             if (open && Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
-                open = false;
+            {
+                if (community)
+                    community = false;
+                else
+                    open = false;
+            }
             if (pendingMap != null)
                 TryStart();
         }
@@ -65,7 +71,21 @@ namespace SbgMaps
             float width = Mathf.Min(720f, Screen.width - 40f), height = Mathf.Min(640f, Screen.height - 40f);
             var area = new Rect((Screen.width - width) / 2f, (Screen.height - height) / 2f, width, height);
             GUILayout.BeginArea(area, GUI.skin.box);
-            GUILayout.Label("Custom maps", title, GUILayout.Height(44));
+            GUILayout.Label(community ? "Community maps" : "Custom maps", title, GUILayout.Height(44));
+            if (community)
+            {
+                if (!Community.Draw(row, note))
+                {
+                    open = false;
+                    community = false;
+                    Settings.Open();
+                }
+                GUILayout.Space(8);
+                if (GUILayout.Button("Back", row, GUILayout.Height(40)))
+                    community = false;
+                GUILayout.EndArea();
+                return;
+            }
             GUILayout.Label("Click a hole to play it right away. Your lobby works as usual, so friends can still join.", note);
             GUILayout.Space(8);
             scroll = GUILayout.BeginScrollView(scroll);
@@ -84,6 +104,11 @@ namespace SbgMaps
             GUILayout.EndScrollView();
             GUILayout.Space(8);
             GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Community", row, GUILayout.Height(40)))
+            {
+                community = true;
+                Community.Opened();
+            }
             if (GUILayout.Button("Mod settings", row, GUILayout.Height(40)))
             {
                 open = false;
@@ -115,6 +140,11 @@ namespace SbgMaps
                 return;
             // "Vertigo" (a vanilla hole by scene or hole name) or "map <map id> <hole number>"; "shots" takes screenshots.
             var words = lines[0].Split(' ');
+            if (words[0] == "community" && words.Length >= 2)
+            {
+                Plugin.Instance.StartCoroutine(Community.AutoTest(words[1]));
+                return;
+            }
             screenshots = lines.Contains("shots");
             oobTest = lines.Contains("oob");
             if (words[0] == "skies")

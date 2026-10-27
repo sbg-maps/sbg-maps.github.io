@@ -18,6 +18,7 @@ namespace SbgMaps
         public static ConfigEntry<bool> SkipIntro;
         public static ConfigEntry<bool> HotKeys;
         public static ConfigEntry<float> MusicVolume;
+        public static ConfigEntry<string> CommunityLink;
 
         private static bool open;
         private static GUIStyle title, label, note, toggle;
@@ -29,6 +30,7 @@ namespace SbgMaps
             HotKeys = config.Bind("General", "HotKeys", true, "F5 restarts the hole and F7 skips it (only when you are alone in the lobby), F8 logs object positions, F9 saves your character for the map editor.");
             MusicVolume = config.Bind("General", "MusicVolume", 1f, new ConfigDescription("Volume of songs that maps bring, 0 to 1.", new AcceptableValueRange<float>(0f, 1f)));
             MusicVolume.SettingChanged += (_, __) => HoleMusic.ApplyVolume();
+            CommunityLink = config.Bind("General", "CommunityLink", "", "Your group's community maps link, from the pack bot in your Discord. Shown under Community in Custom maps.");
         }
 
         public static void Update()
@@ -63,7 +65,7 @@ namespace SbgMaps
             GUI.color = new Color(0f, 0f, 0f, 0.75f);
             GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
             GUI.color = Color.white;
-            float width = Mathf.Min(620f, Screen.width - 40f), height = Mathf.Min(420f, Screen.height - 40f);
+            float width = Mathf.Min(620f, Screen.width - 40f), height = Mathf.Min(540f, Screen.height - 40f);
             GUILayout.BeginArea(new Rect((Screen.width - width) / 2f, (Screen.height - height) / 2f, width, height), GUI.skin.box);
             GUILayout.Label($"SbgMaps {Plugin.Version}", title, GUILayout.Height(44));
             GUILayout.Space(8);
@@ -77,6 +79,15 @@ namespace SbgMaps
             if (Mathf.Abs(v - MusicVolume.Value) > 0.001f)
                 MusicVolume.Value = Mathf.Round(v * 20f) / 20f;
             GUILayout.Label("Songs that maps bring. The game's own music has its own setting.", note);
+            GUILayout.Space(12);
+            GUILayout.Label("Community maps link", label);
+            GUILayout.BeginHorizontal();
+            CommunityLink.Value = GUILayout.TextField(CommunityLink.Value ?? "", GUILayout.Height(30)).Trim();
+            if (GUILayout.Button("Paste", GUILayout.Width(80), GUILayout.Height(30)))
+                CommunityLink.Value = (GUIUtility.systemCopyBuffer ?? "").Trim();
+            GUILayout.EndHorizontal();
+            GUILayout.Label(CommunityLink.Value.Length == 0 ? "From the pack bot in your Discord's map thread."
+                : Community.BaseUrl(CommunityLink.Value) == null ? "That is not a web link." : "Open Community in Custom maps to get the maps.", note);
 
             GUILayout.FlexibleSpace();
             GUILayout.Label("Saved in BepInEx/config/loafer.sbgmaps.cfg.", note);
