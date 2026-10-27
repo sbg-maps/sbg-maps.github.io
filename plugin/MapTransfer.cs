@@ -71,10 +71,11 @@ namespace SbgMaps
     }
 
     /// <summary>
-    /// Shares the host's custom maps with players in the lobby. On join the host sends its map list; players ask for
-    /// any map they are missing (or have another version of) and receive it in chunks over the game's connection.
-    /// Received maps are checked against the host's hash, saved to SbgMaps/maps/downloaded and added to the Custom
-    /// Maps course straight away.
+    /// Shares the host's custom maps with players in the lobby. On join (and when the host's maps change) the host
+    /// sends its map list, its community maps link and its hole numbers. Players get what they are missing (or have
+    /// another version of) from the community link, which is fast; a map that is not there comes in chunks over the
+    /// game's connection instead. Maps are checked against the host's hash, saved to SbgMaps/maps/downloaded and
+    /// added to the Custom Maps course straight away.
     /// </summary>
     internal static class MapTransfer
     {
@@ -102,6 +103,8 @@ namespace SbgMaps
             public string[] hashes;
             public long[] sizes;
             public string version; // the host's SbgMaps version
+            public string link; // the host's community maps link, from 0.7.0
+            public int[][] indices; // the host's global number of every hole of each map, from 0.7.0
         }
 
         /// <summary>Player to host, answering the map list: its SbgMaps version and the maps it is going to fetch.</summary>
@@ -144,6 +147,15 @@ namespace SbgMaps
                     w.WriteLong(m.sizes[i]);
                 }
                 w.WriteString(m.version);
+                // Newer fields go last: older players stop reading before them.
+                w.WriteString(m.link ?? "");
+                w.WriteInt(m.indices?.Length ?? 0);
+                foreach (var numbers in m.indices ?? new int[0][])
+                {
+                    w.WriteInt(numbers.Length);
+                    foreach (int n in numbers)
+                        w.WriteInt(n);
+                }
             };
             Reader<MapListMessage>.read = r =>
             {
@@ -156,6 +168,17 @@ namespace SbgMaps
                     m.sizes[i] = r.ReadLong();
                 }
                 m.version = r.Remaining > 0 ? r.ReadString() : "0.0.1";
+                m.link = r.Remaining > 0 ? r.ReadString() : "";
+                if (r.Remaining > 0)
+                {
+                    m.indices = new int[Mathf.Clamp(r.ReadInt(), 0, 1000)][];
+                    for (int i = 0; i < m.indices.Length; i++)
+                    {
+                        m.indices[i] = new int[Mathf.Clamp(r.ReadInt(), 0, 1000)];
+                        for (int j = 0; j < m.indices[i].Length; j++)
+                            m.indices[i][j] = r.ReadInt();
+                    }
+                }
                 return m;
             };
             Writer<ClientInfoMessage>.write = (w, m) =>
@@ -209,7 +232,17 @@ namespace SbgMaps
                 hashes = maps.Select(m => m.Hash).ToArray(),
                 sizes = maps.Select(m => (long)ZipFor(m).Length).ToArray(),
                 version = Plugin.Version,
+                link = Community.BaseUrl(Settings.CommunityLink.Value) ?? "",
+                indices = maps.Select(CustomCourse.GlobalIndices).ToArray(),
             });
+        }
+
+        /// <summary>After the host's maps changed in the lobby: everyone gets the new list and fetches what is new.</summary>
+        public static void SendListToAll()
+        {
+            foreach (var conn in NetworkServer.connections.Values.ToList())
+                if (conn != NetworkServer.localConnection)
+                    SendListTo(conn);
         }
 
         /// <summary>Per player: the maps it still has to get, and how far each running send has been confirmed.</summary>
@@ -233,14 +266,16 @@ namespace SbgMaps
         private static void OnClientInfo(NetworkConnectionToClient conn, ClientInfoMessage msg)
         {
             var peer = PeerOf(conn);
+            bool had = peer.Needs.Count > 0;
             peer.Version = msg.version;
             peer.Needs.Clear();
             peer.Needs.UnionWith(msg.needs.Where(SafeId));
             string who = PlayerName(conn);
             if (msg.version != Plugin.Version)
                 DevTools.Say($"{who} has SbgMaps {msg.version}, you have {Plugin.Version}. Use the same version, or holes may differ.");
-            if (peer.Needs.Count > 0)
-                DevTools.Say($"{who} is getting {peer.Needs.Count} map{(peer.Needs.Count == 1 ? "" : "s")} from you");
+            // Players say again as each map arrives; only the start is news.
+            if (peer.Needs.Count > 0 && !had)
+                DevTools.Say($"{who} is getting {peer.Needs.Count} map{(peer.Needs.Count == 1 ? "" : "s")}");
         }
 
         private static void OnAck(NetworkConnectionToClient conn, MapAckMessage msg)
@@ -268,8 +303,9 @@ namespace SbgMaps
                 }
                 if (!kv.Value.Needs.Contains(mapId))
                     continue;
-                int percent = kv.Value.Totals.TryGetValue(mapId, out int total) && total > 0 && kv.Value.Acked.TryGetValue(mapId, out int acked) ? acked * 100 / total : 0;
-                status = $"{PlayerName(conn)} ({percent}%)";
+                // Maps from the community link report no progress to the host, only when they are done.
+                status = kv.Value.Totals.TryGetValue(mapId, out int total) && total > 0 && kv.Value.Acked.TryGetValue(mapId, out int acked)
+                    ? $"{PlayerName(conn)} ({acked * 100 / total}%)" : PlayerName(conn);
                 return true;
             }
             return false;
@@ -361,6 +397,8 @@ namespace SbgMaps
         public static void DrawProgress()
         {
             var bars = new List<(string label, float done)>();
+            if (Community.Progress(out string communityMap, out float communityDone))
+                bars.Add(($"Getting map '{communityMap}'", communityDone));
             foreach (var kv in active)
                 if (kv.Value.Chunks != null)
                     bars.Add(($"Getting map '{kv.Key}' from the host", kv.Value.Received / (float)kv.Value.Chunks.Length));
@@ -402,35 +440,113 @@ namespace SbgMaps
         private static readonly Dictionary<string, Download> active = new Dictionary<string, Download>();
         private static List<string> hostOrder = new List<string>();
 
+        private static List<int[]> hostIndices;
+        /// <summary>Maps this player still has to get for the host's lobby.</summary>
+        private static readonly HashSet<string> pending = new HashSet<string>();
+        /// <summary>Maps asked of the community link and not answered yet.</summary>
+        private static readonly HashSet<string> fetching = new HashSet<string>();
+
         private static void OnList(MapListMessage msg)
         {
             if (NetworkServer.active)
                 return; // the host uses its own maps
             hostHashes.Clear();
-            queue.Clear();
-            active.Clear();
             hostOrder = msg.ids.ToList();
+            hostIndices = msg.indices?.ToList();
             var missing = new List<string>();
+            var sizes = new Dictionary<string, long>();
             for (int i = 0; i < msg.ids.Length; i++)
             {
                 if (!SafeId(msg.ids[i]) || msg.sizes[i] > MaxMapBytes)
                     continue;
                 hostHashes[msg.ids[i]] = msg.hashes[i];
+                sizes[msg.ids[i]] = msg.sizes[i];
                 var local = MapLibrary.Find(msg.ids[i]);
                 if (local == null || local.Hash != msg.hashes[i])
                     missing.Add(msg.ids[i]);
             }
-            CustomCourse.UseHostMaps(hostOrder);
+            // A list sent again (the host's maps changed) keeps what is already on its way.
+            foreach (var id in active.Keys.ToList())
+                if (!missing.Contains(id) || active[id].Hash != hostHashes[id])
+                    active.Remove(id);
+            var stillQueued = queue.Where(missing.Contains).ToList();
+            queue.Clear();
+            foreach (var id in stillQueued)
+                queue.Enqueue(id);
+            var fresh = missing.Where(id => !fetching.Contains(id) && !active.ContainsKey(id) && !queue.Contains(id)).ToList();
+            pending.Clear();
+            pending.UnionWith(missing);
+            RefreshCourse();
             if (msg.version != Plugin.Version)
                 DevTools.Say($"The host has SbgMaps {msg.version}, you have {Plugin.Version}. Use the same version, or holes may differ.");
             NetworkClient.Send(new ClientInfoMessage { version = Plugin.Version, needs = missing.ToArray() });
-            if (missing.Count == 0)
+            if (fresh.Count == 0)
                 return;
-            long totalBytes = missing.Sum(id => msg.sizes[Array.IndexOf(msg.ids, id)]);
-            DevTools.Say($"Getting {missing.Count} map{(missing.Count == 1 ? "" : "s")} from the host ({totalBytes / 1024} KB)...");
-            foreach (var id in missing)
+            long totalBytes = fresh.Sum(id => sizes[id]);
+            DevTools.Say($"Getting {fresh.Count} map{(fresh.Count == 1 ? "" : "s")} for this lobby ({totalBytes / 1024} KB)...");
+
+            string hostLink = Community.BaseUrl(msg.link);
+            string ownLink = Community.BaseUrl(Settings.CommunityLink.Value);
+            if (hostLink != null && ownLink == null)
+            {
+                Settings.CommunityLink.Value = hostLink; // the host's group: their community maps from now on
+                Plugin.Log.LogInfo($"Using the host's community maps link {hostLink}");
+            }
+            string link = hostLink ?? ownLink;
+            if (link == null)
+            {
+                foreach (var id in fresh)
+                    queue.Enqueue(id);
+                RequestNext();
+                return;
+            }
+            fetching.UnionWith(fresh);
+            Community.FetchForLobby(link, fresh, OnFetched);
+        }
+
+        /// <summary>A map from the community link arrived (path) or could not be had there (null): then the host sends it.</summary>
+        private static void OnFetched(string id, string path)
+        {
+            fetching.Remove(id);
+            if (NetworkServer.active || !NetworkClient.active || !pending.Contains(id) || !hostHashes.TryGetValue(id, out var hash))
+                return;
+            if (path != null)
+            {
+                try
+                {
+                    var pack = MapPack.Load(path);
+                    if (pack.Hash == hash)
+                    {
+                        MapLibrary.Replace(pack);
+                        Arrived(id);
+                        DevTools.Say($"Got map '{pack.Manifest.name}'");
+                        return;
+                    }
+                    Plugin.Log.LogInfo($"The community copy of '{id}' differs from the host's; getting the host's");
+                }
+                catch (Exception e)
+                {
+                    Plugin.Log.LogWarning($"Community copy of '{id}': {e.Message}");
+                }
+            }
+            if (!active.ContainsKey(id) && !queue.Contains(id))
                 queue.Enqueue(id);
             RequestNext();
+        }
+
+        /// <summary>A map for the lobby is here: into the course, and the host hears it is one less to wait for.</summary>
+        private static void Arrived(string id)
+        {
+            pending.Remove(id);
+            RefreshCourse();
+            NetworkClient.Send(new ClientInfoMessage { version = Plugin.Version, needs = pending.ToArray() });
+        }
+
+        /// <summary>The course as the host has it: its maps, numbered its way, and match setup to match.</summary>
+        public static void RefreshCourse()
+        {
+            CustomCourse.UseHostMaps(hostOrder, hostIndices);
+            MatchSetupSplit.Sync();
         }
 
         private static void RequestNext()
@@ -490,7 +606,7 @@ namespace SbgMaps
                     File.Delete(final);
                 File.Move(part, final);
                 MapLibrary.Replace(MapPack.Load(final));
-                CustomCourse.UseHostMaps(hostOrder);
+                Arrived(id);
                 float seconds = Mathf.Max(0.001f, Time.realtimeSinceStartup - dl.Started);
                 long size = new FileInfo(final).Length;
                 Plugin.Log.LogInfo($"Received map '{id}' ({size / 1024} KB) in {seconds:F1} s ({size / 1024f / seconds:F0} KB/s)");

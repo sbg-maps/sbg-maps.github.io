@@ -75,7 +75,7 @@ namespace SbgMaps
         /// In a lobby, use exactly the host's maps in the host's order, so course and hole numbers match theirs.
         /// Maps still downloading are added when they arrive (call again).
         /// </summary>
-        public static void UseHostMaps(IList<string> hostMapIds)
+        public static void UseHostMaps(IList<string> hostMapIds, IList<int[]> hostIndices = null)
         {
             var collection = GameManager.AllCourses;
             if (collection == null)
@@ -91,6 +91,95 @@ namespace SbgMaps
             }
             if (holes.Count > 0 || course != null)
                 Apply(collection, holes, initialize: true);
+            if (hostIndices != null && course != null)
+                Renumber(collection, hostMapIds, hostIndices);
+        }
+
+        /// <summary>The host's global index of each hole of a map (-1 if not in the course), for players to copy.</summary>
+        public static int[] GlobalIndices(MapPack pack) =>
+            Enumerable.Range(0, pack.Manifest.holes.Count)
+                .Select(i => holeCache.TryGetValue(HoleName(pack.Manifest.id, i) + "/" + pack.Hash, out var h) && h.ParentCourse != null ? h.GlobalIndex : -1)
+                .ToArray();
+
+        private const string PlaceholderName = HoleNamePrefix + "unused";
+        private static readonly List<HoleData> placeholders = new List<HoleData>();
+
+        /// <summary>A stand-in that fills a hole number this player has no hole for; never shown or played.</summary>
+        public static bool IsPlaceholder(HoleData h) => h != null && h.name == PlaceholderName;
+
+        /// <summary>
+        /// Gives map holes the same global numbers the host uses. The game refers to holes by that number (the hole
+        /// being played, the lists in match setup), and players with other maps installed than the host would
+        /// otherwise number them differently. Numbers of maps not here yet are held by placeholders.
+        /// </summary>
+        private static void Renumber(CourseCollection collection, IList<string> ids, IList<int[]> indices)
+        {
+            var all = collection.allHoles;
+            int first = all.FindIndex(h => h != null && h.name.StartsWith(HoleNamePrefix));
+            if (first < 0)
+                first = all.Count;
+            var wanted = new Dictionary<int, HoleData>();
+            for (int k = 0; k < ids.Count && k < indices.Count; k++)
+            {
+                var pack = MapLibrary.Find(ids[k]);
+                var numbers = indices[k] ?? new int[0];
+                for (int i = 0; i < numbers.Length; i++)
+                {
+                    int g = numbers[i];
+                    if (g < 0)
+                        continue;
+                    if (g < first || g > first + 10000)
+                    {
+                        Plugin.Log.LogWarning($"Host hole number {g} for map '{ids[k]}' does not fit (game holes end at {first}); keeping our own numbers");
+                        return;
+                    }
+                    wanted[g] = pack != null && i < pack.Manifest.holes.Count ? HoleFor(pack, i) : null;
+                }
+            }
+            int size = Math.Max(all.Count, wanted.Count == 0 ? 0 : wanted.Keys.Max() + 1);
+            var result = new HoleData[size];
+            for (int i = 0; i < first; i++)
+                result[i] = all[i];
+            foreach (var kv in wanted)
+                result[kv.Key] = kv.Value;
+            var placed = new HashSet<HoleData>(result.Where(h => h != null));
+            var rest = all.Skip(first).Where(h => h != null && !placed.Contains(h) && !IsPlaceholder(h)).ToList();
+            var spare = new Queue<HoleData>(placeholders.Where(p => !placed.Contains(p)));
+            int r = 0;
+            for (int g = first; g < size; g++)
+            {
+                if (result[g] != null)
+                    continue;
+                if (wanted.ContainsKey(g) || r >= rest.Count)
+                    result[g] = spare.Count > 0 ? spare.Dequeue() : NewPlaceholder();
+                else
+                    result[g] = rest[r++];
+            }
+            var final = result.Concat(rest.Skip(r)).ToList();
+            if (final.SequenceEqual(all))
+                return;
+            all.Clear();
+            all.AddRange(final);
+            for (int g = first; g < all.Count; g++)
+            {
+                var t = Traverse.Create(all[g]);
+                if (all[g].ParentCourse == null)
+                    t.Property("ParentCourse").SetValue(course);
+                t.Property("GlobalIndex").SetValue(g);
+                if (all[g].ParentCourse == course)
+                    t.Property("ParentCourseIndex").SetValue(Array.IndexOf(course.Holes, all[g]));
+            }
+            Plugin.Log.LogInfo($"Numbered map holes like the host: {all.Count - first} after the game's {first}");
+        }
+
+        private static HoleData NewPlaceholder()
+        {
+            var hole = UnityEngine.Object.Instantiate(donor);
+            hole.name = PlaceholderName;
+            Traverse.Create(hole).Property("ParentCourse").SetValue(null);
+            Traverse.Create(hole).Property("DontShowNewHoleNotification").SetValue(true);
+            placeholders.Add(hole);
+            return hole;
         }
 
         /// <summary>Puts every installed map in the course again (after maps were added or changed on disk).</summary>

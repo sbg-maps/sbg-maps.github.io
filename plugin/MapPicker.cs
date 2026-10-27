@@ -140,6 +140,12 @@ namespace SbgMaps
                 return;
             // "Vertigo" (a vanilla hole by scene or hole name) or "map <map id> <hole number>"; "shots" takes screenshots.
             var words = lines[0].Split(' ');
+            if (words[0] == "lobbytest" && lines.Count >= 3)
+            {
+                // Host, then move a map file into the maps folder from the driving range (line 2 to line 3).
+                Plugin.Instance.StartCoroutine(LobbyTest(lines[1], lines[2]));
+                return;
+            }
             if (words[0] == "community" && words.Length >= 2)
             {
                 Plugin.Instance.StartCoroutine(Community.AutoTest(words[1]));
@@ -176,6 +182,28 @@ namespace SbgMaps
             }
             Plugin.Log.LogInfo($"Autorun: hosting '{lines[0]}'{(screenshots ? " for screenshots" : "")}, then quitting");
             SingletonBehaviour<MainMenu>.Instance.StartHost();
+        }
+
+        private static System.Collections.IEnumerator LobbyTest(string from, string to)
+        {
+            SingletonBehaviour<MainMenu>.Instance.StartHost();
+            float start = Time.realtimeSinceStartup;
+            yield return new WaitUntil(() => SingletonBehaviour<DrivingRangeManager>.HasInstance || Time.realtimeSinceStartup - start > 90f);
+            yield return new WaitForSecondsRealtime(5f);
+            Log("before");
+            System.IO.File.Move(from, to);
+            yield return new WaitForSecondsRealtime(8f);
+            Log("after");
+            Plugin.Log.LogInfo("Autorun: done, quitting");
+            Application.Quit();
+
+            void Log(string when)
+            {
+                var menu = UnityEngine.Object.FindFirstObjectByType<MatchSetupMenu>(FindObjectsInactive.Include);
+                var list = menu != null ? HarmonyLib.Traverse.Create(menu).Field("holes").GetValue<List<MatchSetupHole>>() : null;
+                var course = GameManager.AllCourses.Courses.FirstOrDefault(CustomCourse.IsMapsCourse);
+                Plugin.Log.LogInfo($"Autorun lobbytest {when}: driving range {SingletonBehaviour<DrivingRangeManager>.HasInstance}, all holes {GameManager.AllCourses.allHoles.Count}, setup entries {list?.Count ?? -1}, course holes {course?.Holes.Length ?? -1}, maps {MapLibrary.Maps.Count}");
+            }
         }
 
         private static bool screenshots;
@@ -371,21 +399,23 @@ namespace SbgMaps
     }
 
     /// <summary>
-    /// Picks up maps added to or changed in the maps folder without restarting the game. Only on the title screen:
-    /// match setup builds its hole list when the lobby loads, so holes added during a lobby would not match it, and
-    /// a player in someone else's lobby uses the host's maps anyway.
+    /// Picks up maps added to or changed in the maps folder without restarting the game: on the title screen, and for
+    /// a host in the lobby's driving range, where the new list goes out to everyone and match setup gets the holes.
+    /// A host in a match waits until the match is over. Players in someone else's lobby keep the host's maps.
     /// </summary>
     internal static class MapWatcher
     {
         private const float IntervalSeconds = 2f;
         private static float next;
 
+        private static bool HostInLobby => NetworkServer.active && SingletonBehaviour<DrivingRangeManager>.HasInstance;
+
         public static void Update()
         {
             if (Time.realtimeSinceStartup < next)
                 return;
             next = Time.realtimeSinceStartup + IntervalSeconds;
-            if (SingletonBehaviour<MainMenu>.HasInstance)
+            if (SingletonBehaviour<MainMenu>.HasInstance || HostInLobby)
                 CheckNow();
         }
 
@@ -393,9 +423,20 @@ namespace SbgMaps
         {
             try
             {
+                if (NetworkServer.active && !HostInLobby)
+                    return; // mid-match: the next look from the driving range picks it up
                 if (!MapLibrary.RescanIfChanged())
                     return;
-                CustomCourse.UseLocalMaps();
+                if (NetworkServer.active)
+                {
+                    CustomCourse.UseLocalMaps();
+                    MatchSetupSplit.Sync();
+                    MapTransfer.SendListToAll();
+                }
+                else if (NetworkClient.active)
+                    MapTransfer.RefreshCourse();
+                else
+                    CustomCourse.UseLocalMaps();
             }
             catch (Exception e)
             {

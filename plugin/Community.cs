@@ -11,9 +11,10 @@ using UnityEngine.Networking;
 namespace SbgMaps
 {
     /// <summary>
-    /// Community maps: the list a group's pack bot keeps (its index.json), shown in Custom maps, so players fetch the
-    /// maps they are missing with a click. The link is pasted once in Mod settings. Maps land in the downloaded folder
-    /// like maps from a host, so the player's own copies still win and the title screen picks them up by itself.
+    /// Community maps: the list a group's pack bot keeps (its index.json), shown in Custom maps. New maps on it are
+    /// fetched by themselves (a setting), and players joining a lobby get the host's maps from it, which is much
+    /// faster than through the game's connection. The link is pasted once in Mod settings, or comes from the host.
+    /// Maps land in the downloaded folder like maps from a host, so the player's own copies still win.
     /// </summary>
     internal static class Community
     {
@@ -39,6 +40,10 @@ namespace SbgMaps
         private static string error;
         private static bool loading;
         private static readonly Queue<Entry> queue = new Queue<Entry>();
+        /// <summary>Who waits for a map by id: gets the saved file's path, or null if it could not be had.</summary>
+        private static readonly Dictionary<string, Action<string>> waiting = new Dictionary<string, Action<string>>();
+        private static float nextAutoGet;
+        private const float AutoGetSeconds = 300f;
         private static Entry downloading;
         private static UnityWebRequest request;
         private static string lastResult;
@@ -70,6 +75,65 @@ namespace SbgMaps
                 Plugin.Instance.StartCoroutine(Load(baseUrl));
         }
 
+        /// <summary>
+        /// Fetches new and updated community maps on the title screen and in the lobby's driving range, every few
+        /// minutes, when the setting is on.
+        /// </summary>
+        public static void Update()
+        {
+            if (!Settings.AutoGet.Value || Time.realtimeSinceStartup < nextAutoGet || loading || downloading != null)
+                return;
+            if (!SingletonBehaviour<MainMenu>.HasInstance && !SingletonBehaviour<DrivingRangeManager>.HasInstance)
+                return;
+            string baseUrl = BaseUrl(Settings.CommunityLink.Value);
+            if (baseUrl == null)
+                return;
+            nextAutoGet = Time.realtimeSinceStartup + AutoGetSeconds;
+            Plugin.Instance.StartCoroutine(AutoGet(baseUrl));
+        }
+
+        private static IEnumerator AutoGet(string baseUrl)
+        {
+            yield return Load(baseUrl);
+            if (index == null || loadedFrom != baseUrl)
+                yield break;
+            var wanted = index.maps.Where(m => StatusOf(m) == Status.Get || StatusOf(m) == Status.Update).ToList();
+            if (wanted.Count > 0)
+                Plugin.Log.LogInfo($"Getting {wanted.Count} new community map(s)");
+            foreach (var m in wanted)
+                Enqueue(m);
+        }
+
+        /// <summary>
+        /// For a lobby: gets these maps from the community list at baseUrl. `done` hears about each id, with the
+        /// saved file or null (not on the list, or the download failed).
+        /// </summary>
+        public static void FetchForLobby(string baseUrl, IList<string> ids, Action<string, string> done) =>
+            Plugin.Instance.StartCoroutine(FetchRoutine(baseUrl, ids, done));
+
+        private static IEnumerator FetchRoutine(string baseUrl, IList<string> ids, Action<string, string> done)
+        {
+            // A fresh copy of the list: the host may have a map that was posted a minute ago.
+            yield return new WaitWhile(() => loading);
+            yield return Load(baseUrl);
+            foreach (var id in ids)
+            {
+                var entry = loadedFrom == baseUrl ? index?.maps.FirstOrDefault(m => m.id == id) : null;
+                if (entry == null)
+                    done(id, null);
+                else
+                    Enqueue(entry, path => done(id, path));
+            }
+        }
+
+        /// <summary>The map being downloaded and how far along, for the bar at the top of the screen.</summary>
+        public static bool Progress(out string name, out float done)
+        {
+            name = downloading?.name;
+            done = request != null ? Mathf.Clamp01(request.downloadProgress) : 0f;
+            return downloading != null;
+        }
+
         private static IEnumerator Load(string baseUrl)
         {
             loading = true;
@@ -86,9 +150,11 @@ namespace SbgMaps
                 }
                 try
                 {
-                    index = JsonConvert.DeserializeObject<Index>(r.downloadHandler.text) ?? new Index();
-                    index.maps.RemoveAll(m => string.IsNullOrWhiteSpace(m?.id) || string.IsNullOrWhiteSpace(m.url));
+                    var loaded = JsonConvert.DeserializeObject<Index>(r.downloadHandler.text) ?? new Index();
+                    loaded.maps.RemoveAll(m => string.IsNullOrWhiteSpace(m?.id) || string.IsNullOrWhiteSpace(m.url));
+                    index = loaded;
                     loadedFrom = baseUrl;
+                    statuses = null;
                 }
                 catch (Exception e)
                 {
@@ -122,9 +188,11 @@ namespace SbgMaps
             return downloaded ? Status.Update : Status.OwnCopy;
         }
 
-        private static void Enqueue(Entry e)
+        private static void Enqueue(Entry e, Action<string> done = null)
         {
-            if (downloading != e && !queue.Contains(e))
+            if (done != null)
+                waiting[e.id] = waiting.TryGetValue(e.id, out var before) ? before + done : done;
+            if (downloading?.id != e.id && !queue.Any(q => q.id == e.id))
                 queue.Enqueue(e);
             if (downloading == null)
                 Plugin.Instance.StartCoroutine(DownloadAll());
@@ -155,6 +223,7 @@ namespace SbgMaps
                 {
                     lastResult = $"Could not download {e.name}: {request.error}";
                     TryDelete(part);
+                    Done(e.id, null);
                     yield break;
                 }
             }
@@ -171,13 +240,31 @@ namespace SbgMaps
                 float seconds = Mathf.Max(0.001f, Time.realtimeSinceStartup - started);
                 lastResult = $"Got {e.name} ({Size(e.size)} in {seconds:F0} s)";
                 Plugin.Log.LogInfo($"Community map '{e.id}' downloaded from {e.url} ({e.size / 1024} KB in {seconds:F1} s)");
-                MapWatcher.CheckNow();
             }
             catch (Exception ex)
             {
                 lastResult = $"Could not use {e.name}: {ex.Message}";
                 Plugin.Log.LogWarning($"Community map '{e.id}' from {e.url}: {ex}");
                 TryDelete(part);
+                Done(e.id, null);
+                yield break;
+            }
+            Done(e.id, final);
+            MapWatcher.CheckNow();
+        }
+
+        private static void Done(string id, string path)
+        {
+            if (!waiting.TryGetValue(id, out var done))
+                return;
+            waiting.Remove(id);
+            try
+            {
+                done(path);
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError($"After community map '{id}': {e}");
             }
         }
 

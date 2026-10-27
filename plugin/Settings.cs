@@ -19,6 +19,7 @@ namespace SbgMaps
         public static ConfigEntry<bool> HotKeys;
         public static ConfigEntry<float> MusicVolume;
         public static ConfigEntry<string> CommunityLink;
+        public static ConfigEntry<bool> AutoGet;
 
         private static bool open;
         private static GUIStyle title, label, note, toggle;
@@ -30,6 +31,7 @@ namespace SbgMaps
             HotKeys = config.Bind("General", "HotKeys", true, "F5 restarts the hole and F7 skips it (only when you are alone in the lobby), F8 logs object positions, F9 saves your character for the map editor.");
             MusicVolume = config.Bind("General", "MusicVolume", 1f, new ConfigDescription("Volume of songs that maps bring, 0 to 1.", new AcceptableValueRange<float>(0f, 1f)));
             MusicVolume.SettingChanged += (_, __) => HoleMusic.ApplyVolume();
+            AutoGet = config.Bind("General", "AutoGetCommunityMaps", true, "Get new and updated community maps by themselves, on the title screen and in the lobby.");
             CommunityLink = config.Bind("General", "CommunityLink", "", "Your group's community maps link, from the pack bot in your Discord. Shown under Community in Custom maps.");
         }
 
@@ -86,6 +88,7 @@ namespace SbgMaps
             if (GUILayout.Button("Paste", GUILayout.Width(80), GUILayout.Height(30)))
                 CommunityLink.Value = (GUIUtility.systemCopyBuffer ?? "").Trim();
             GUILayout.EndHorizontal();
+            AutoGet.Value = GUILayout.Toggle(AutoGet.Value, " Get new community maps by themselves", toggle);
             GUILayout.Label(CommunityLink.Value.Length == 0 ? "From the pack bot in your Discord's map thread."
                 : Community.BaseUrl(CommunityLink.Value) == null ? "That is not a web link." : "Open Community in Custom maps to get the maps.", note);
 
